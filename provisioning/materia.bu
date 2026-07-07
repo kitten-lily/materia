@@ -118,8 +118,8 @@ storage:
           Volume=/etc/systemd/system:/etc/systemd/system
 
     # Timer — runs materia update daily. For more frequent syncs, shorten OnCalendar
-    # or trigger externally (e.g. via SSH).
-    - path: /etc/containers/systemd/materia-update.timer
+    # or trigger externally (e.g. via SSH). Plain systemd unit (not a quadlet).
+    - path: /etc/systemd/system/materia-update.timer
       mode: 0644
       contents:
         inline: |
@@ -132,6 +132,12 @@ storage:
 
           [Install]
           WantedBy=timers.target
+
+systemd:
+  units:
+    # Enable the materia timer at first boot.
+    - name: materia-update.timer
+      enabled: true
 
 passwd:
   users:
