@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Render Ignition — fetches age key + SSH pubkey from Proton Pass via fnox, never written to repo tree"
-#MISE sources=["provisioning/materia.bu"]
+#MISE sources=["provisioning/materia.bu", "provisioning/ghostty.terminfo.b64"]
 #MISE outputs=["provisioning/materia.ign"]
 set -euo pipefail
 
@@ -16,11 +16,6 @@ trap 'rm -rf "$tmpdir"' EXIT
 fnox get AGE_SECRET_KEY > "$tmpdir/key.txt"
 chmod 600 "$tmpdir/key.txt"
 
-# Compile Ghostty terminfo from the workstation's ncurses database into the
-# tmpdir. Butane installs it to /usr/share/terminfo/x/xterm-ghostty via local:.
-mkdir -p "$tmpdir/terminfo/x"
-infocmp -x xterm-ghostty 2>/dev/null | tic -x -o "$tmpdir/terminfo" -
-
 # Fetch the SSH public key for the core user from Proton Pass via fnox.
 _core_pubkey=$(fnox get CORE_SSH_PUBKEY)
 if [[ -z "$_core_pubkey" ]]; then
@@ -28,11 +23,15 @@ if [[ -z "$_core_pubkey" ]]; then
   exit 1
 fi
 
-# Substitute ${REPO_URL} and ${CORE_SSH_PUBKEY} in a tmpdir copy of the .bu.
+# Read the pre-compiled Ghostty terminfo (base64-encoded in the repo).
+_terminfo_b64=$(tr -d '\n' < provisioning/ghostty.terminfo.b64)
+
+# Substitute placeholders in a tmpdir copy of the .bu.
 # Pubkeys contain / and + but not |, so | is safe as the sed delimiter.
 sed \
   -e "s|\${REPO_URL}|${REPO_URL}|g" \
   -e "s|\${CORE_SSH_PUBKEY}|${_core_pubkey}|g" \
+  -e "s|\${GHOSTTY_TERMINFO_B64}|${_terminfo_b64}|g" \
   "$BUTANE_FILE" > "$tmpdir/materia.bu"
 
 butane --strict --files-dir "$tmpdir" "$tmpdir/materia.bu" > "$IGN_FILE"
