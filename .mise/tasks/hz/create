@@ -2,6 +2,7 @@
 #MISE description="Create Hetzner server from Flatcar snapshot with Ignition applied at first boot"
 #USAGE flag "-v --verbose" help="Print SSH key info and full API responses"
 set -euo pipefail
+export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 _verbose="${usage_verbose:-}"
 

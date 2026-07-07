@@ -2,6 +2,7 @@
 #MISE description="Internal: resolve Hetzner server id+ip by HCLOUD_SERVER_NAME (hidden helper)"
 #MISE hide=true
 set -euo pipefail
+export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 _resp=$(xh --ignore-stdin --print=b GET "$HCLOUD_API/servers" \
   Authorization:"Bearer $HCLOUD_TOKEN" \

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Reboot Hetzner server"
 set -euo pipefail
+export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 IFS=$'\t' read -r _id _ip < <(mise hz:_server-id 2>/dev/null)
 

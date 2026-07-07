@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Upload Flatcar image to Hetzner as a snapshot (run once; reuse across provisions)"
 set -euo pipefail
+export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 CHANNEL="${FLATCAR_CHANNEL:-stable}"
 VERSION="${FLATCAR_VERSION:-current}"

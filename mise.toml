@@ -2,15 +2,20 @@
 # Docs: https://mise.jdx.dev   |   `mise tasks` to list, `mise <task>` to run.
 
 [tools]
-age = "latest"    # age key generation + encryption (SOPS backend)
-sops = "latest"   # SOPS — encryption for attributes vaults (age backend)
-fnox = "latest"   # secret injection for hz:* tasks (reads fnox.toml)
-gum = "latest"    # TUI prompts for setup tasks
-xh = "latest"     # HTTP client for Hetzner API calls
-jq = "latest"
-# Full backend paths for tools not in the mise registry:
-"aqua:coreos/butane" = "latest"                   # Flatcar/CoreOS Butane transpiler
-"github:apricote/hcloud-upload-image" = "latest"  # uploads Flatcar image to Hetzner
+age                 = "latest"  # age key generation + encryption (SOPS backend)
+sops                = "latest"  # SOPS — encryption for attributes vaults (age backend)
+fnox                = "latest"  # secret injection for hz:* tasks (reads fnox.toml)
+gum                 = "latest"  # TUI prompts for setup tasks
+xh                  = "latest"  # HTTP client for Hetzner API calls
+jq                  = "latest"
+butane              = "latest"  # Flatcar/CoreOS Butane transpiler
+hcloud-upload-image = "latest"  # uploads Flatcar image to Hetzner
+pass-cli            = "latest"  # Proton Pass CLI for secret management
+
+[tool_alias]
+butane = "aqua:coreos/butane"
+hcloud-upload-image = "github:apricote/hcloud-upload-image"
+pass-cli = "github:protonpass/pass-cli"
 
 [env]
 # Materia attributes engine — SOPS with age backend.

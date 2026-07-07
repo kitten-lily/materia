@@ -3,6 +3,7 @@
 #USAGE flag "--confirm" help="Confirm deletion (required)"
 #USAGE flag "--noninteractive" help="Exit 1 instead of 0 when --confirm is not passed (for scripting)"
 set -euo pipefail
+export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 IFS=$'\t' read -r _id _ip < <(mise hz:_server-id 2>/dev/null)
 

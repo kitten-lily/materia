@@ -5,11 +5,11 @@
 # Prereqs:
 #   1. pass-cli login  (scoped PAT, read-only on the "materia" vault)
 #   2. Create a "hetzner" item in the "materia" Proton Pass vault
-#      with an "api_token" field (Hetzner Cloud API token, Read+Write)
+#      using the "API Credential" template (Hetzner Cloud API token, Read+Write)
 
 [providers.protonpass]
 type = "proton-pass"
 vault = "materia"
 
 [secrets]
-HCLOUD_TOKEN = { provider = "protonpass", value = "hetzner/api_token" }
+HCLOUD_TOKEN = { provider = "protonpass", value = "hetzner/API Key" }
