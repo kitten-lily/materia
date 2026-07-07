@@ -87,6 +87,13 @@ components/
     traefik/
       traefik_config.yml.gotmpl  # Traefik static config (templated)
       dynamic_config.yml.gotmpl  # Traefik dynamic config (templated)
+provisioning/
+  materia.bu                    # Butane config (OS setup + materia quadlet + age key)
+mise.toml                       # pinned toolchain (age, sops, fnox, butane, etc.)
+fnox.toml                       # fnox secret injection (Proton Pass provider)
+.sops.yaml                      # SOPS creation rules (age recipient)
+renovate.json5                  # Renovate config (image + plugin updates)
+.mise/tasks/                    # mise file tasks (ign, setup/*, hz/*, clean)
 ```
 
 ## How a host reconciles
@@ -176,6 +183,48 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   one namespace, ports published at the pod level. Gerbil's SNI proxy can route
   TLS traffic in multi-node deployments; in single-node it's bypassed (443→443
   direct to Traefik).
+- **Flatcar pure-podman: sysext symlinks, not service masking.** Docker and
+  containerd are opt-out sysexts. The `-docker`/`-containerd` syntax in
+  `enabled-sysext.conf` doesn't work (flatcar/Flatcar#1481). Instead, symlink
+  `/etc/extensions/docker-flatcar.raw` and `containerd-flatcar.raw` to
+  `/dev/null` — this removes the entire extension (binaries + units) so no
+  service masking is needed.
+
+## Provisioning (Butane/Ignition)
+
+The node is provisioned via Butane → Ignition on Flatcar. The `.bu` carries only
+OS-level setup + materia installation — no reconciler scripts, no seed-secrets
+service, no GitHub App credentials (materia replaces all of those).
+
+### What the .bu installs
+
+- **Pure-podman sysext** — `podman` enabled in `enabled-sysext.conf`; Docker and
+  containerd disabled via `/dev/null` symlinks on their `.raw` sysext files (the
+  `-docker` syntax in `enabled-sysext.conf` doesn't work — flatcar/Flatcar#1481).
+  No service masking needed — the sysext units don't exist if the extension is
+  removed.
+- **`/etc/containers/policy.json`** — Flatcar doesn't ship one; every
+  `podman pull` fails without it.
+- **Reboot window** — single public ingress, auto-reboot confined to low-traffic.
+- **WireGuard module** — `/etc/modules-load.d/wireguard.conf` for Gerbil.
+- **Age private key** → `/etc/materia/key.txt` — for SOPS vault decryption.
+- **Materia config** → `/etc/materia/config.toml` — source URL + SOPS engine.
+- **Materia quadlet** — `materia-update.container` + `materia-update.timer`
+  inlined in the .bu. Runs materia rootful containerized, pulls the repo,
+  decrypts the vault, installs quadlets/configs, manages podman secrets,
+  restarts services. Timer fires daily; for faster syncs, trigger externally.
+- **SSH key** for `core` user — baked from Proton Pass.
+
+### Transpile flow
+
+1. `mise setup:local` — writes `.mise.local.toml` (REPO_URL, Hetzner config).
+2. `mise ign` — fetches age private key + SSH pubkey from Proton Pass via fnox,
+   substitutes `${REPO_URL}` and `${CORE_SSH_PUBKEY}` in the .bu, runs
+   `butane --strict`, emits `provisioning/materia.ign`. Treat the .ign as
+   secret — never commit.
+3. `mise hz:upload-image` — one-time Flatcar snapshot upload to Hetzner.
+4. `mise hz:create` — creates server; Hetzner passes .ign as `user_data` to
+   Flatcar at first boot.
 
 ## Development conventions
 
@@ -193,15 +242,15 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 
 ## Decisions still open (future revisit)
 
-- **Butane/provisioning:** the node provisioning (Ignition/Butane for Flatcar)
-  will be ported later — undecided whether it lives in this repo or a separate
-  one. For now, this repo only contains the materia-managed runtime.
+- **Butane/provisioning:** lives in this repo (`provisioning/materia.bu`).
+  The .bu carries OS setup + materia quadlet + age key. Materia replaces the
+  old reconciler, seed-secrets, webhook, and GitHub App credentials entirely.
 - **Renovate:** `renovate.json5` covers image pins in `*.container.gotmpl`
   (native `quadlet` manager extended to match `.gotmpl` files), the `ee-` prefix
   on pangolin images (regex versioning), and the badger plugin version in
-  `MANIFEST.toml` (`custom.regex` → `github-tags`). The old repo also had a
-  `custom.regex` for Butane helper images — that will be added when the
-  Butane/provisioning port lands.
+  `MANIFEST.toml` (`custom.regex` → `github-tags`). The materia image itself
+  (`ghcr.io/stryan/materia:stable` in the .bu) is not yet covered by Renovate —
+  add a `custom.regex` manager for it when ready.
 - **Attributes engine:** SOPS with age backend. `attributes/vault.yml` is
   value-level encrypted (keys visible, secret values ciphertext). The age
   private key is baked into Ignition at provision time and lives at

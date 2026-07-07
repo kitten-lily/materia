@@ -1,0 +1,132 @@
+# Butane config for the Materia edge node on Flatcar — pure-podman + materia-managed runtime.
+#
+# Materia replaces the old reconciler, seed-secrets service, webhook, and GitHub App
+# credentials. This Butane carries only OS-level setup + materia installation.
+#
+# Secrets baked at transpile time (via `mise ign`):
+#   - Age private key → /etc/materia/key.txt (for SOPS vault decryption)
+#   - SSH public key → core user authorized_keys
+# Treat the rendered .ign as a SECRET — never commit.
+
+variant: flatcar
+version: 1.1.0
+
+storage:
+  directories:
+    - { path: /etc/materia, mode: 0755 }
+
+  links:
+    # Pure-podman node: disable built-in Docker and containerd sysexts by symlinking
+    # their .raw files to /dev/null. This removes the entire extension (binaries +
+    # systemd units) so no service masking is needed. The -docker/-containerd
+    # syntax in enabled-sysext.conf doesn't work (flatcar/Flatcar#1481).
+    - path: /etc/extensions/docker-flatcar.raw
+      target: /dev/null
+      overwrite: true
+    - path: /etc/extensions/containerd-flatcar.raw
+      target: /dev/null
+      overwrite: true
+
+  files:
+    # Podman requires a policy.json to allow image pulls; Flatcar doesn't ship one.
+    - path: /etc/containers/policy.json
+      mode: 0644
+      contents:
+        inline: |
+          {"default":[{"type":"insecureAcceptAnything"}]}
+
+    # Opt-in first-party Podman sysext (updated with the OS). Docker + containerd
+    # are disabled via /dev/null symlinks above, not via this file.
+    - path: /etc/flatcar/enabled-sysext.conf
+      mode: 0644
+      contents: { inline: "podman\n" }
+
+    # Single public ingress → auto-reboot confined to a low-traffic window.
+    - path: /etc/flatcar/update.conf
+      mode: 0644
+      overwrite: true
+      contents:
+        inline: |
+          REBOOT_STRATEGY=reboot
+          LOCKSMITHD_REBOOT_WINDOW_START="Thu 04:00"
+          LOCKSMITHD_REBOOT_WINDOW_LENGTH=1h
+
+    - path: /etc/modules-load.d/wireguard.conf
+      mode: 0644
+      contents: { inline: "wireguard\n" }
+
+    # Materia config — points at this repo, uses SOPS with age backend.
+    # REPO_URL is substituted at transpile time by the ign task.
+    - path: /etc/materia/config.toml
+      mode: 0644
+      contents:
+        inline: |
+          [source]
+          kind = "git"
+          url = "${REPO_URL}"
+
+          [sops]
+          base_dir = "attributes"
+
+    # Age private key for SOPS vault decryption — baked from Proton Pass.
+    - path: /etc/materia/key.txt
+      mode: 0600
+      contents:
+        local: key.txt
+
+    # Materia quadlet — runs materia rootful containerized, pulls the repo,
+    # templates resources, installs quadlets/configs, manages podman secrets,
+    # and restarts services. Triggered by materia-update.timer.
+    - path: /etc/containers/systemd/materia-update.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Materia: quadlet manager
+
+          [Service]
+          Type=oneshot
+
+          [Container]
+          Image=ghcr.io/stryan/materia:stable
+          ContainerName=materia
+          Exec=update
+
+          Environment=MATERIA_SOURCE__KIND="git"
+          Environment=MATERIA_SOURCE__URL=${REPO_URL}
+          Environment=MATERIA_ATTRIBUTES="sops"
+          Environment=MATERIA_SOPS__BASE_DIR="attributes"
+
+          SecurityLabelDisable=true
+          HostName=%q
+          Network=host
+
+          Volume=/etc/materia:/etc/materia
+          Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+          Volume=/run/podman/podman.sock:/run/podman/podman.sock
+          Volume=/var/lib/materia:/var/lib/materia
+          Volume=/etc/containers/systemd:/etc/containers/systemd
+          Volume=/usr/local/bin:/usr/local/bin
+          Volume=/etc/systemd/system:/etc/systemd/system
+
+    # Timer — runs materia update daily. For more frequent syncs, shorten OnCalendar
+    # or trigger externally (e.g. via SSH).
+    - path: /etc/containers/systemd/materia-update.timer
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Materia daily update
+
+          [Timer]
+          OnCalendar=*-*-* 05:00:00
+          Unit=materia-update.service
+
+          [Install]
+          WantedBy=timers.target
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - "${CORE_SSH_PUBKEY}"

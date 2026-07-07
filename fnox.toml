@@ -1,11 +1,15 @@
 # fnox secret injection config — non-secret, committed to git.
-# fnox resolves HCLOUD_TOKEN from Proton Pass at task runtime.
+# fnox resolves secrets from Proton Pass at task runtime.
 # Docs: https://fnox.jdx.dev/providers/proton-pass.html
 #
 # Prereqs:
 #   1. pass-cli login  (scoped PAT, read-only on the "materia" vault)
-#   2. Create a "hetzner" item in the "materia" Proton Pass vault
-#      using the "API Credential" template (Hetzner Cloud API token, Read+Write)
+#   2. Create a "hetzner" item using the "API Credential" template
+#      (Hetzner Cloud API token, Read+Write)
+#   3. Create a "materia" item using the "SSH Key" template
+#      (public key for the core user on Flatcar, baked into Ignition)
+#   4. Create an item for the age private key — store the full key.txt contents
+#      (AGE-SECRET-KEY-...) in a field named "key"
 
 [providers.protonpass]
 type = "proton-pass"
@@ -13,3 +17,5 @@ vault = "materia"
 
 [secrets]
 HCLOUD_TOKEN = { provider = "protonpass", value = "hetzner/API Key" }
+CORE_SSH_PUBKEY = { provider = "protonpass", value = "materia/Public key" }
+AGE_SECRET_KEY = { provider = "protonpass", value = "materia-age/key" }

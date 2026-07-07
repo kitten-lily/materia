@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#MISE description="Render Ignition — fetches age key + SSH pubkey from Proton Pass via fnox, never written to repo tree"
+set -euo pipefail
+
+# REPO_URL must be set — run `mise setup:local` first.
+: "${REPO_URL:?REPO_URL not set — run: mise setup:local}"
+
+# All secrets land in a tmpdir that is deleted on exit — nothing touches the repo tree.
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+# Fetch the age private key from Proton Pass via fnox and write to tmpdir
+# for butane's --files-dir (referenced as local: key.txt in the .bu).
+fnox get AGE_SECRET_KEY > "$tmpdir/key.txt"
+chmod 600 "$tmpdir/key.txt"
+
+# Fetch the SSH public key for the core user from Proton Pass via fnox.
+_core_pubkey=$(fnox get CORE_SSH_PUBKEY)
+if [[ -z "$_core_pubkey" ]]; then
+  echo "error: materia/Public key not set in Proton Pass — create the item first" >&2
+  exit 1
+fi
+
+# Substitute ${REPO_URL} and ${CORE_SSH_PUBKEY} in a tmpdir copy of the .bu.
+# Pubkeys contain / and + but not |, so | is safe as the sed delimiter.
+sed \
+  -e "s|\${REPO_URL}|${REPO_URL}|g" \
+  -e "s|\${CORE_SSH_PUBKEY}|${_core_pubkey}|g" \
+  "$BUTANE_FILE" > "$tmpdir/materia.bu"
+
+butane --strict --files-dir "$tmpdir" "$tmpdir/materia.bu" > "$IGN_FILE"
+echo "wrote $IGN_FILE — SECRET: deliver via Hetzner user_data, do NOT commit."

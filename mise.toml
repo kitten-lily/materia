@@ -40,3 +40,7 @@ FLATCAR_VERSION    = "current"        # pin a specific version for reproducibili
 FLATCAR_SNAPSHOT_MAX_AGE_DAYS = "30"
 
 # ign, clean, setup/*, hz/* → .mise/tasks/ (file tasks, auto-discovered)
+
+# --- Butane/Ignition transpile ---
+BUTANE_FILE = "provisioning/materia.bu"
+IGN_FILE    = "provisioning/materia.ign"

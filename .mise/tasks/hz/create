@@ -25,8 +25,6 @@ _snap_id=$(mise hz:ensure-image)
 [[ -n "$_verbose" ]] && gum style --foreground 8 "==> using Flatcar snapshot id=$_snap_id"
 
 # Build request — Flatcar reads user_data as Ignition directly (no cloud-config wrapper).
-# TODO: wire IGN_FILE once butane/ign task is ported.
-IGN_FILE="${IGN_FILE:-provisioning/materia.ign}"
 if [[ ! -f "$IGN_FILE" ]]; then
   gum style --foreground 1 "error: $IGN_FILE not found — run: mise ign"
   exit 1
