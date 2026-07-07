@@ -61,7 +61,11 @@ KubeStellar and Pangolin live ABOVE node layer.
 - **Config files as `.gotmpl` data resources.** Domain and other values are
   templated from attributes — no `sed` substitution, no `/etc/pangolin.env`.
 - **Pinned image digests.** No `AutoUpdate=registry` — git-pinned GitOps.
-  Renovate (future) bumps digests via PRs.
+  Renovate bumps digests via PRs (see `renovate.json5`).
+- **Version source-of-truth in manifests.** Plugin versions (e.g. badger) live
+  in `MANIFEST.toml` `[Defaults]` and are templated into config files via
+  `{{ .badgerVersion }}`. Renovate's regex manager targets the manifest, not
+  the templated output.
 
 ## Repo layout
 
@@ -189,9 +193,12 @@ Materia reads encrypted vaults transparently. See materia attributes docs.
 - **Butane/provisioning:** the node provisioning (Ignition/Butane for Flatcar)
   will be ported later — undecided whether it lives in this repo or a separate
   one. For now, this repo only contains the materia-managed runtime.
-- **Renovate:** not yet ported. Will need `renovate.json5` with `quadlet`
-  native manager for `*.container` files + `custom.regex` for traefik plugin
-  version pins.
+- **Renovate:** `renovate.json5` covers image pins in `*.container.gotmpl`
+  (native `quadlet` manager extended to match `.gotmpl` files), the `ee-` prefix
+  on pangolin images (regex versioning), and the badger plugin version in
+  `MANIFEST.toml` (`custom.regex` → `github-tags`). The old repo also had a
+  `custom.regex` for Butane helper images — that will be added when the
+  Butane/provisioning port lands.
 - **Attributes engine:** currently using `file` (unencrypted). Switch to `sops`
   or `age` for production before deploying with real secrets.
 - **Push-based deploys:** materia is pull-based by default. For instant

@@ -1,0 +1,65 @@
+// Renovate config for the materia podman orchestration repo.
+// Runs via the Mend hosted Renovate GitHub App — install it on this repo; it reads this file.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", "docker:pinDigests"],
+  timezone: "Etc/UTC",
+  schedule: ["after 2am and before 6am"],
+  labels: ["renovate"],
+  dependencyDashboard: true,
+  platformAutomerge: true,
+
+  // Only scan for dependencies we actually have — avoids unnecessary npm/pip/etc. scans.
+  enabledManagers: ["quadlet", "custom.regex"],
+
+  // quadlet: native manager for Image= lines in *.container files.
+  // Extended to also match *.container.gotmpl (materia templated resources).
+  // managerFilePatterns is additive — defaults (.container, .image, .volume) are kept.
+  quadlet: {
+    managerFilePatterns: ["/.+\\.container\\.gotmpl$/"],
+  },
+
+  packageRules: [
+    {
+      // Group all fosrl images (pangolin + gerbil) for batch updates.
+      matchPackageNames: ["/fosrl//"],
+      groupName: "pangolin stack",
+    },
+    {
+      // Digest-only bumps (tag unchanged, image content refreshed) — low risk,
+      // automerge via GitHub native auto-merge. ignoreTests needed because the
+      // repo has no status checks; without it Renovate never calls the automerge
+      // API and the PR sits open forever.
+      matchUpdateTypes: ["digest"],
+      automerge: true,
+      automergeType: "pr",
+      ignoreTests: true,
+    },
+    {
+      // Pangolin tags the image as `ee-X.Y.Z` (enterprise/extended edition prefix).
+      // Default docker versioning can't parse the `ee-` prefix, so Renovate
+      // silently skips the package. Regex versioning with a `compatibility`
+      // capture group keeps updates within the ee- series (preventing it from
+      // suggesting plain `X.Y.Z` tags as upgrades).
+      matchPackageNames: ["docker.io/fosrl/pangolin"],
+      versioning: "regex:^(?<compatibility>ee)-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
+    },
+  ],
+
+  customManagers: [
+    {
+      // Traefik badger plugin version pin in the component manifest.
+      // The version is templated into traefik_config.yml via {{ .badgerVersion }},
+      // so the source of truth is MANIFEST.toml — not the YAML config.
+      // moduleName is hardcoded as "github.com/fosrl/badger" in the template.
+      customType: "regex",
+      description: "Traefik badger plugin version in component manifest",
+      managerFilePatterns: ["/(^|/)MANIFEST\\.toml$/"],
+      matchStrings: [
+        "badgerVersion\\s*=\\s*\"(?<currentValue>v[^\"]+)\"",
+      ],
+      depNameTemplate: "fosrl/badger",
+      datasourceTemplate: "github-tags",
+    },
+  ],
+}
