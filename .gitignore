@@ -1,5 +1,8 @@
 # Never commit secret material or local config.
-# Switch to sops/age attributes engine for production (encrypts vault files).
+
+# Age private key — baked into Ignition at provision time, never in git.
+key.txt
+*.age.key
 
 # Claude Code / Crush local settings (permissions, etc.) — machine-specific
 .claude/settings.local.json

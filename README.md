@@ -17,7 +17,7 @@ seed-secrets service.
 ```
 MANIFEST.toml                # repository manifest — host → component assignments
 attributes/
-  vault.toml                 # global attributes (domain, secrets, etc.)
+  vault.yml                  # global attributes (SOPS-encrypted, age backend)
 components/
   pangolin/                  # Pangolin edge node component
     MANIFEST.toml            # component manifest — defaults, services, secrets
@@ -32,13 +32,16 @@ components/
     traefik/
       traefik_config.yml.gotmpl  # static Traefik config (templated)
       dynamic_config.yml.gotmpl  # dynamic Traefik config (templated)
+mise.toml                    # pinned toolchain (age, sops)
+.sops.yaml                   # SOPS creation rules (age recipient)
+renovate.json5               # Renovate config (image + plugin updates)
 ```
 
 ## How it works
 
 1. Materia syncs this repo to the target host.
 2. For each component assigned to the host, it templates `.gotmpl` resources
-   using attributes from `attributes/vault.toml` (and host-specific vaults).
+   using attributes from `attributes/vault.yml` (and host-specific vaults).
 3. Quadlet files (`.container`, `.network`, `.volume`) go to
    `/etc/containers/systemd/pangolin/`.
 4. Data files (configs) go to `/var/lib/materia/components/pangolin/`.
@@ -57,17 +60,22 @@ separate containers on a network, those IPs would be unreachable from Traefik.
 
 ## Attributes
 
-Edit `attributes/vault.toml` for global values. For host-specific overrides,
-create `attributes/<hostname>.toml`. For production, switch to the `sops` or
-`age` engine to encrypt secret values (see materia docs).
+`attributes/vault.yml` is a SOPS-encrypted vault (age backend). Non-secret
+values (domain, email) are visible in git; secret values (serverSecret,
+cfDnsApiToken) are ciphertext. Edit with `sops edit attributes/vault.yml`.
+For host-specific overrides, create `attributes/<hostname>.yml` (also
+SOPS-encrypted). The age private key is baked into Ignition and lives at
+`/etc/materia/key.txt` on the target host.
 
 ## Running
 
 ```sh
+mise install                   # installs age + sops
+
 export MATERIA_SOURCE__KIND=git
 export MATERIA_SOURCE__URL=https://github.com/owner/materia
-export MATERIA_ATTRIBUTES=file
-export MATERIA_FILE__BASE_DIR=attributes
+export MATERIA_ATTRIBUTES=sops
+export MATERIA_SOPS__BASE_DIR=attributes
 
 materia plan     # dry-run — validate repo + attributes
 materia update   # apply

@@ -1,0 +1,13 @@
+# SOPS-encrypted attributes vault — value-level encryption with age.
+# Encrypt after editing: `mise exec -- sops --encrypt --in-place attributes/vault.yml`
+# Edit in place:         `mise exec -- sops edit attributes/vault.yml`
+# Non-secret values (baseDomain, acmeEmail) are visible in git; secret values are ciphertext.
+
+globals: {}
+
+components:
+  pangolin:
+    baseDomain: example.com
+    acmeEmail: admin@example.com
+    serverSecret: replace-with-a-long-random-secret
+    cfDnsApiToken: replace-with-your-cloudflare-api-token

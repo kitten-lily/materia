@@ -1,5 +1,0 @@
-[components.pangolin]
-baseDomain = "example.com"
-acmeEmail = "admin@example.com"
-serverSecret = "replace-with-a-long-random-secret"
-cfDnsApiToken = "replace-with-your-cloudflare-api-token"

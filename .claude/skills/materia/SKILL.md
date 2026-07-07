@@ -116,38 +116,48 @@ URL = "https://github.com/example/mycomp"
 
 ## Attributes
 
-### Vault files (file engine — unencrypted TOML)
+### Vault files (SOPS + age — value-encrypted YAML)
 
 ```
-attributes/vault.toml          # global — all hosts, all components
-attributes/<hostname>.toml     # host-specific
-attributes/<role>.toml         # role-specific
+attributes/vault.yml          # global — all hosts, all components
+attributes/<hostname>.yml     # host-specific
+attributes/<role>.yml         # role-specific
 ```
 
-### Format
+SOPS provides value-level encryption: keys and structure are visible in git,
+secret values are ciphertext. Edit with `sops edit attributes/vault.yml`.
+Toolchain (`age`, `sops`) managed via `mise.toml`.
 
-```toml
-[globals]
-lanDnsServer = "192.168.1.10"
+### Format (YAML — before encryption)
 
-[components.pangolin]
-baseDomain = "example.com"
-serverSecret = "replace-with-secret"
+```yaml
+globals:
+  lanDnsServer: 192.168.1.10
 
-[hosts.edge]
-keyForEdge = "value"
+components:
+  pangolin:
+    baseDomain: example.com
+    serverSecret: replace-with-secret  # encrypted after `sops --encrypt --in-place`
 
-[roles.base]
-beszelKey = "ssh-blah"
+hosts:
+  edge:
+    keyForEdge: value
+
+roles:
+  base:
+    beszelKey: ssh-blah
 ```
 
 ### Engines
 
-- **file** — unencrypted TOML. For testing / non-secret repos.
-- **sops** (recommended) — SOPS-encrypted YAML/INI. Recommended for production.
-- **age** (recommended) — age-encrypted TOML. Simple, modern.
+- **sops** (recommended) — SOPS-encrypted YAML. Value-level encryption (keys
+  visible, values ciphertext). Uses age backend; key at `/etc/materia/key.txt`.
+- **age** — age-encrypted TOML. Whole-file encryption. Simpler but less
+  ergonomic (no in-place editing).
+- **file** — unencrypted TOML. For testing only.
 
 Configure via `MATERIA_ATTRIBUTES=sops` or `MATERIA_ATTRIBUTES=file`.
+SOPS requires `.sops.yaml` in the repo root with age recipient public key.
 
 ## Podman secrets
 
@@ -169,8 +179,8 @@ attribute (→ materia updates the secret) + restarting the consumer service.
 # Configure source + attributes engine
 export MATERIA_SOURCE__KIND=git
 export MATERIA_SOURCE__URL=https://github.com/owner/materia
-export MATERIA_ATTRIBUTES=file
-export MATERIA_FILE__BASE_DIR=attributes
+export MATERIA_ATTRIBUTES=sops
+export MATERIA_SOPS__BASE_DIR=attributes
 
 materia plan     # dry-run — validate, show what would change
 materia update   # apply changes to the host
@@ -184,10 +194,7 @@ materia update   # apply changes to the host
 kind = "git"
 url = "https://github.com/owner/materia"
 
-[attributes]
-# engine = "file"  # auto-detected; or force one: "file", "sops", "age"
-
-[file]
+[sops]
 base_dir = "attributes"
 ```
 
@@ -230,7 +237,7 @@ Create `attributes/edge.toml`:
 [components.pangolin]
 baseDomain = "realdomain.com"
 ```
-This overrides `vault.toml` values for the `edge` host only.
+This overrides `vault.yml` values for the `edge` host only.
 
 ## Default install locations (rootful)
 

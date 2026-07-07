@@ -1,0 +1,7 @@
+# SOPS creation rules — encrypt all attribute vaults with age.
+# Generate a key pair: `mise exec -- age-keygen -o key.txt`
+# Put the public key (age1...) below. Bake key.txt into Ignition at provision time.
+# Docs: https://github.com/getsops/sops#age
+creation_rules:
+  - path_regex: attributes/.*\.yml$
+    age: age1PLACEHOLDER_REPLACE_WITH_YOUR_AGE_PUBLIC_KEY

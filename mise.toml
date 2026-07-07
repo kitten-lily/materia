@@ -1,0 +1,14 @@
+# mise — pinned toolchain for the materia repo.
+# Docs: https://mise.jdx.dev   |   `mise tasks` to list, `mise <task>` to run.
+
+[tools]
+age = "latest"   # age key generation + encryption (SOPS backend)
+sops = "latest"  # SOPS — value-level encryption for attributes vaults
+
+[env]
+# Materia attributes engine — SOPS with age backend.
+# The age private key lives at /etc/materia/key.txt on the target host
+# (baked into Ignition at provision time). The public key goes in .sops.yaml.
+# Workstation: `mise install` → `age-keygen -o key.txt` → put pubkey in .sops.yaml.
+MATERIA_ATTRIBUTES = "sops"
+MATERIA_SOPS__BASE_DIR = "attributes"

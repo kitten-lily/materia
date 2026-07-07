@@ -72,7 +72,7 @@ KubeStellar and Pangolin live ABOVE node layer.
 ```
 MANIFEST.toml                    # repo manifest — host → component assignments
 attributes/
-  vault.toml                     # global attributes (domain, secrets, config)
+  vault.yml                     # global attributes (SOPS-encrypted, age backend)
 components/
   pangolin/                      # Pangolin edge component
     MANIFEST.toml                # component manifest — defaults, services, secrets
@@ -103,12 +103,15 @@ components/
 
 ## Attributes
 
-- `attributes/vault.toml` — global vault, applies to all hosts.
-- `attributes/<hostname>.toml` — host-specific vault (optional).
-- `attributes/<role>.toml` — role-specific vault (optional).
+- `attributes/vault.yml` — global vault (SOPS-encrypted, age backend), all hosts.
+- `attributes/<hostname>.yml` — host-specific vault (optional, also encrypted).
+- `attributes/<role>.yml` — role-specific vault (optional, also encrypted).
 
-For production, switch to the `sops` or `age` engine to encrypt secret values.
-Materia reads encrypted vaults transparently. See materia attributes docs.
+SOPS provides value-level encryption: keys and structure are visible in git,
+secret values are ciphertext. The age private key is baked into Ignition at
+provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
+(`age`, `sops`) managed via `mise.toml`. Edit vaults with
+`sops edit attributes/vault.yml`.
 
 ## Gotchas / hard-won constraints
 
@@ -199,8 +202,11 @@ Materia reads encrypted vaults transparently. See materia attributes docs.
   `MANIFEST.toml` (`custom.regex` → `github-tags`). The old repo also had a
   `custom.regex` for Butane helper images — that will be added when the
   Butane/provisioning port lands.
-- **Attributes engine:** currently using `file` (unencrypted). Switch to `sops`
-  or `age` for production before deploying with real secrets.
+- **Attributes engine:** SOPS with age backend. `attributes/vault.yml` is
+  value-level encrypted (keys visible, secret values ciphertext). The age
+  private key is baked into Ignition at provision time and lives at
+  `/etc/materia/key.txt` on the target host. Toolchain (`age`, `sops`) managed
+  via `mise.toml`.
 - **Push-based deploys:** materia is pull-based by default. For instant
   deploys, either run materia on a short timer or trigger `materia update`
   externally (e.g. via SSH, a systemd timer, or a future CI hook).
@@ -213,6 +219,12 @@ Materia reads encrypted vaults transparently. See materia attributes docs.
   https://primamateria.systems/documentation/latest/reference/materia-manifest.5.html
 - Materia templates reference (macros, snippets):
   https://primamateria.systems/documentation/latest/reference/materia-templates.5.html
+- Materia SOPS config:
+  https://primamateria.systems/documentation/latest/reference/materia-config-sops.5.html
+- Materia age config:
+  https://primamateria.systems/documentation/latest/reference/materia-config-age.5.html
+- SOPS: https://github.com/getsops/sops
+- Age: https://github.com/FiloSottile/age
 - Pangolin docker compose: https://docs.pangolin.net/self-host/manual/docker-compose
 - Pangolin podman quadlets: https://docs.pangolin.net/self-host/manual/podman-quadlets
 - Pangolin Newt Helm: charts.fossorial.io (newt chart)
