@@ -56,9 +56,9 @@ storage:
       contents: { inline: "wireguard\n" }
 
     # Ghostty terminfo — pre-compiled and base64-encoded in the repo
-    # (provisioning/ghostty.terminfo.b64). Lets SSH from Ghostty work
-    # without "unknown terminal type" errors.
-    - path: /usr/share/terminfo/x/xterm-ghostty
+    # (provisioning/ghostty.terminfo.b64). Flatcar's /usr is read-only, so
+    # install to /etc (overlay). ncurses checks /etc/terminfo by default.
+    - path: /etc/terminfo/x/xterm-ghostty
       mode: 0644
       contents:
         source: data:;base64,${GHOSTTY_TERMINFO_B64}
