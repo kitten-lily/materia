@@ -1,0 +1,6 @@
+# Never commit secret material or local config.
+# Switch to sops/age attributes engine for production (encrypts vault files).
+
+# Claude Code / Crush local settings (permissions, etc.) — machine-specific
+.claude/settings.local.json
+.crush/
