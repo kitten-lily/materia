@@ -1,0 +1,39 @@
+api:
+  dashboard: true
+
+experimental:
+  plugins:
+    badger:
+      moduleName: "github.com/fosrl/badger"
+      version: "{{ .badgerVersion }}"
+
+log:
+  level: "INFO"
+  format: "common"
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: "30m"
+
+serversTransport:
+  insecureSkipVerify: true
+
+providers:
+  http:
+    endpoint: "http://localhost:3001/api/v1/traefik-config"
+    pollInterval: "5s"
+  file:
+    filename: "/etc/traefik/dynamic_config.yml"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "{{ .acmeEmail }}"
+      storage: "/letsencrypt/acme.json"
+      dnsChallenge:
+        provider: cloudflare

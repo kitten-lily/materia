@@ -1,0 +1,60 @@
+http:
+  middlewares:
+    badger:
+      plugin:
+        badger:
+          disableForwardAuth: true
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+
+  routers:
+    main-app-router-redirect:
+      rule: "Host(`pangolin.{{ .baseDomain }}`)"
+      service: next-service
+      entryPoints: [web]
+      middlewares: [redirect-to-https, badger]
+
+    next-router:
+      rule: "Host(`pangolin.{{ .baseDomain }}`) && !PathPrefix(`/api/v1`)"
+      service: next-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    api-router:
+      rule: "Host(`pangolin.{{ .baseDomain }}`) && PathPrefix(`/api/v1`)"
+      service: api-service
+      priority: 100
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+    ws-router:
+      rule: "Host(`pangolin.{{ .baseDomain }}`)"
+      service: api-service
+      entryPoints: [websecure]
+      middlewares: [badger]
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    next-service:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:3002"
+    api-service:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:3000"
+
+tcp:
+  serversTransports:
+    pp-transport-v1:
+      proxyProtocol:
+        version: 1
+    pp-transport-v2:
+      proxyProtocol:
+        version: 2
