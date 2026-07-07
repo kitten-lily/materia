@@ -55,6 +55,14 @@ storage:
       mode: 0644
       contents: { inline: "wireguard\n" }
 
+    # Ghostty terminfo — compiled on the workstation during `mise ign` via
+    # `infocmp -x xterm-ghostty | tic -x -o tmpdir`, then embedded here.
+    # Lets SSH from Ghostty work without "unknown terminal type" errors.
+    - path: /usr/share/terminfo/x/xterm-ghostty
+      mode: 0644
+      contents:
+        local: terminfo/x/xterm-ghostty
+
     # Materia config — points at this repo, uses SOPS with age backend.
     # REPO_URL is substituted at transpile time by the ign task.
     - path: /etc/materia/config.toml

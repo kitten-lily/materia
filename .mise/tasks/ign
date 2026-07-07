@@ -16,6 +16,11 @@ trap 'rm -rf "$tmpdir"' EXIT
 fnox get AGE_SECRET_KEY > "$tmpdir/key.txt"
 chmod 600 "$tmpdir/key.txt"
 
+# Compile Ghostty terminfo from the workstation's ncurses database into the
+# tmpdir. Butane installs it to /usr/share/terminfo/x/xterm-ghostty via local:.
+mkdir -p "$tmpdir/terminfo/x"
+infocmp -x xterm-ghostty 2>/dev/null | tic -x -o "$tmpdir/terminfo" -
+
 # Fetch the SSH public key for the core user from Proton Pass via fnox.
 _core_pubkey=$(fnox get CORE_SSH_PUBKEY)
 if [[ -z "$_core_pubkey" ]]; then
