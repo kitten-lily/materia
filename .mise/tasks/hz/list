@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="List Hetzner servers (ID, name, IP, status)"
 set -euo pipefail
-export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
-xh --check-status --print=b GET "$HCLOUD_API/servers" \
+fnox exec -- xh --check-status --print=b GET "$HCLOUD_API/servers" \
   Authorization:"Bearer $HCLOUD_TOKEN" | jq
