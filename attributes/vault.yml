@@ -1,7 +1,8 @@
-# SOPS-encrypted attributes vault — value-level encryption with age.
+# SOPS-encrypted attributes vault — age backend.
 # Encrypt after editing: `mise exec -- sops --encrypt --in-place attributes/vault.yml`
 # Edit in place:         `mise exec -- sops edit attributes/vault.yml`
-# Non-secret values (baseDomain, acmeEmail) are visible in git; secret values are ciphertext.
+# By default SOPS encrypts ALL values (keys/structure visible, values ciphertext).
+# To encrypt only specific keys, add `encrypted_regex` to .sops.yaml.
 
 globals: {}
 

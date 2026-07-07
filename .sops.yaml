@@ -4,4 +4,4 @@
 # Docs: https://github.com/getsops/sops#age
 creation_rules:
   - path_regex: attributes/.*\.yml$
-    age: age1PLACEHOLDER_REPLACE_WITH_YOUR_AGE_PUBLIC_KEY
+    age: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk

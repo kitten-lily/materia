@@ -3,7 +3,7 @@
 
 [tools]
 age = "latest"   # age key generation + encryption (SOPS backend)
-sops = "latest"  # SOPS — value-level encryption for attributes vaults
+sops = "latest"  # SOPS — encryption for attributes vaults (age backend)
 
 [env]
 # Materia attributes engine — SOPS with age backend.

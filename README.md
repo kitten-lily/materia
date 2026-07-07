@@ -60,9 +60,9 @@ separate containers on a network, those IPs would be unreachable from Traefik.
 
 ## Attributes
 
-`attributes/vault.yml` is a SOPS-encrypted vault (age backend). Non-secret
-values (domain, email) are visible in git; secret values (serverSecret,
-cfDnsApiToken) are ciphertext. Edit with `sops edit attributes/vault.yml`.
+`attributes/vault.yml` is a SOPS-encrypted vault (age backend). All values
+are encrypted by default (keys/structure visible, values ciphertext). Edit
+with `sops edit attributes/vault.yml`.
 For host-specific overrides, create `attributes/<hostname>.yml` (also
 SOPS-encrypted). The age private key is baked into Ignition and lives at
 `/etc/materia/key.txt` on the target host.

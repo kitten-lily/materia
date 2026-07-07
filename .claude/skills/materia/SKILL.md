@@ -124,8 +124,9 @@ attributes/<hostname>.yml     # host-specific
 attributes/<role>.yml         # role-specific
 ```
 
-SOPS provides value-level encryption: keys and structure are visible in git,
-secret values are ciphertext. Edit with `sops edit attributes/vault.yml`.
+SOPS encrypts all values in the vault by default (keys/structure visible,
+values ciphertext). To encrypt only specific keys, add `encrypted_regex`
+to `.sops.yaml`. Edit with `sops edit attributes/vault.yml`.
 Toolchain (`age`, `sops`) managed via `mise.toml`.
 
 ### Format (YAML — before encryption)
@@ -150,8 +151,10 @@ roles:
 
 ### Engines
 
-- **sops** (recommended) — SOPS-encrypted YAML. Value-level encryption (keys
-  visible, values ciphertext). Uses age backend; key at `/etc/materia/key.txt`.
+- **sops** (recommended) — SOPS-encrypted YAML. All values encrypted by
+  default; keys/structure visible. Uses age backend; key at
+  `/etc/materia/key.txt`. To encrypt only specific keys, set `encrypted_regex`
+  in `.sops.yaml`.
 - **age** — age-encrypted TOML. Whole-file encryption. Simpler but less
   ergonomic (no in-place editing).
 - **file** — unencrypted TOML. For testing only.

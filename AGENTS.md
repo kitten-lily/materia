@@ -107,8 +107,8 @@ components/
 - `attributes/<hostname>.yml` — host-specific vault (optional, also encrypted).
 - `attributes/<role>.yml` — role-specific vault (optional, also encrypted).
 
-SOPS provides value-level encryption: keys and structure are visible in git,
-secret values are ciphertext. The age private key is baked into Ignition at
+SOPS encrypts all values in the vault by default (keys/structure visible,
+values ciphertext). The age private key is baked into Ignition at
 provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 (`age`, `sops`) managed via `mise.toml`. Edit vaults with
 `sops edit attributes/vault.yml`.
