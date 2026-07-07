@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="List Hetzner servers (ID, name, IP, status)"
+set -euo pipefail
+
+xh --check-status --print=b GET "$HCLOUD_API/servers" \
+  Authorization:"Bearer $HCLOUD_TOKEN" | jq

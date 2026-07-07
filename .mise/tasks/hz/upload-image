@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Upload Flatcar image to Hetzner as a snapshot (run once; reuse across provisions)"
+set -euo pipefail
+
+CHANNEL="${FLATCAR_CHANNEL:-stable}"
+VERSION="${FLATCAR_VERSION:-current}"
+
+gum style --foreground 8 "==> uploading Flatcar $CHANNEL/$VERSION to Hetzner (this takes a few minutes)..."
+
+hcloud-upload-image upload \
+  --architecture=x86 \
+  --compression=bz2 \
+  --image-url="https://${CHANNEL}.release.flatcar-linux.net/amd64-usr/${VERSION}/flatcar_production_hetzner_image.bin.bz2" \
+  --labels "os=flatcar,flatcar-channel=${CHANNEL}" \
+  --description "flatcar-${CHANNEL}-x86"

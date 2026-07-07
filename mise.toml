@@ -2,8 +2,15 @@
 # Docs: https://mise.jdx.dev   |   `mise tasks` to list, `mise <task>` to run.
 
 [tools]
-age = "latest"   # age key generation + encryption (SOPS backend)
-sops = "latest"  # SOPS — encryption for attributes vaults (age backend)
+age = "latest"    # age key generation + encryption (SOPS backend)
+sops = "latest"   # SOPS — encryption for attributes vaults (age backend)
+fnox = "latest"   # secret injection for hz:* tasks (reads fnox.toml)
+gum = "latest"    # TUI prompts for setup tasks
+xh = "latest"     # HTTP client for Hetzner API calls
+jq = "latest"
+# Full backend paths for tools not in the mise registry:
+"aqua:coreos/butane" = "latest"                   # Flatcar/CoreOS Butane transpiler
+"github:apricote/hcloud-upload-image" = "latest"  # uploads Flatcar image to Hetzner
 
 [env]
 # Materia attributes engine — SOPS with age backend.
@@ -12,3 +19,18 @@ sops = "latest"  # SOPS — encryption for attributes vaults (age backend)
 # Workstation: `mise install` → `age-keygen -o key.txt` → put pubkey in .sops.yaml.
 MATERIA_ATTRIBUTES = "sops"
 MATERIA_SOPS__BASE_DIR = "attributes"
+
+# --- Hetzner Cloud provisioning (override per deployment in .mise.local.toml) ---
+HCLOUD_API         = "https://api.hetzner.cloud/v1"
+HCLOUD_SERVER_TYPE = "cx23"           # 2 vCPU / 4 GB RAM
+HCLOUD_LOCATION    = "hel1"           # Helsinki
+HCLOUD_SERVER_NAME = "materia"
+# HCLOUD_SSH_KEY is optional — set in .mise.local.toml to attach a pre-registered Hetzner SSH key
+
+# Flatcar image upload (hz:upload-image); snapshot is then used directly by hz:create
+FLATCAR_CHANNEL    = "stable"
+FLATCAR_VERSION    = "current"        # pin a specific version for reproducibility
+# hz:ensure-image refreshes the snapshot past this age (roughly Flatcar's release cadence)
+FLATCAR_SNAPSHOT_MAX_AGE_DAYS = "30"
+
+# ign, clean, setup/*, hz/* → .mise/tasks/ (file tasks, auto-discovered)

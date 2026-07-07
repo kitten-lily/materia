@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Internal: read an existing key's value out of a .mise.local.toml-style file (hidden helper)"
+#MISE hide=true
+set -euo pipefail
+
+_file="$1" _key="$2"
+
+grep -E "^${_key}\s*=" "$_file" 2>/dev/null | head -1 \
+  | sed -E 's/^[^=]+=\s*"?([^"]*)"?\s*$/\1/' || true

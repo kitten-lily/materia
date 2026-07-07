@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#MISE description="Internal: resolve Hetzner server id+ip by HCLOUD_SERVER_NAME (hidden helper)"
+#MISE hide=true
+set -euo pipefail
+
+_resp=$(xh --ignore-stdin --print=b GET "$HCLOUD_API/servers" \
+  Authorization:"Bearer $HCLOUD_TOKEN" \
+  name=="$HCLOUD_SERVER_NAME" 2>/dev/null)
+
+printf '%s\t%s\n' \
+  "$(echo "$_resp" | jq -r '.servers[0].id // empty')" \
+  "$(echo "$_resp" | jq -r '.servers[0].public_net.ipv4.ip // empty')"

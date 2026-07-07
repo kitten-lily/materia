@@ -4,6 +4,15 @@
 key.txt
 *.age.key
 
+# Rendered Ignition — secret (contains baked keys), never commit.
+*.ign
+
+# mise local overrides (deployment-specific: domain, server name, etc.)
+.mise.local.toml
+
+# Config backups (hz:pull-config)
+*-backup*.tar.gz
+
 # Claude Code / Crush local settings (permissions, etc.) — machine-specific
 .claude/settings.local.json
 .crush/

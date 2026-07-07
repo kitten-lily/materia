@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+#MISE description="Internal: prompt for input, honoring --scripted passthrough (hidden helper)"
+#MISE hide=true
+set -euo pipefail
+
+# In scripted mode, return cur directly if non-empty; otherwise always prompt.
+_cur="$1" _scripted="$2" _prompt="$3" _placeholder="$4"
+
+if [[ -n "$_scripted" && -n "$_cur" ]]; then
+  echo "$_cur"
+else
+  gum input --prompt "$_prompt" --placeholder "$_placeholder" --value "$_cur"
+fi

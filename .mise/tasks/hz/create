@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#MISE description="Create Hetzner server from Flatcar snapshot with Ignition applied at first boot"
+#USAGE flag "-v --verbose" help="Print SSH key info and full API responses"
+set -euo pipefail
+
+_verbose="${usage_verbose:-}"
+
+# SSH key (optional)
+_ssh_keys="[]"
+if [[ -n "${HCLOUD_SSH_KEY:-}" ]]; then
+  _key_id=$(xh --ignore-stdin --check-status --print=b GET "$HCLOUD_API/ssh_keys" \
+    Authorization:"Bearer $HCLOUD_TOKEN" name=="$HCLOUD_SSH_KEY" 2>/dev/null \
+    | jq -r '.ssh_keys[0].id // empty')
+  if [[ -z "$_key_id" ]]; then
+    gum style --foreground 1 "error: SSH key '$HCLOUD_SSH_KEY' not found — run: mise hz:ssh-keys"
+    exit 1
+  fi
+  _ssh_keys=$(jq -n --argjson id "$_key_id" '[$id]')
+  gum style --foreground 8 "==> attaching SSH key: $HCLOUD_SSH_KEY (id=$_key_id)"
+fi
+
+# Ensures a snapshot exists and isn't older than FLATCAR_SNAPSHOT_MAX_AGE_DAYS.
+_snap_id=$(mise hz:ensure-image)
+[[ -n "$_verbose" ]] && gum style --foreground 8 "==> using Flatcar snapshot id=$_snap_id"
+
+# Build request — Flatcar reads user_data as Ignition directly (no cloud-config wrapper).
+# TODO: wire IGN_FILE once butane/ign task is ported.
+IGN_FILE="${IGN_FILE:-provisioning/materia.ign}"
+if [[ ! -f "$IGN_FILE" ]]; then
+  gum style --foreground 1 "error: $IGN_FILE not found — run: mise ign"
+  exit 1
+fi
+
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+jq -n \
+  --arg     name        "$HCLOUD_SERVER_NAME" \
+  --arg     server_type "$HCLOUD_SERVER_TYPE" \
+  --argjson image       "$_snap_id"           \
+  --arg     location    "$HCLOUD_LOCATION"    \
+  --rawfile user_data   "$IGN_FILE"           \
+  --argjson ssh_keys    "$_ssh_keys"          \
+  '{name:$name, server_type:$server_type, image:$image,
+    location:$location, user_data:$user_data, ssh_keys:$ssh_keys}' \
+  > "$_tmpdir/body.json"
+
+cat > "$_tmpdir/req.sh" << REQEOF
+#!/usr/bin/env bash
+xh --ignore-stdin --print=b POST "$HCLOUD_API/servers" \\
+  Authorization:"Bearer $HCLOUD_TOKEN" \\
+  Content-Type:application/json \\
+  @"$_tmpdir/body.json" > "$_tmpdir/resp.json" 2>/dev/null
+REQEOF
+chmod +x "$_tmpdir/req.sh"
+
+gum spin --spinner dot \
+  --title "creating server: $HCLOUD_SERVER_NAME ($HCLOUD_SERVER_TYPE @ $HCLOUD_LOCATION, snapshot $_snap_id)" \
+  -- "$_tmpdir/req.sh" || true
+
+_resp=$(cat "$_tmpdir/resp.json")
+[[ -n "$_verbose" ]] && echo "$_resp" | jq
+
+if echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected:"
+  echo "$_resp" | jq
+  exit 1
+fi
+
+echo "$_resp" | jq '{id: .server.id, name: .server.name,
+     ip: .server.public_net.ipv4.ip, status: .server.status}'
+gum style --foreground 2 "==> server created — Flatcar boots with Ignition applied directly"

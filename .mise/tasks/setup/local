@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#MISE description="Write .mise.local.toml with non-secret deployment vars (Hetzner config)"
+#USAGE flag "--scripted" help="Skip prompts for values already set; still prompts for missing ones. Suppresses footer."
+# Prereqs: gum on PATH (`mise install`). Output is gitignored; safe to re-run to update values.
+# Secrets (HCLOUD_TOKEN) go in Proton Pass — resolved by fnox at task runtime.
+set -euo pipefail
+
+LOCAL="$PWD/.mise.local.toml"
+_scripted="${usage_scripted:-}"
+
+if [ -f "$LOCAL" ] && [[ -z "$_scripted" ]]; then
+  gum style --foreground 3 "  .mise.local.toml exists — pre-filling from current values."
+fi
+
+echo ""
+gum style --bold "── Hetzner Cloud ────────────────────────────────────────────────────"
+echo ""
+
+_cur_name=$(mise setup:_existing "$LOCAL" HCLOUD_SERVER_NAME)
+HCLOUD_SERVER_NAME=$(mise setup:_input "${_cur_name:-materia}" "$_scripted" "  Server name:  " "materia")
+
+gum style --foreground 8 "  Server type (cx23 = 2 vCPU / 4 GB RAM, cx33 = 4 vCPU / 8 GB RAM, etc.)"
+_cur_type=$(mise setup:_existing "$LOCAL" HCLOUD_SERVER_TYPE)
+HCLOUD_SERVER_TYPE=$(mise setup:_input "${_cur_type:-cx23}" "$_scripted" "  Server type:  " "cx23")
+
+gum style --foreground 8 "  Location: hel1=Helsinki, fsn1=Nuremberg, nbg1=Nuremberg, ash=Ashburn, sin=Singapore"
+_cur_loc=$(mise setup:_existing "$LOCAL" HCLOUD_LOCATION)
+HCLOUD_LOCATION=$(mise setup:_input "${_cur_loc:-hel1}" "$_scripted" "  Location:     " "hel1")
+
+# ── write .mise.local.toml ───────────────────────────────────────────────────
+
+{
+  echo "# Local deployment overrides — gitignored. Re-run \`mise setup:local\` to update."
+  echo "# Secrets (HCLOUD_TOKEN) are in Proton Pass, resolved by fnox."
+  echo "[env]"
+  [ -n "$HCLOUD_SERVER_NAME" ] && echo "HCLOUD_SERVER_NAME = \"${HCLOUD_SERVER_NAME}\""
+  [ -n "$HCLOUD_SERVER_TYPE" ] && echo "HCLOUD_SERVER_TYPE = \"${HCLOUD_SERVER_TYPE}\""
+  [ -n "$HCLOUD_LOCATION" ]    && echo "HCLOUD_LOCATION = \"${HCLOUD_LOCATION}\""
+} > "$LOCAL"
+
+if [[ -z "$_scripted" ]]; then
+  echo ""
+  gum style --bold --foreground 10 "Wrote ${LOCAL}"
+  gum style --foreground 8 "Next:  mise hz:upload-image  — one-time Flatcar snapshot upload"
+  gum style --foreground 8 "Then:  mise hz:create        — provision the server"
+fi

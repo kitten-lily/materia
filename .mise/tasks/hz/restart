@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#MISE description="Reboot Hetzner server"
+set -euo pipefail
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id 2>/dev/null)
+
+if [[ -z "$_id" ]]; then
+  gum style --foreground 1 "error: no server named '$HCLOUD_SERVER_NAME'"
+  exit 1
+fi
+
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+cat > "$_tmpdir/req.sh" << REQEOF
+#!/usr/bin/env bash
+xh --ignore-stdin --print=b POST "$HCLOUD_API/servers/$_id/actions/reboot" \
+  Authorization:"Bearer $HCLOUD_TOKEN" > "$_tmpdir/resp.json" 2>/dev/null
+REQEOF
+chmod +x "$_tmpdir/req.sh"
+
+gum spin --spinner dot --title "rebooting $HCLOUD_SERVER_NAME (id=$_id)..." -- "$_tmpdir/req.sh" || true
+
+_resp=$(cat "$_tmpdir/resp.json")
+
+if echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected the request:"
+  echo "$_resp" | jq
+  exit 1
+fi
+
+gum style --foreground 2 "==> reboot initiated: $HCLOUD_SERVER_NAME"
