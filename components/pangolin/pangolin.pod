@@ -1,0 +1,24 @@
+# All three containers join this pod and share one network namespace, so they
+# reach each other over localhost (traefik/gerbil configs point at localhost:3001).
+# 127.0.0.1). Ports are published here, at the pod level — NOT on the individual
+# containers. This is required: Gerbil creates WireGuard tunnel interfaces in
+# the shared namespace, and Traefik must reach the tunnel endpoint IPs
+# (100.89.137.0/20 CGNAT range) to proxy traffic to tunneled resources.
+[Unit]
+Description=Pangolin edge pod
+Wants=network-online.target
+After=network-online.target
+
+[Pod]
+PodName=pangolin
+PublishPort=80:80/tcp
+PublishPort=443:443/tcp
+PublishPort=443:443/udp
+PublishPort=51820:51820/udp
+PublishPort=21820:21820/udp
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -1,0 +1,20 @@
+[Defaults]
+appName = "My Network"
+badgerVersion = "v1.4.1"
+
+[[Services]]
+Service = "pangolin-pod.service"
+
+[[Services]]
+Service = "app.service"
+RestartedBy = ["app.container", "config/config.yml", "config/privateConfig.yml"]
+
+[[Services]]
+Service = "gerbil.service"
+RestartedBy = ["gerbil.container"]
+
+[[Services]]
+Service = "traefik.service"
+RestartedBy = ["traefik.container", "traefik/traefik_config.yml", "traefik/dynamic_config.yml"]
+
+Secrets = ["serverSecret", "cfDnsApiToken"]

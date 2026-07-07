@@ -1,0 +1,18 @@
+[Unit]
+Description=Gerbil (WireGuard manager)
+After=app.service
+Requires=app.service
+
+[Container]
+Pod=pangolin.pod
+ContainerName=gerbil
+Image=docker.io/fosrl/gerbil:1.4.2@sha256:6d640c114be57435b37b5a042872f116b53e984546f351820d6a758436d0f991
+AddCapability=NET_ADMIN SYS_MODULE
+Exec=--reachableAt=http://127.0.0.1:3003 --generateAndSaveKeyTo=/var/config/key --remoteConfig=http://localhost:3001/api/v1/gerbil/get-config --reportBandwidthTo=http://localhost:3001/api/v1/gerbil/receive-bandwidth
+Volume={{ m_dataDir "pangolin" }}/config:/var/config:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target
