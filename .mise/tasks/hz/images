@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="List available Hetzner system images (filter with grep, e.g. mise hz:images | grep flatcar)"
 set -euo pipefail
+export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
-fnox exec -- xh --ignore-stdin --check-status --print=b GET "$HCLOUD_API/images" \
+xh --ignore-stdin --check-status --print=b GET "$HCLOUD_API/images" \
   Authorization:"Bearer $HCLOUD_TOKEN" \
   type==system \
 | jq -r '.images[] | "\(.name)\t\(.description)\t\(.status)"'
