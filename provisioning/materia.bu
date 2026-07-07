@@ -138,6 +138,9 @@ systemd:
     # Enable the materia timer at first boot.
     - name: materia-update.timer
       enabled: true
+    # Enable the podman socket so the materia container can talk to podman.
+    - name: podman.socket
+      enabled: true
 
 passwd:
   users:
