@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Render Ignition — fetches age key + SSH pubkey from Proton Pass via fnox, never written to repo tree"
+#MISE sources=["provisioning/materia.bu"]
+#MISE outputs=["provisioning/materia.ign"]
 set -euo pipefail
 
 # REPO_URL must be set — run `mise setup:local` first.
