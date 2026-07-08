@@ -27,7 +27,6 @@ MATERIA_SOPS__BASE_DIR = "attributes"
 
 # --- Hetzner Cloud provisioning (override per deployment in .mise.local.toml) ---
 HCLOUD_API         = "https://api.hetzner.cloud/v1"
-HCLOUD_TOKEN       = ""  # placeholder — resolved at runtime by fnox exec
 HCLOUD_SERVER_TYPE = "cx23"           # 2 vCPU / 4 GB RAM
 HCLOUD_LOCATION    = "hel1"           # Helsinki
 HCLOUD_SERVER_NAME = "materia"
