@@ -1,22 +1,35 @@
 #!/usr/bin/env bash
-#MISE description="Ensure a fresh Flatcar snapshot exists on Hetzner; refresh if missing or older than FLATCAR_SNAPSHOT_MAX_AGE_DAYS"
+#MISE description="Ensure a fresh Flatcar snapshot exists on Hetzner; refresh if missing or older than usage_max_age days"
+set -e
+
+#USAGE flag "--arch <architecture>" help="Image architecture" default="x86" {
+#USAGE   choices "x86" "arm"
+#USAGE }
+#USAGE flag "--max-age <days>" help="Maximum age of snapshot in days" default="30"
+#USAGE flag "--channel <channel>" help="Flatcar channel" default="stable" {
+#USAGE   choices "stable" "beta" "alpha" "lts"
+#USAGE }
+
 set -euo pipefail
-export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 # All diagnostic output goes to stderr — stdout carries only the resulting snapshot id
 # (callers do `_snap_id=$(mise hz:ensure-image)`).
 
 _query() {
-  xh --ignore-stdin --check-status --print=b \
-    GET "$HCLOUD_API/images?type=snapshot&label_selector=os%3Dflatcar&architecture=x86&sort=created:desc" \
-    Authorization:"Bearer $HCLOUD_TOKEN" 2>/dev/null
+    fnox exec -- hcloud image list \
+        --type snapshot \
+        --selector os=flatcar,flatcar-channel=stable \
+        --architecture "${usage_arch?}" \
+        --sort created:desc \
+        --output json \
+        2>/dev/null
 }
 
-_max_age_days="${FLATCAR_SNAPSHOT_MAX_AGE_DAYS:-30}"
+_max_age_days="${usage_max_age:-30}"
 
 _resp=$(_query)
-_id=$(echo "$_resp" | jq -r '.images[0].id // empty')
-_created=$(echo "$_resp" | jq -r '.images[0].created // empty')
+_id=$(echo "$_resp" | jq -r '.[0].id // empty')
+_created=$(echo "$_resp" | jq -r '.[0].created // empty')
 
 _stale=0
 if [[ -n "$_id" ]]; then
@@ -32,16 +45,16 @@ fi
 
 if [[ -z "$_id" || "$_stale" -eq 1 ]]; then
   _old_id="$_id"
-  mise hz:upload-image >&2
-  _id=$(_query | jq -r '.images[0].id // empty')
+  mise hz:upload-image --channel "${usage_channel:?}" >&2
+  _id=$(_query | jq -r '.[0].id // empty')
   if [[ -z "$_id" ]]; then
     gum style --foreground 1 "error: snapshot upload did not produce a queryable image" >&2
     exit 1
   fi
   if [[ -n "$_old_id" && "$_old_id" != "$_id" ]]; then
     gum style --foreground 8 "==> deleting stale snapshot id=$_old_id" >&2
-    xh --ignore-stdin --print=b DELETE "$HCLOUD_API/images/$_old_id" \
-      Authorization:"Bearer $HCLOUD_TOKEN" >/dev/null 2>&1 || true
+
+    fnox exec -- hcloud image delete "$_old_id" >/dev/null 2>&1 || true
   fi
 fi
 
