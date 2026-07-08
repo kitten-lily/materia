@@ -89,11 +89,12 @@ components/
       dynamic_config.yml.gotmpl  # Traefik dynamic config (templated)
 provisioning/
   materia.bu                    # Butane config (OS setup + materia quadlet + age key)
-mise.toml                       # pinned toolchain (age, sops, fnox, butane, etc.)
+  ghostty.terminfo.b64          # pre-compiled Ghostty terminfo (base64)
+mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, butane, etc.)
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, setup/*, hz/*, clean)
+.mise/tasks/                    # mise file tasks (ign, hz/*, clean)
 ```
 
 ## How a host reconciles
@@ -220,11 +221,25 @@ service, no GitHub App credentials (materia replaces all of those).
 1. `mise ign` — fetches age private key + SSH pubkey from Proton Pass via fnox,
    detects REPO_URL from git origin, substitutes placeholders in the .bu, runs
    `butane --strict`, emits `provisioning/materia.ign`. Treat the .ign as
-   secret — never commit. Override Hetzner defaults (server name, type,
-   location) in `.mise.local.toml` if needed.
+   secret — never commit.
 2. `mise hz:upload-image` — one-time Flatcar snapshot upload to Hetzner.
 3. `mise hz:create` — creates server; Hetzner passes .ign as `user_data` to
    Flatcar at first boot.
+
+### Hetzner tasks
+
+All `hz:*` tasks use the `hcloud` CLI (not raw HTTP) and resolve `HCLOUD_TOKEN`
+via `fnox exec`. Override the server name with `--server-name` or by setting
+`HCLOUD_SERVER_NAME` in `.mise.local.toml`.
+
+| Task | Description |
+|---|---|
+| `mise hz:upload-image` | Upload Flatcar image as a Hetzner snapshot |
+| `mise hz:ensure-image` | Ensure a fresh snapshot exists (refreshes if stale) |
+| `mise hz:create` | Create server from snapshot + Ignition |
+| `mise hz:delete` | Delete server (`--confirm` required) |
+| `mise hz:rebuild` | Rebuild server in-place with latest snapshot + Ignition |
+| `mise hz:ssh` | SSH into server as `core@<ip>` |
 
 ## Development conventions
 

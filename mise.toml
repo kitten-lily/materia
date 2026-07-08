@@ -29,7 +29,7 @@ MATERIA_SOPS__BASE_DIR = "attributes"
 # --- Hetzner Cloud provisioning (override per deployment in .mise.local.toml) ---
 HCLOUD_SERVER_NAME = "materia"
 
-# ign, clean, setup/*, hz/* → .mise/tasks/ (file tasks, auto-discovered)
+# ign, clean, hz/* → .mise/tasks/ (file tasks, auto-discovered)
 
 # --- Butane/Ignition transpile ---
 BUTANE_FILE = "provisioning/materia.bu"

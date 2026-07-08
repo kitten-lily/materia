@@ -32,9 +32,14 @@ components/
     traefik/
       traefik_config.yml.gotmpl  # static Traefik config (templated)
       dynamic_config.yml.gotmpl  # dynamic Traefik config (templated)
-mise.toml                    # pinned toolchain (age, sops)
+mise.toml                    # pinned toolchain (age, sops, fnox, hcloud, butane)
+fnox.toml                    # fnox secret injection (Proton Pass provider)
 .sops.yaml                   # SOPS creation rules (age recipient)
 renovate.json5               # Renovate config (image + plugin updates)
+provisioning/
+  materia.bu                 # Butane config (OS setup + materia quadlet)
+  ghostty.terminfo.b64       # pre-compiled Ghostty terminfo (base64)
+.mise/tasks/                 # mise file tasks (ign, hz/*, clean)
 ```
 
 ## How it works
@@ -67,16 +72,14 @@ For host-specific overrides, create `attributes/<hostname>.yml` (also
 SOPS-encrypted). The age private key is baked into Ignition and lives at
 `/etc/materia/key.txt` on the target host.
 
-## Running
+## Provisioning
 
 ```sh
-mise install                   # installs age + sops
-
-export MATERIA_SOURCE__KIND=git
-export MATERIA_SOURCE__URL=https://github.com/owner/materia
-export MATERIA_ATTRIBUTES=sops
-export MATERIA_SOPS__BASE_DIR=attributes
-
-materia plan     # dry-run — validate repo + attributes
-materia update   # apply
+mise install                   # installs age, sops, fnox, hcloud, butane, etc.
+mise ign                       # render Ignition (fetches secrets from Proton Pass via fnox)
+mise hz:upload-image           # one-time Flatcar snapshot upload to Hetzner
+mise hz:create                 # provision server (Ignition passed as user_data)
 ```
+
+Override Hetzner defaults (server name, type, location) with task flags or
+`.mise.local.toml`. See `mise tasks` for all available tasks.
