@@ -7,10 +7,12 @@ sops                = "latest"  # SOPS — encryption for attributes vaults (age
 fnox                = "latest"  # secret injection for hz:* tasks (reads fnox.toml)
 gum                 = "latest"  # TUI prompts for setup tasks
 xh                  = "latest"  # HTTP client for Hetzner API calls
-jq                  = "latest"
+jq                  = "latest"  # JSON query tool
 butane              = "latest"  # Flatcar/CoreOS Butane transpiler
+hcloud              = "latest"  # Hetzner Cloud CLI
 hcloud-upload-image = "latest"  # uploads Flatcar image to Hetzner
 pass-cli            = "latest"  # Proton Pass CLI for secret management
+usage               = "latest"  # Command line parsing for mise
 
 [tool_alias]
 butane = "aqua:coreos/butane"
