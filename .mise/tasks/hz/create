@@ -6,25 +6,13 @@ export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
 _verbose="${usage_verbose:-}"
 
-# SSH key (optional)
-_ssh_keys="[]"
-if [[ -n "${HCLOUD_SSH_KEY:-}" ]]; then
-  _key_id=$(xh --ignore-stdin --check-status --print=b GET "$HCLOUD_API/ssh_keys" \
-    Authorization:"Bearer $HCLOUD_TOKEN" name=="$HCLOUD_SSH_KEY" 2>/dev/null \
-    | jq -r '.ssh_keys[0].id // empty')
-  if [[ -z "$_key_id" ]]; then
-    gum style --foreground 1 "error: SSH key '$HCLOUD_SSH_KEY' not found — run: mise hz:ssh-keys"
-    exit 1
-  fi
-  _ssh_keys=$(jq -n --argjson id "$_key_id" '[$id]')
-  gum style --foreground 8 "==> attaching SSH key: $HCLOUD_SSH_KEY (id=$_key_id)"
-fi
-
 # Ensures a snapshot exists and isn't older than FLATCAR_SNAPSHOT_MAX_AGE_DAYS.
 _snap_id=$(mise hz:ensure-image)
 [[ -n "$_verbose" ]] && gum style --foreground 8 "==> using Flatcar snapshot id=$_snap_id"
 
 # Build request — Flatcar reads user_data as Ignition directly (no cloud-config wrapper).
+# SSH keys are baked into Ignition via passwd.users[].ssh_authorized_keys — Hetzner's
+# ssh_keys parameter is ignored when custom user_data is provided.
 if [[ ! -f "$IGN_FILE" ]]; then
   gum style --foreground 1 "error: $IGN_FILE not found — run: mise ign"
   exit 1
@@ -39,9 +27,8 @@ jq -n \
   --argjson image       "$_snap_id"           \
   --arg     location    "$HCLOUD_LOCATION"    \
   --rawfile user_data   "$IGN_FILE"           \
-  --argjson ssh_keys    "$_ssh_keys"          \
   '{name:$name, server_type:$server_type, image:$image,
-    location:$location, user_data:$user_data, ssh_keys:$ssh_keys}' \
+    location:$location, user_data:$user_data}' \
   > "$_tmpdir/body.json"
 
 cat > "$_tmpdir/req.sh" << REQEOF

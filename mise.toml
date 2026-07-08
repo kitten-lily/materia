@@ -30,7 +30,6 @@ HCLOUD_API         = "https://api.hetzner.cloud/v1"
 HCLOUD_SERVER_TYPE = "cx23"           # 2 vCPU / 4 GB RAM
 HCLOUD_LOCATION    = "hel1"           # Helsinki
 HCLOUD_SERVER_NAME = "materia"
-# HCLOUD_SSH_KEY is optional — set in .mise.local.toml to attach a pre-registered Hetzner SSH key
 
 # Flatcar image upload (hz:upload-image); snapshot is then used directly by hz:create
 FLATCAR_CHANNEL    = "stable"

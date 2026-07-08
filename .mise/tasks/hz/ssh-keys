@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="List SSH keys registered in Hetzner account (name, ID, fingerprint)"
-set -euo pipefail
-export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
-
-xh --check-status --print=b GET "$HCLOUD_API/ssh_keys" \
-  Authorization:"Bearer $HCLOUD_TOKEN" \
-| jq -r '.ssh_keys[] | "\(.id)\t\(.name)\t\(.fingerprint)"'
