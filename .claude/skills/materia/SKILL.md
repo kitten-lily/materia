@@ -54,6 +54,14 @@ Custom snippets are experimental — defined in manifests.
 ## Component manifest (`components/<name>/MANIFEST.toml`)
 
 ```toml
+# Top-level keys MUST come before the first table header. TOML assigns keys
+# to the most recently opened table, so a Secrets line placed after [Defaults]
+# or [[Services]] silently becomes a key of THAT table — the top-level field
+# parses empty and secret creation never appears in the plan, with no error.
+Secrets = ["serverSecret", "cfDnsApiToken"]
+# Attributes listed here are created as podman secrets automatically.
+# Reference them in templates with secretEnv/secretMount.
+
 [Defaults]
 containerTag = "latest"
 # Any default attribute values for this component
@@ -75,10 +83,6 @@ Static = false      # true for .timer files (quadlet-generated services)
 Stopped = false     # don't start the service
 Oneshot = false     # don't check if it stayed running
 Timeout = 0         # seconds for service actions
-
-Secrets = ["serverSecret", "cfDnsApiToken"]
-# Attributes listed here are created as podman secrets automatically.
-# Reference them in templates with secretEnv/secretMount.
 ```
 
 ### Service restart behavior
@@ -203,16 +207,28 @@ base_dir = "attributes"
 
 ## Common patterns
 
-### Bind-mounting config files into containers
+### The data dir is fully managed — runtime state goes in named volumes
+
+Materia treats everything under `/var/lib/materia/components/<name>/` as its
+own: any file it did not install is drift, and the planner schedules a Remove
+for it on **every** run (there is no ignore mechanism). If a container writes
+into a bind-mounted data-dir path — databases, logs, generated keys — materia
+will plan to delete them.
+
+So: bind-mount templated config **files individually**, and give the container
+a named volume for anything it writes:
 
 ```ini
-# In a .container.gotmpl file:
-Volume={{ m_dataDir "pangolin" }}/config:/app/config:z
+# app.container.gotmpl — runtime state in a named volume,
+# templated configs bind-mounted on top:
+Volume=app-config.volume:/app/config
+Volume={{ m_dataDir "pangolin" }}/config/config.yml:/app/config/config.yml:z
 ```
 
 Materia installs `config/config.yml.gotmpl` to
-`/var/lib/materia/components/pangolin/config/config.yml` (templated), and the
-container bind-mounts that directory.
+`/var/lib/materia/components/pangolin/config/config.yml` (templated); the
+file bind-mount overlays it into the volume-backed directory. Never mount the
+whole data dir as an app-writable directory.
 
 ### Conditional resources
 
