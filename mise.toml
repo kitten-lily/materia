@@ -28,16 +28,7 @@ MATERIA_ATTRIBUTES = "sops"
 MATERIA_SOPS__BASE_DIR = "attributes"
 
 # --- Hetzner Cloud provisioning (override per deployment in .mise.local.toml) ---
-HCLOUD_API         = "https://api.hetzner.cloud/v1"
-HCLOUD_SERVER_TYPE = "cx23"           # 2 vCPU / 4 GB RAM
-HCLOUD_LOCATION    = "hel1"           # Helsinki
 HCLOUD_SERVER_NAME = "materia"
-
-# Flatcar image upload (hz:upload-image); snapshot is then used directly by hz:create
-FLATCAR_CHANNEL    = "stable"
-FLATCAR_VERSION    = "current"        # pin a specific version for reproducibility
-# hz:ensure-image refreshes the snapshot past this age (roughly Flatcar's release cadence)
-FLATCAR_SNAPSHOT_MAX_AGE_DAYS = "30"
 
 # ign, clean, setup/*, hz/* → .mise/tasks/ (file tasks, auto-discovered)
 
