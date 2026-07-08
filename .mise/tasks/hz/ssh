@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 #MISE description="SSH into Hetzner server as core@<ip>"
+#USAGE flag "--server-name <name>" help="Server name"
+
 set -euo pipefail
 
-IFS=$'\t' read -r _id _ip < <(mise hz:_server-id 2>/dev/null)
+_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 
 if [[ -z "$_ip" ]]; then
-  gum style --foreground 1 "error: no server named '$HCLOUD_SERVER_NAME'"
+  gum style --foreground 1 "error: no server named '$_server_name'"
   exit 1
 fi
 
