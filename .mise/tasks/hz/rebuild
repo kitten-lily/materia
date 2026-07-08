@@ -3,20 +3,37 @@
 #USAGE flag "--confirm" help="Confirm deletion of existing server (required if server exists)"
 #USAGE flag "--noninteractive" help="Exit 1 instead of 0 when --confirm is not passed (for scripting)"
 #USAGE flag "-v --verbose" help="Pass --verbose to hz:create"
+#USAGE flag "--server-name <name>" help="Server name"
+#USAGE flag "--ign-file <path>" help="Path to Ignition config file"
 set -euo pipefail
 
-IFS=$'\t' read -r _id _ip < <(mise hz:_server-id 2>/dev/null)
+_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+_ign_file="${usage_ign_file:-$IGN_FILE}"
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 
 if [[ -n "$_id" ]]; then
   if [[ -z "${usage_confirm:-}" ]]; then
-    gum style --foreground 3 "==> pass --confirm to rebuild server: $HCLOUD_SERVER_NAME (will delete id=$_id)"
+    gum style --foreground 3 "==> pass --confirm to rebuild server: $_server_name"
     [[ -n "${usage_noninteractive:-}" ]] && exit 1
     exit 0
   fi
-  mise hz:delete --confirm
+
+  # Ensures a snapshot exists and isn't too old.
+  _snap_id=$(mise hz:ensure-image)
+  [[ -n "${usage_verbose:-}" ]] && gum style --foreground 8 "==> using Flatcar snapshot id=$_snap_id"
+
+  gum spin --spinner dot \
+    --title "rebuilding server: $_server_name (snapshot $_snap_id)" \
+    -- fnox exec -- hcloud server rebuild \
+      --image "$_snap_id" \
+      --user-data-from-file "$_ign_file" $_id || true
+
+  gum style --foreground 2 "==> server rebuilt — Flatcar boots with Ignition applied directly"
+  exit 0
 fi
 
 _verbose_flag=()
 [[ -n "${usage_verbose:-}" ]] && _verbose_flag=(--verbose)
 
-mise hz:create "${_verbose_flag[@]}"
+mise hz:create "${_verbose_flag[@]}" --server-name "$_server_name"
