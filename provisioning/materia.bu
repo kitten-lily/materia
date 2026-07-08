@@ -105,6 +105,7 @@ storage:
           Environment=MATERIA_SOURCE__URL=${REPO_URL}
           Environment=MATERIA_ATTRIBUTES="sops"
           Environment=MATERIA_SOPS__BASE_DIR="attributes"
+          Environment=SOPS_AGE_KEY_FILE=/etc/materia/key.txt
 
           SecurityLabelDisable=true
           HostName=%q
