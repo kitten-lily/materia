@@ -1,0 +1,4 @@
+# Runtime state shared by app + gerbil (db, logs, generated keys, generated
+# traefik configs). Lives in a named volume so materia doesn't see it as drift
+# in its managed data dir — materia removes any file it didn't install.
+[Volume]
