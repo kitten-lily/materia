@@ -1,3 +1,5 @@
+Secrets = ["serverSecret", "cfDnsApiToken"]
+
 [Defaults]
 appName = "My Network"
 badgerVersion = "v1.4.1"
@@ -16,5 +18,3 @@ RestartedBy = ["gerbil.container"]
 [[Services]]
 Service = "traefik.service"
 RestartedBy = ["traefik.container", "traefik/traefik_config.yml", "traefik/dynamic_config.yml"]
-
-Secrets = ["serverSecret", "cfDnsApiToken"]
