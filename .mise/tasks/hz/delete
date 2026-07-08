@@ -2,42 +2,27 @@
 #MISE description="Delete Hetzner server by name (requires --confirm)"
 #USAGE flag "--confirm" help="Confirm deletion (required)"
 #USAGE flag "--noninteractive" help="Exit 1 instead of 0 when --confirm is not passed (for scripting)"
+#USAGE flag "--server-name <name>" help="Server name"
 set -euo pipefail
-export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
 
-IFS=$'\t' read -r _id _ip < <(mise hz:_server-id 2>/dev/null)
+_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 
 if [[ -z "$_id" ]]; then
-  gum style --foreground 8 "==> no server named '$HCLOUD_SERVER_NAME' — nothing to delete"
+  gum style --foreground 8 "==> no server named '$_server_name' — nothing to delete"
   exit 0
 fi
 
 if [[ -z "${usage_confirm:-}" ]]; then
-  gum style --foreground 3 "==> pass --confirm to delete server: $HCLOUD_SERVER_NAME"
+  gum style --foreground 3 "==> pass --confirm to delete server: $_server_name"
   [[ -n "${usage_noninteractive:-}" ]] && exit 1
   exit 0
 fi
 
-gum style --foreground 8 "==> deleting server: $HCLOUD_SERVER_NAME (id=$_id, ip=$_ip)"
+gum style --foreground 8 "==> deleting server: $_server_name (id=$_id, ip=$_ip)"
 
-_tmpdir=$(mktemp -d)
-trap 'rm -rf "$_tmpdir"' EXIT
+gum spin --spinner dot --title "deleting $_server_name..." -- \
+  fnox exec -- hcloud server delete $_id || true
 
-cat > "$_tmpdir/req.sh" << REQEOF
-#!/usr/bin/env bash
-xh --ignore-stdin --print=b DELETE "$HCLOUD_API/servers/$_id" \
-  Authorization:"Bearer $HCLOUD_TOKEN" > "$_tmpdir/resp.json" 2>/dev/null
-REQEOF
-chmod +x "$_tmpdir/req.sh"
-
-gum spin --spinner dot --title "deleting $HCLOUD_SERVER_NAME..." -- "$_tmpdir/req.sh" || true
-
-_resp=$(cat "$_tmpdir/resp.json")
-
-if echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
-  gum style --foreground 1 "error: Hetzner API rejected the request:"
-  echo "$_resp" | jq
-  exit 1
-fi
-
-gum style --foreground 2 "==> deleted: $HCLOUD_SERVER_NAME (id=$_id)"
+gum style --foreground 2 "==> deleted: $_server_name (id=$_id)"
