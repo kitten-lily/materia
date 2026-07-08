@@ -6,7 +6,6 @@ age                 = "latest"  # age key generation + encryption (SOPS backend)
 sops                = "latest"  # SOPS — encryption for attributes vaults (age backend)
 fnox                = "latest"  # secret injection for hz:* tasks (reads fnox.toml)
 gum                 = "latest"  # TUI prompts for setup tasks
-xh                  = "latest"  # HTTP client for Hetzner API calls
 jq                  = "latest"  # JSON query tool
 butane              = "latest"  # Flatcar/CoreOS Butane transpiler
 hcloud              = "latest"  # Hetzner Cloud CLI
