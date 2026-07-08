@@ -172,17 +172,25 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 - **Secrets prefix.** Materia prefixes podman secrets with `materia-` by
   default (`containers.secrets_prefix` config). The `secretEnv`/`secretMount`
   macros handle this transparently — don't manually prefix the name.
-- **Config files are bind-mounted from the data dir.** The `.container` files
-  mount `{{ m_dataDir "pangolin" }}/config:/app/config:z` etc. Materia installs
-  the templated config files there, so containers see them automatically.
-- **Podman secrets may not be auto-created.** Materia's `Secrets` manifest list
-  + `secretEnv` macro should create podman secrets automatically, but in the
-  current version the secret creation step doesn't appear in the plan and
-  secrets are not created. Workaround: create them manually after the first
-  `materia update` run:
-  `echo -n "value" | sudo podman secret create materia-<attrName> -`
-  (materia prefixes secret names with `materia-`). The `secretEnv` macro
-  renders to `Secret=materia-<attrName>,type=env,target=TARGET` in the quadlet.
+- **Templated config files are bind-mounted individually from the data dir.**
+  Materia installs templated files to `{{ m_dataDir "pangolin" }}/config/`;
+  `.container` files bind-mount each file on top of the runtime volume
+  (`Volume=...config/config.yml:/app/config/config.yml:z`). Never bind-mount
+  the whole data dir as an app-writable directory — see next gotcha.
+- **The data dir is fully managed — app-writable paths need named volumes.**
+  Materia treats everything under `/var/lib/materia/components/<name>/` as its
+  own: any file it didn't install is drift, planned for removal on every run
+  (the planner has no ignore mechanism). Pangolin's db, gerbil's generated key,
+  logs, and generated traefik configs were all scheduled for deletion. Runtime
+  state lives in named volumes (`pangolin-config.volume`) instead.
+- **`Secrets` must be a top-level manifest key.** In `MANIFEST.toml`, the
+  `Secrets = [...]` line has to appear BEFORE the first table header
+  (`[Defaults]`, `[[Services]]`, ...). TOML assigns keys to the most recently
+  opened table, so a `Secrets` line inside/after a table silently becomes a
+  table key, the top-level field parses empty, and secret creation just never
+  appears in the plan — no error anywhere. This (not the attributes engine) was
+  why podman secrets weren't created; with it fixed, SOPS creates them fine and
+  no manual `podman secret create` workaround is needed.
 - **Containers reach each other over localhost.** In a pod, all containers
   share one network namespace. Traefik/Gerbil configs reference `localhost:3001`,
   not `app:3001`. The `server.internal_hostname` in `config.yml` is `localhost`.
@@ -223,6 +231,15 @@ service, no GitHub App credentials (materia replaces all of those).
   decrypts the vault, installs quadlets/configs, manages podman secrets,
   restarts services. Timer fires daily; for faster syncs, trigger externally.
 - **SSH key** for `core` user — baked from Proton Pass.
+
+### Butane changes don't reach a running host
+
+Ignition runs once, at first boot. Committing a change to `materia.bu` (e.g.
+the materia quadlet's env vars) does nothing to an already-provisioned server —
+the host keeps running the config it was born with. Either rebuild the server
+(`mise hz:rebuild`) or hand-edit the target file on the host (e.g.
+`/etc/containers/systemd/materia-update.container` + `systemctl daemon-reload`)
+and mirror the change in the .bu for the next provision.
 
 ### Transpile flow
 
