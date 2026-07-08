@@ -140,9 +140,24 @@ systemd:
     # Enable the materia timer at first boot.
     - name: materia-update.timer
       enabled: true
-    # Enable the podman socket so the materia container can talk to podman.
-    - name: podman.socket
+    # The podman sysext isn't loaded when Ignition processes systemd units,
+    # so `enabled: true` on podman.socket is silently ignored. This oneshot
+    # unit runs after sysexts are merged and enables the socket manually.
+    - name: enable-podman-socket.service
       enabled: true
+      contents: |
+        [Unit]
+        Description=Enable podman socket after sysexts are loaded
+        After=systemd-sysext.service
+        Requires=systemd-sysext.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/bin/systemctl enable --now podman.socket
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
 
 passwd:
   users:
