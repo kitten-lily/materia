@@ -4,8 +4,12 @@
 #MISE outputs=["provisioning/materia.ign"]
 set -euo pipefail
 
-# REPO_URL must be set — run `mise setup:local` first.
-: "${REPO_URL:?REPO_URL not set — run: mise setup:local}"
+# REPO_URL is detected from git origin — no manual setup needed.
+REPO_URL=$(git -C "$PWD" remote get-url origin 2>/dev/null || true)
+if [[ -z "$REPO_URL" ]]; then
+  echo "error: no git origin remote found — set up a remote first" >&2
+  exit 1
+fi
 
 # All secrets land in a tmpdir that is deleted on exit — nothing touches the repo tree.
 tmpdir=$(mktemp -d)

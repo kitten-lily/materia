@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Write .mise.local.toml with non-secret deployment vars (repo URL, Hetzner config)"
+#MISE description="Write .mise.local.toml with non-secret deployment vars (Hetzner config)"
 #USAGE flag "--scripted" help="Skip prompts for values already set; still prompts for missing ones. Suppresses footer."
 # Prereqs: gum on PATH (`mise install`). Output is gitignored; safe to re-run to update values.
 # Secrets (HCLOUD_TOKEN) go in Proton Pass — resolved by fnox at task runtime.
@@ -11,19 +11,6 @@ _scripted="${usage_scripted:-}"
 if [ -f "$LOCAL" ] && [[ -z "$_scripted" ]]; then
   gum style --foreground 3 "  .mise.local.toml exists — pre-filling from current values."
 fi
-
-echo ""
-gum style --bold "── Git Repo ─────────────────────────────────────────────────────────"
-gum style --foreground 8 "  Repo URL that materia clones on the target host. Any form works (SSH or HTTPS)."
-echo ""
-
-_cur_repo=$(mise setup:_existing "$LOCAL" REPO_URL)
-if [ -z "$_cur_repo" ]; then
-  _origin=$(git -C "$PWD" remote get-url origin 2>/dev/null || true)
-  _cur_repo="$_origin"
-fi
-REPO_URL=$(mise setup:_input "$_cur_repo" "$_scripted" "  Repo URL: " "https://github.com/owner/materia")
-[ -z "$REPO_URL" ] && { echo "REPO_URL required" >&2; exit 1; }
 
 echo ""
 gum style --bold "── Hetzner Cloud ────────────────────────────────────────────────────"
@@ -46,7 +33,6 @@ HCLOUD_LOCATION=$(mise setup:_input "${_cur_loc:-hel1}" "$_scripted" "  Location
   echo "# Local deployment overrides — gitignored. Re-run \`mise setup:local\` to update."
   echo "# Secrets (HCLOUD_TOKEN) are in Proton Pass, resolved by fnox."
   echo "[env]"
-  [ -n "$REPO_URL" ]             && echo "REPO_URL = \"${REPO_URL}\""
   [ -n "$HCLOUD_SERVER_NAME" ] && echo "HCLOUD_SERVER_NAME = \"${HCLOUD_SERVER_NAME}\""
   [ -n "$HCLOUD_SERVER_TYPE" ] && echo "HCLOUD_SERVER_TYPE = \"${HCLOUD_SERVER_TYPE}\""
   [ -n "$HCLOUD_LOCATION" ]    && echo "HCLOUD_LOCATION = \"${HCLOUD_LOCATION}\""
