@@ -175,6 +175,14 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 - **Config files are bind-mounted from the data dir.** The `.container` files
   mount `{{ m_dataDir "pangolin" }}/config:/app/config:z` etc. Materia installs
   the templated config files there, so containers see them automatically.
+- **Podman secrets may not be auto-created.** Materia's `Secrets` manifest list
+  + `secretEnv` macro should create podman secrets automatically, but in the
+  current version the secret creation step doesn't appear in the plan and
+  secrets are not created. Workaround: create them manually after the first
+  `materia update` run:
+  `echo -n "value" | sudo podman secret create materia-<attrName> -`
+  (materia prefixes secret names with `materia-`). The `secretEnv` macro
+  renders to `Secret=materia-<attrName>,type=env,target=TARGET` in the quadlet.
 - **Containers reach each other over localhost.** In a pod, all containers
   share one network namespace. Traefik/Gerbil configs reference `localhost:3001`,
   not `app:3001`. The `server.internal_hostname` in `config.yml` is `localhost`.

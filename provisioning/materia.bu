@@ -74,6 +74,8 @@ storage:
           kind = "git"
           url = "${REPO_URL}"
 
+          attributes = "sops"
+
           [sops]
           base_dir = "attributes"
 
