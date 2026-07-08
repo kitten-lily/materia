@@ -217,13 +217,13 @@ service, no GitHub App credentials (materia replaces all of those).
 
 ### Transpile flow
 
-1. `mise setup:local` — writes `.mise.local.toml` (REPO_URL, Hetzner config).
-2. `mise ign` — fetches age private key + SSH pubkey from Proton Pass via fnox,
-   substitutes `${REPO_URL}` and `${CORE_SSH_PUBKEY}` in the .bu, runs
+1. `mise ign` — fetches age private key + SSH pubkey from Proton Pass via fnox,
+   detects REPO_URL from git origin, substitutes placeholders in the .bu, runs
    `butane --strict`, emits `provisioning/materia.ign`. Treat the .ign as
-   secret — never commit.
-3. `mise hz:upload-image` — one-time Flatcar snapshot upload to Hetzner.
-4. `mise hz:create` — creates server; Hetzner passes .ign as `user_data` to
+   secret — never commit. Override Hetzner defaults (server name, type,
+   location) in `.mise.local.toml` if needed.
+2. `mise hz:upload-image` — one-time Flatcar snapshot upload to Hetzner.
+3. `mise hz:create` — creates server; Hetzner passes .ign as `user_data` to
    Flatcar at first boot.
 
 ## Development conventions
