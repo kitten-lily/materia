@@ -1,48 +1,44 @@
 #!/usr/bin/env bash
 #MISE description="Create Hetzner server from Flatcar snapshot with Ignition applied at first boot"
+
 #USAGE flag "-v --verbose" help="Print SSH key info and full API responses"
+#USAGE flag "--server-type <type>" help="Server type" default="cx23"
+#USAGE flag "--server-name <name>" help="Server name"
+#USAGE flag "--server-location <location>" help="Server location" default="hel1"
+#USAGE flag "--ign-file <path>" help="Ignition file path"
+
 set -euo pipefail
-export HCLOUD_TOKEN=$(fnox get HCLOUD_TOKEN)
+
+_server_type="${usage_server_type:?}"
+_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+_server_location="${usage_server_location:?}"
+_ign_file="${usage_ign_file:-$IGN_FILE}"
 
 _verbose="${usage_verbose:-}"
 
-# Ensures a snapshot exists and isn't older than FLATCAR_SNAPSHOT_MAX_AGE_DAYS.
+# Ensures a snapshot exists and isn't too old.
 _snap_id=$(mise hz:ensure-image)
 [[ -n "$_verbose" ]] && gum style --foreground 8 "==> using Flatcar snapshot id=$_snap_id"
 
 # Build request — Flatcar reads user_data as Ignition directly (no cloud-config wrapper).
 # SSH keys are baked into Ignition via passwd.users[].ssh_authorized_keys — Hetzner's
 # ssh_keys parameter is ignored when custom user_data is provided.
-if [[ ! -f "$IGN_FILE" ]]; then
-  gum style --foreground 1 "error: $IGN_FILE not found — run: mise ign"
+if [[ ! -f "$_ign_file" ]]; then
+  gum style --foreground 1 "error: $_ign_file not found — run: mise ign"
   exit 1
 fi
 
 _tmpdir=$(mktemp -d)
 trap 'rm -rf "$_tmpdir"' EXIT
 
-jq -n \
-  --arg     name        "$HCLOUD_SERVER_NAME" \
-  --arg     server_type "$HCLOUD_SERVER_TYPE" \
-  --argjson image       "$_snap_id"           \
-  --arg     location    "$HCLOUD_LOCATION"    \
-  --rawfile user_data   "$IGN_FILE"           \
-  '{name:$name, server_type:$server_type, image:$image,
-    location:$location, user_data:$user_data}' \
-  > "$_tmpdir/body.json"
-
-cat > "$_tmpdir/req.sh" << REQEOF
-#!/usr/bin/env bash
-xh --ignore-stdin --print=b POST "$HCLOUD_API/servers" \\
-  Authorization:"Bearer $HCLOUD_TOKEN" \\
-  Content-Type:application/json \\
-  @"$_tmpdir/body.json" > "$_tmpdir/resp.json" 2>/dev/null
-REQEOF
-chmod +x "$_tmpdir/req.sh"
-
 gum spin --spinner dot \
-  --title "creating server: $HCLOUD_SERVER_NAME ($HCLOUD_SERVER_TYPE @ $HCLOUD_LOCATION, snapshot $_snap_id)" \
-  -- "$_tmpdir/req.sh" || true
+  --title "creating server: $_server_name ($_server_type @ $_server_location, snapshot $_snap_id)" \
+  -- fnox exec -- hcloud server create --output json \
+    --name "$_server_name" \
+    --type "$_server_type" \
+    --image "$_snap_id" \
+    --location "$_server_location" \
+    --user-data-from-file "$_ign_file" > "$_tmpdir/resp.json" || true
 
 _resp=$(cat "$_tmpdir/resp.json")
 [[ -n "$_verbose" ]] && echo "$_resp" | jq
