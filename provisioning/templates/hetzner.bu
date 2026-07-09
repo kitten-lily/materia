@@ -44,6 +44,9 @@ storage:
     # Hosts.<name> assignment. SERVER_NAME is substituted at transpile time.
     - path: /etc/hostname
       mode: 0644
+      # Flatcar's image ships /etc/hostname; without overwrite Ignition
+      # fails first boot when the existing contents differ.
+      overwrite: true
       contents:
         inline: "${SERVER_NAME}\n"
 
