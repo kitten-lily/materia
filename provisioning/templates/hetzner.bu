@@ -1,11 +1,21 @@
-# Butane config for the Materia edge node on Flatcar — pure-podman + materia-managed runtime.
+# Butane template for any Hetzner Cloud Flatcar server — pure-podman +
+# materia-managed runtime. Rendered per-server by `mise ign --server-name <n>`
+# into provisioning/servers/<n>/materia.ign.
 #
 # Materia replaces the old reconciler, seed-secrets service, webhook, and GitHub App
 # credentials. This Butane carries only OS-level setup + materia installation.
 #
-# Secrets baked at transpile time (via `mise ign`):
+# Substituted at transpile time (via `mise ign`):
+#   - ${SERVER_NAME} → /etc/hostname. Hetzner Cloud's Flatcar image also sets
+#     the guest hostname from the Hetzner server name via its metadata
+#     service, but that happens after Ignition runs and only on Hetzner —
+#     writing it explicitly here removes the dependency on that timing and
+#     keeps this template consistent with provisioning/templates/bare-metal.bu
+#     (no metadata service there, so it's load-bearing on that path).
+#   - ${REPO_URL} → materia source repo
+#   - ${CORE_SSH_PUBKEY} → core user authorized_keys
+#   - ${GHOSTTY_TERMINFO_B64} → terminfo blob
 #   - Age private key → /etc/materia/key.txt (for SOPS vault decryption)
-#   - SSH public key → core user authorized_keys
 # Treat the rendered .ign as a SECRET — never commit.
 
 variant: flatcar
@@ -29,6 +39,14 @@ storage:
       overwrite: true
 
   files:
+    # Explicit hostname — ties the OS hostname to this server's name, which
+    # materia's m_facts "hostname" macro uses to resolve MANIFEST.toml's
+    # Hosts.<name> assignment. SERVER_NAME is substituted at transpile time.
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: "${SERVER_NAME}\n"
+
     # Podman requires a policy.json to allow image pulls; Flatcar doesn't ship one.
     - path: /etc/containers/policy.json
       mode: 0644

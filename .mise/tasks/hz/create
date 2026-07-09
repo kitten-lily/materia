@@ -2,17 +2,31 @@
 #MISE description="Create Hetzner server from Flatcar snapshot with Ignition applied at first boot"
 
 #USAGE flag "-v --verbose" help="Print SSH key info and full API responses"
-#USAGE flag "--server-type <type>" help="Server type" default="cx23"
 #USAGE flag "--server-name <name>" help="Server name"
-#USAGE flag "--server-location <location>" help="Server location" default="hel1"
-#USAGE flag "--ign-file <path>" help="Ignition file path"
+#USAGE flag "--server-type <type>" help="Server type (defaults to server.toml's hetzner.type)"
+#USAGE flag "--server-location <location>" help="Server location (defaults to server.toml's hetzner.location)"
+#USAGE flag "--ign-file <path>" help="Ignition file path (defaults to provisioning/servers/<name>/materia.ign)"
 
 set -euo pipefail
 
-_server_type="${usage_server_type:?}"
-_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
-_server_location="${usage_server_location:?}"
-_ign_file="${usage_ign_file:-$IGN_FILE}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_server_toml="provisioning/servers/${_server_name}/server.toml"
+
+if [[ ! -f "$_server_toml" ]]; then
+  gum style --foreground 1 "error: $_server_toml not found — run: mise server:new --server-name $_server_name --type hetzner"
+  exit 1
+fi
+
+_toml_json=$(yq -o=json -p=toml "$_server_toml")
+_type=$(echo "$_toml_json" | jq -r '.type // empty')
+if [[ "$_type" != "hetzner" ]]; then
+  gum style --foreground 1 "error: $_server_toml has type='$_type', not 'hetzner' — use the ipxe/* bare-metal flow instead"
+  exit 1
+fi
+
+_server_type="${usage_server_type:-$(echo "$_toml_json" | jq -r '.hetzner.type // "cx23"')}"
+_server_location="${usage_server_location:-$(echo "$_toml_json" | jq -r '.hetzner.location // "hel1"')}"
+_ign_file="${usage_ign_file:-provisioning/servers/${_server_name}/materia.ign}"
 
 _verbose="${usage_verbose:-}"
 
@@ -24,7 +38,7 @@ _snap_id=$(mise hz:ensure-image)
 # SSH keys are baked into Ignition via passwd.users[].ssh_authorized_keys — Hetzner's
 # ssh_keys parameter is ignored when custom user_data is provided.
 if [[ ! -f "$_ign_file" ]]; then
-  gum style --foreground 1 "error: $_ign_file not found — run: mise ign"
+  gum style --foreground 1 "error: $_ign_file not found — run: mise ign --server-name $_server_name"
   exit 1
 fi
 

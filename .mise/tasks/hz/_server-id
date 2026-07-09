@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-#MISE description="Internal: resolve Hetzner server id+ip by HCLOUD_SERVER_NAME (hidden helper)"
+#MISE description="Internal: resolve Hetzner server id+ip by --server-name (hidden helper)"
 #MISE hide=true
 
 #USAGE flag "--server-name <name>" help="Server name"
 set -euo pipefail
 
-_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
 
 _resp=$(fnox exec -- hcloud server describe $_server_name --output json)
 
