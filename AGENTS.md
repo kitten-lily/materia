@@ -265,6 +265,17 @@ via `fnox exec`. Override the server name with `--server-name` or by setting
 | `mise hz:delete` | Delete server (`--confirm` required) |
 | `mise hz:rebuild` | Rebuild server in-place with latest snapshot + Ignition |
 | `mise hz:ssh` | SSH into server as `core@<ip>` |
+| `mise hz:pull-config` | Backup pangolin runtime volumes to a local tarball (before rebuild) |
+| `mise hz:push-config` | Restore tarball into pangolin runtime volumes (after rebuild) |
+
+`hz:pull-config`/`hz:push-config` operate on the named podman volumes
+(`systemd-pangolin-config`, `systemd-letsencrypt`), not the materia data dir —
+templated configs are re-rendered by materia and don't need backup. The
+tarball layout mirrors the container's `/app/config` (letsencrypt as a
+subdirectory), so backups made by the old pangolin-edge repo's tasks against
+`/var/lib/pangolin/config` push straight into a materia host. `push-config`
+works before the first `materia-update` run: it pre-creates the volumes with
+the quadlet names and the quadlet units reuse them (`--ignore`).
 
 ## Development conventions
 

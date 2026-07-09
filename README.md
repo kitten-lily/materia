@@ -81,5 +81,13 @@ mise hz:upload-image           # one-time Flatcar snapshot upload to Hetzner
 mise hz:create                 # provision server (Ignition passed as user_data)
 ```
 
+To preserve pangolin state across a rebuild:
+
+```sh
+mise hz:pull-config            # backup runtime volumes to ./pangolin-backup.tar.gz
+mise hz:rebuild --confirm      # rebuild server from latest snapshot + Ignition
+mise hz:push-config            # restore the backup into the fresh server's volumes
+```
+
 Override Hetzner defaults (server name, type, location) with task flags or
 `.mise.local.toml`. See `mise tasks` for all available tasks.
