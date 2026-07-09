@@ -124,7 +124,7 @@ storage:
           Type=oneshot
           # Dead-man's-switch pings (healthchecks.io slug mode). Leading "-"
           # keeps a down monitoring endpoint from blocking or failing the
-          # update itself. $$ is systemd escaping — the shell sees $EXIT_STATUS.
+          # update itself. $$ is systemd escaping - the shell sees $EXIT_STATUS.
           ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null ${HC_PING_URL}/materia-update-${SERVER_NAME}/start
           ExecStopPost=-/usr/bin/bash -c 'url="${HC_PING_URL}/materia-update-${SERVER_NAME}"; [ "$$EXIT_STATUS" = "0" ] || url="$$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "$$url"'
 
