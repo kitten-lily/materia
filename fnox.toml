@@ -10,6 +10,10 @@
 #      (public key for the core user on Flatcar, baked into Ignition)
 #   4. Create an item for the age private key — store the full key.txt contents
 #      (AGE-SECRET-KEY-...) in a field named "key"
+#   5. Create a "healthchecks" item with a field named "ping-url" containing
+#      the slug-mode base ping URL (https://hc-ping.com/<ping-key> — project
+#      ping key, NO trailing slash, no slug). Per-server slugs are derived
+#      from the server name at transpile time (materia-update-<server>).
 
 [providers.protonpass]
 type = "proton-pass"
@@ -19,3 +23,4 @@ vault = "materia"
 HCLOUD_TOKEN = { provider = "protonpass", value = "hetzner/API Key" }
 CORE_SSH_PUBKEY = { provider = "protonpass", value = "materia/Public key" }
 AGE_SECRET_KEY = { provider = "protonpass", value = "materia-age/key" }
+HC_PING_URL = { provider = "protonpass", value = "healthchecks/ping-url" }
