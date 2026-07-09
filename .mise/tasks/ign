@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Render Ignition for a server — fetches age key + SSH pubkey from Proton Pass via fnox, never written to repo tree"
+#MISE description="Render Ignition for a server — fetches age key, SSH pubkey + healthchecks ping URL from Proton Pass via fnox, never written to repo tree"
 
 #USAGE flag "--server-name <name>" help="Server name (must have provisioning/servers/<name>/server.toml)"
 #USAGE flag "--debug" help="Render the bare-metal discovery/debug variant (bare-metal servers only)"
@@ -74,6 +74,14 @@ if [[ -z "$_core_pubkey" ]]; then
   exit 1
 fi
 
+# Fetch the healthchecks slug-mode base ping URL (https://hc-ping.com/<ping-key>)
+# — substituted into the materia-update quadlet's dead-man's-switch pings.
+_hc_ping_url=$(fnox get HC_PING_URL)
+if [[ -z "$_hc_ping_url" ]]; then
+  echo "error: healthchecks/ping-url not set in Proton Pass — create the item first (see fnox.toml)" >&2
+  exit 1
+fi
+
 # Read the pre-compiled Ghostty terminfo (base64-encoded in the repo).
 _terminfo_b64=$(tr -d '\n' < provisioning/ghostty.terminfo.b64)
 
@@ -88,12 +96,13 @@ if [[ "$_type" == "bare-metal" && -z "$_debug" && -z "$_data_disks" ]]; then
 fi
 
 # Substitute placeholders in a tmpdir copy of the template.
-# Pubkeys contain / and + but not |, so | is safe as the sed delimiter.
+# Pubkeys and URLs contain / and + or ? but not |, so | is safe as the sed delimiter.
 _rendered_bu="$tmpdir/$(basename "$_template")"
 sed \
   -e "s|\${SERVER_NAME}|${_server_name}|g" \
   -e "s|\${REPO_URL}|${REPO_URL}|g" \
   -e "s|\${CORE_SSH_PUBKEY}|${_core_pubkey}|g" \
+  -e "s|\${HC_PING_URL}|${_hc_ping_url}|g" \
   -e "s|\${GHOSTTY_TERMINFO_B64}|${_terminfo_b64}|g" \
   -e "s|\${DATA_DISKS}|${_data_disks}|g" \
   "$_template" > "$_rendered_bu"

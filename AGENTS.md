@@ -276,6 +276,12 @@ service, no GitHub App credentials (materia replaces all of those).
   restarts services. Timer fires ~2min after boot (so a fresh server
   converges immediately) and daily thereafter; for faster syncs, trigger
   externally.
+  The service pings a healthchecks.io-style check (slug
+  `materia-update-<server>`, base URL substituted at transpile time via
+  `${HC_PING_URL}` from Proton Pass) on start and on success/failure, so a
+  silently-failing or stopped timer gets noticed. Ping failures never block
+  the update (systemd `-` prefix). Size the check for the daily cadence
+  (period 1 day, grace ~6 h) — boot-time runs add extra, harmless ping cycles.
 - **SSH key** for `core` user — baked from Proton Pass (same key across every
   server today — see "Decisions still open").
 
