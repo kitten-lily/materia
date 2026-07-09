@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#MISE description="Restore local tarball into pangolin runtime volumes on server (run after rebuild)"
+#USAGE flag "--src <file>" help="Local tarball path (default: ./pangolin-backup.tar.gz)"
+#USAGE flag "--server-name <name>" help="Server name"
+set -euo pipefail
+
+_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+
+_src="${usage_src:-./pangolin-backup.tar.gz}"
+if [[ ! -f "$_src" ]]; then
+  gum style --foreground 1 "error: no backup at $_src — run: mise hz:pull-config first"
+  exit 1
+fi
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
+if [[ -z "$_ip" ]]; then
+  gum style --foreground 1 "error: no server named '$_server_name'"
+  exit 1
+fi
+
+_ssh=(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+
+# pangolin-pod.service only exists after materia-update has installed quadlets.
+_pod_loaded=0
+if "${_ssh[@]}" "core@$_ip" "sudo systemctl cat pangolin-pod.service" &>/dev/null; then
+  _pod_loaded=1
+  gum style --foreground 8 "==> stopping pangolin-pod on $_server_name ($_ip)"
+  "${_ssh[@]}" "core@$_ip" "sudo systemctl stop pangolin-pod.service || true"
+else
+  gum style --foreground 3 "==> pangolin-pod.service not yet installed (materia-update still pending) — skipping stop"
+fi
+
+gum style --foreground 8 "==> pushing $_src -> pangolin-config + letsencrypt volumes (preserving ownership)"
+# Pre-creating the volumes is safe: the quadlet-generated units run
+# `podman volume create --ignore` with the same names and reuse them.
+# letsencrypt/ in the tarball is split out into its own volume; the rest goes
+# into the config volume. Any config.yml/privateConfig.yml in the tarball is
+# shadowed at runtime by materia's bind-mounted rendered copies.
+_push_script=$(cat <<'EOF'
+set -euo pipefail
+sudo podman volume create --ignore systemd-pangolin-config >/dev/null
+sudo podman volume create --ignore systemd-letsencrypt >/dev/null
+_cfg=$(sudo podman volume inspect systemd-pangolin-config --format '{{.Mountpoint}}')
+_le=$(sudo podman volume inspect systemd-letsencrypt --format '{{.Mountpoint}}')
+_stage=$(sudo mktemp -d)
+trap 'sudo rm -rf "$_stage"' EXIT
+sudo tar -xzf - -C "$_stage"
+if sudo test -d "$_stage/letsencrypt"; then
+  sudo cp -a "$_stage/letsencrypt/." "$_le/"
+  sudo rm -rf "$_stage/letsencrypt"
+fi
+sudo cp -a "$_stage/." "$_cfg/"
+EOF
+)
+cat "$_src" | "${_ssh[@]}" "core@$_ip" "$_push_script"
+
+if [[ "$_pod_loaded" -eq 1 ]]; then
+  gum style --foreground 8 "==> starting pangolin-pod"
+  "${_ssh[@]}" "core@$_ip" "sudo systemctl start pangolin-pod.service"
+  gum style --foreground 2 "==> restore complete — pangolin-pod running on $_server_name"
+else
+  gum style --foreground 2 "==> config restored — materia-update will start pangolin-pod when it runs"
+  gum style --foreground 8 "    watch: mise hz:ssh  then  journalctl -fu materia-update.service"
+fi

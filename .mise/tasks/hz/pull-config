@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Backup pangolin runtime volumes from server to a local tarball (run before rebuild)"
+#USAGE flag "--dest <file>" help="Local tarball path (default: ./pangolin-backup.tar.gz)"
+#USAGE flag "--server-name <name>" help="Server name"
+set -euo pipefail
+
+_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
+if [[ -z "$_ip" ]]; then
+  gum style --foreground 1 "error: no server named '$_server_name'"
+  exit 1
+fi
+
+_dest="${usage_dest:-./pangolin-backup.tar.gz}"
+_ssh=(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+
+gum style --foreground 8 "==> stopping pangolin-pod on $_server_name ($_ip) for consistent snapshot"
+"${_ssh[@]}" "core@$_ip" "sudo systemctl stop pangolin-pod.service || true"
+
+gum style --foreground 8 "==> pulling pangolin-config + letsencrypt volumes -> $_dest"
+# Tarball layout mirrors the container's /app/config: config volume at the
+# root, letsencrypt volume under letsencrypt/. Interchangeable with old
+# pangolin-edge backups of /var/lib/pangolin/config.
+_pull_script=$(cat <<'EOF'
+set -euo pipefail
+_cfg=$(sudo podman volume inspect systemd-pangolin-config --format '{{.Mountpoint}}')
+_le=$(sudo podman volume inspect systemd-letsencrypt --format '{{.Mountpoint}}')
+_stage=$(sudo mktemp -d)
+trap 'sudo rm -rf "$_stage"' EXIT
+sudo cp -a "$_cfg/." "$_stage/"
+sudo mkdir -p "$_stage/letsencrypt"
+sudo cp -a "$_le/." "$_stage/letsencrypt/"
+sudo tar -czf - -C "$_stage" .
+EOF
+)
+"${_ssh[@]}" "core@$_ip" "$_pull_script" > "$_dest"
+
+gum style --foreground 8 "==> restarting pangolin-pod"
+"${_ssh[@]}" "core@$_ip" "sudo systemctl start pangolin-pod.service"
+
+_size=$(du -sh "$_dest" | cut -f1)
+gum style --foreground 2 "==> backup complete: $_dest ($_size)"
+gum style --foreground 8 "    next: mise hz:rebuild --confirm   then: mise hz:push-config"
