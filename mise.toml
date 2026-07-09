@@ -27,7 +27,7 @@ MATERIA_ATTRIBUTES = "sops"
 MATERIA_SOPS__BASE_DIR = "attributes"
 
 # --- Hetzner Cloud provisioning (override per deployment in .mise.local.toml) ---
-HCLOUD_SERVER_NAME = "materia"
+HCLOUD_SERVER_NAME = "flutterina"
 
 # ign, clean, hz/* → .mise/tasks/ (file tasks, auto-discovered)
 
