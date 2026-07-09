@@ -19,3 +19,4 @@ vault = "materia"
 HCLOUD_TOKEN = { provider = "protonpass", value = "hetzner/API Key" }
 CORE_SSH_PUBKEY = { provider = "protonpass", value = "materia/Public key" }
 AGE_SECRET_KEY = { provider = "protonpass", value = "materia-age/key" }
+SOPS_AGE_KEY = { provider = "protonpass", value = "materia-age/key" }
