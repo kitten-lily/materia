@@ -94,6 +94,8 @@ storage:
         inline: |
           [Unit]
           Description=Materia: quadlet manager
+          Wants=network-online.target
+          After=network-online.target
 
           [Service]
           Type=oneshot
@@ -121,8 +123,10 @@ storage:
           Volume=/usr/local/bin:/usr/local/bin
           Volume=/etc/systemd/system:/etc/systemd/system
 
-    # Timer — runs materia update daily. For more frequent syncs, shorten OnCalendar
-    # or trigger externally (e.g. via SSH). Plain systemd unit (not a quadlet).
+    # Timer — runs materia update shortly after boot (including first boot,
+    # so a fresh server converges without waiting for the calendar run) and
+    # daily thereafter. For more frequent syncs, shorten OnCalendar or trigger
+    # externally (e.g. via SSH). Plain systemd unit (not a quadlet).
     - path: /etc/systemd/system/materia-update.timer
       mode: 0644
       contents:
@@ -131,6 +135,7 @@ storage:
           Description=Materia daily update
 
           [Timer]
+          OnBootSec=2min
           OnCalendar=*-*-* 05:00:00
           Unit=materia-update.service
 
