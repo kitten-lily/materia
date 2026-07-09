@@ -16,3 +16,5 @@ key.txt
 # Claude Code / Crush local settings (permissions, etc.) — machine-specific
 .claude/settings.local.json
 .crush/
+
+.claude/worktrees/
