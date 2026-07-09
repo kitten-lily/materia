@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Remove rendered Ignition and stale secrets staging dir"
+#MISE description="Remove rendered Ignition files and stale secrets staging dir"
 set -euo pipefail
-rm -f "$IGN_FILE"
+rm -f provisioning/servers/*/materia.ign provisioning/servers/*/materia-debug.ign
 rm -rf "$PWD/secrets"

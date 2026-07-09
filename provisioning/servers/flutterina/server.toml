@@ -1,0 +1,8 @@
+# Server config for "flutterina" (edge/pangolin node), read by `mise ign`
+# and `mise hz:*`. Committed — non-secret.
+
+type = "hetzner"
+
+[hetzner]
+type = "cx23"
+location = "hel1"

@@ -7,6 +7,7 @@ sops                = "latest"  # SOPS — encryption for attributes vaults (age
 fnox                = "latest"  # secret injection for hz:* tasks (reads fnox.toml)
 gum                 = "latest"  # TUI prompts for setup tasks
 jq                  = "latest"  # JSON query tool
+yq                  = "latest"  # YAML/TOML query tool (reads provisioning/servers/*/server.toml)
 butane              = "latest"  # Flatcar/CoreOS Butane transpiler
 hcloud              = "latest"  # Hetzner Cloud CLI
 hcloud-upload-image = "latest"  # uploads Flatcar image to Hetzner
@@ -26,11 +27,6 @@ pass-cli = "github:protonpass/pass-cli"
 MATERIA_ATTRIBUTES = "sops"
 MATERIA_SOPS__BASE_DIR = "attributes"
 
-# --- Hetzner Cloud provisioning (override per deployment in .mise.local.toml) ---
-HCLOUD_SERVER_NAME = "flutterina"
-
-# ign, clean, hz/* → .mise/tasks/ (file tasks, auto-discovered)
-
-# --- Butane/Ignition transpile ---
-BUTANE_FILE = "provisioning/materia.bu"
-IGN_FILE    = "provisioning/materia.ign"
+# ign, clean, server/*, hz/*, ipxe/* → .mise/tasks/ (file tasks, auto-discovered)
+# Every server-scoped task takes --server-name explicitly — no global default.
+# Per-server config lives in provisioning/servers/<name>/server.toml.

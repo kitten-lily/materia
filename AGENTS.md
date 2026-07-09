@@ -11,8 +11,10 @@ seed-secrets service. Materia is the single source of truth enforcement.
 
 ## Where this sits in the larger stack
 
-- **Edge node (this repo):** Pangolin (app + Gerbil + Traefik) on a public VPS.
-  Single public entry point for the zero-trust gateway.
+- **Edge node (this repo):** Pangolin (app + Gerbil + Traefik) runs on
+  `flutterina`, a public Hetzner Cloud VPS — the single public entry point
+  for the zero-trust gateway. The repo supports multiple servers (see
+  "Multi-server model" below); flutterina is the first one.
 - **Clusters (separate work):** k8s via sysext-bakery sysexts, bootstrapped by
   CAPI/Typhoon, GitOps via Argo/Flux.
 - **Multi-cluster:** KubeStellar core engine on hosting cluster.
@@ -88,14 +90,44 @@ components/
       traefik_config.yml.gotmpl  # Traefik static config (templated)
       dynamic_config.yml.gotmpl  # Traefik dynamic config (templated)
 provisioning/
-  materia.bu                    # Butane config (OS setup + materia quadlet + age key)
-  ghostty.terminfo.b64          # pre-compiled Ghostty terminfo (base64)
-mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, butane, etc.)
+  templates/
+    hetzner.bu                  # Butane template for any Hetzner Cloud server
+    bare-metal.bu                # Butane template for any bare-metal server
+    bare-metal-debug.bu          # minimal RAM-boot discovery-only variant
+  servers/
+    flutterina/
+      server.toml                # per-server config (type, hetzner/bare_metal settings)
+      materia.ign                 # gitignored, rendered by `mise ign`
+  ghostty.terminfo.b64          # pre-compiled Ghostty terminfo (base64), shared by both templates
+  BARE-METAL.md                 # bare-metal bring-up runbook
+mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, butane, yq, etc.)
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, hz/*, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, hz/*, ipxe/*, clean)
 ```
+
+## Multi-server model
+
+One name identifies a server everywhere: the Hetzner Cloud server name, the
+OS hostname (set explicitly by the Butane template — see "Provisioning"),
+the `MANIFEST.toml` `Hosts.<name>` key, and the `provisioning/servers/<name>/`
+directory. There is no global server-name env var — every server-scoped
+task takes `--server-name` explicitly.
+
+- **Add a server:** `mise server:new --server-name <name> --type
+  hetzner|bare-metal [...]` — scaffolds `provisioning/servers/<name>/server.toml`
+  and a `[Hosts.<name>]` entry in `MANIFEST.toml`.
+- **Render its Ignition:** `mise ign --server-name <name>` (reads
+  `server.toml` to pick the Hetzner or bare-metal template).
+- **Provision it:** `mise hz:create --server-name <name>` (Hetzner) or the
+  iPXE bare-metal flow (see `provisioning/BARE-METAL.md`).
+- **Host-specific secrets:** `attributes/<name>.yml`, same SOPS/age vault
+  convention as `attributes/vault.yml`, created on demand with `sops
+  attributes/<name>.yml`.
+
+`flutterina` (Hetzner, runs the `pangolin` component) is the first and
+currently only server.
 
 ## How a host reconciles
 
@@ -209,53 +241,83 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 
 ## Provisioning (Butane/Ignition)
 
-The node is provisioned via Butane → Ignition on Flatcar. The `.bu` carries only
+Every server is provisioned via Butane → Ignition on Flatcar, rendered from
+one of two templates in `provisioning/templates/` based on
+`provisioning/servers/<name>/server.toml`'s `type`. The `.bu` carries only
 OS-level setup + materia installation — no reconciler scripts, no seed-secrets
 service, no GitHub App credentials (materia replaces all of those).
 
-### What the .bu installs
+### What every template installs
 
+- **Explicit hostname** — `/etc/hostname` is set to `${SERVER_NAME}` at
+  transpile time. Hetzner Cloud's Flatcar image also sets the guest hostname
+  from the Hetzner server name via its metadata service, but that happens
+  after Ignition and only on Hetzner — this write removes the dependency on
+  that timing and gives bare-metal (no metadata service) the same guarantee.
+  This is what makes the multi-server model's unified identity hold:
+  materia's `m_facts "hostname"` resolves `MANIFEST.toml`'s `Hosts.<name>` by
+  the box's actual OS hostname.
 - **Pure-podman sysext** — `podman` enabled in `enabled-sysext.conf`; Docker and
   containerd disabled via `/dev/null` symlinks on their `.raw` sysext files (the
   `-docker` syntax in `enabled-sysext.conf` doesn't work — flatcar/Flatcar#1481).
   No service masking needed — the sysext units don't exist if the extension is
-  removed.
+  removed. Podman's socket needs a oneshot workaround unit
+  (`enable-podman-socket.service`) since Ignition's `enabled: true` on
+  `podman.socket` is silently ignored — the sysext isn't loaded yet when
+  Ignition processes systemd units.
 - **`/etc/containers/policy.json`** — Flatcar doesn't ship one; every
   `podman pull` fails without it.
-- **Reboot window** — single public ingress, auto-reboot confined to low-traffic.
-- **WireGuard module** — `/etc/modules-load.d/wireguard.conf` for Gerbil.
-- **Age private key** → `/etc/materia/key.txt` — for SOPS vault decryption.
+- **Age private key** → `/etc/materia/key.txt` — for SOPS vault decryption
+  (`SOPS_AGE_KEY_FILE` points the materia quadlet at it).
 - **Materia config** → `/etc/materia/config.toml` — source URL + SOPS engine.
 - **Materia quadlet** — `materia-update.container` + `materia-update.timer`
   inlined in the .bu. Runs materia rootful containerized, pulls the repo,
   decrypts the vault, installs quadlets/configs, manages podman secrets,
-  restarts services. Timer fires daily; for faster syncs, trigger externally.
-- **SSH key** for `core` user — baked from Proton Pass.
+  restarts services. Timer fires ~2min after boot (so a fresh server
+  converges immediately) and daily thereafter; for faster syncs, trigger
+  externally.
+- **SSH key** for `core` user — baked from Proton Pass (same key across every
+  server today — see "Decisions still open").
+
+`provisioning/templates/hetzner.bu` additionally sets a low-traffic reboot
+window and loads the WireGuard kernel module (for Gerbil) — both specific to
+the current single-Hetzner-VPS edge role, kept as-is rather than generalized
+further. `provisioning/templates/bare-metal.bu` additionally sets up an LVM
+data volume and a closed-inbound nftables posture — see
+`provisioning/BARE-METAL.md`.
 
 ### Butane changes don't reach a running host
 
-Ignition runs once, at first boot. Committing a change to `materia.bu` (e.g.
-the materia quadlet's env vars) does nothing to an already-provisioned server —
-the host keeps running the config it was born with. Either rebuild the server
-(`mise hz:rebuild`) or hand-edit the target file on the host (e.g.
-`/etc/containers/systemd/materia-update.container` + `systemctl daemon-reload`)
-and mirror the change in the .bu for the next provision.
+Ignition runs once, at first boot. Committing a change to a template (e.g.
+the materia quadlet's env vars) does nothing to an already-provisioned
+server — the host keeps running the config it was born with. Either rebuild
+the server (`mise hz:rebuild --server-name <name>`) or hand-edit the target
+file on the host (e.g. `/etc/containers/systemd/materia-update.container` +
+`systemctl daemon-reload`) and mirror the change in the template for the
+next provision.
 
 ### Transpile flow
 
-1. `mise ign` — fetches age private key + SSH pubkey from Proton Pass via fnox,
-   detects REPO_URL from git origin, substitutes placeholders in the .bu, runs
-   `butane --strict`, emits `provisioning/materia.ign`. Treat the .ign as
-   secret — never commit.
-2. `mise hz:upload-image` — one-time Flatcar snapshot upload to Hetzner.
-3. `mise hz:create` — creates server; Hetzner passes .ign as `user_data` to
-   Flatcar at first boot.
+1. `mise ign --server-name <name>` — reads `provisioning/servers/<name>/server.toml`
+   to pick the template, fetches the age private key + SSH pubkey from Proton
+   Pass via fnox, detects `REPO_URL` from git origin, substitutes placeholders,
+   runs `butane --strict`, emits `provisioning/servers/<name>/materia.ign`.
+   Treat the `.ign` as secret — never commit (already gitignored via `*.ign`).
+2. `mise hz:upload-image` — one-time Flatcar snapshot upload to Hetzner
+   (Hetzner servers only; server-agnostic, no `--server-name` needed).
+3. `mise hz:create --server-name <name>` — creates the server; Hetzner passes
+   the `.ign` as `user_data` to Flatcar at first boot. Reads the Hetzner
+   server type/location from `server.toml` unless overridden with
+   `--server-type`/`--server-location`.
+
+Bare-metal servers use a different delivery path (iPXE, not `user_data`) —
+see `provisioning/BARE-METAL.md`.
 
 ### Hetzner tasks
 
-All `hz:*` tasks use the `hcloud` CLI (not raw HTTP) and resolve `HCLOUD_TOKEN`
-via `fnox exec`. Override the server name with `--server-name` or by setting
-`HCLOUD_SERVER_NAME` in `.mise.local.toml`.
+All `hz:*` tasks use the `hcloud` CLI (not raw HTTP), resolve `HCLOUD_TOKEN`
+via `fnox exec`, and require `--server-name` explicitly — there is no global
+server-name env var or default.
 
 | Task | Description |
 |---|---|
@@ -293,9 +355,17 @@ the quadlet names and the quadlet units reuse them (`--ignore`).
 
 ## Decisions still open (future revisit)
 
-- **Butane/provisioning:** lives in this repo (`provisioning/materia.bu`).
-  The .bu carries OS setup + materia quadlet + age key. Materia replaces the
-  old reconciler, seed-secrets, webhook, and GitHub App credentials entirely.
+- **Butane/provisioning:** lives in this repo, one template per
+  provisioning type (`provisioning/templates/hetzner.bu`,
+  `bare-metal.bu`), rendered per-server into
+  `provisioning/servers/<name>/materia.ign`. The .bu carries OS setup +
+  materia quadlet + age key. Materia replaces the old reconciler,
+  seed-secrets, webhook, and GitHub App credentials entirely.
+- **Server secret isolation:** not yet done. `.sops.yaml` has one shared
+  age recipient for all `attributes/*.yml`, and `fnox.toml`'s
+  `CORE_SSH_PUBKEY`/`AGE_SECRET_KEY` are shared across every server. Fine
+  for a small, trusted fleet; revisit (multiple SOPS recipients, per-server
+  SSH keys) if that stops being true.
 - **Renovate:** `renovate.json5` covers image pins in `*.container.gotmpl`
   (native `quadlet` manager extended to match `.gotmpl` files), the `ee-` prefix
   on pangolin images (regex versioning), and the badger plugin version in

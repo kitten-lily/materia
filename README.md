@@ -32,15 +32,29 @@ components/
     traefik/
       traefik_config.yml.gotmpl  # static Traefik config (templated)
       dynamic_config.yml.gotmpl  # dynamic Traefik config (templated)
-mise.toml                    # pinned toolchain (age, sops, fnox, hcloud, butane)
+mise.toml                    # pinned toolchain (age, sops, fnox, hcloud, butane, yq)
 fnox.toml                    # fnox secret injection (Proton Pass provider)
 .sops.yaml                   # SOPS creation rules (age recipient)
 renovate.json5               # Renovate config (image + plugin updates)
 provisioning/
-  materia.bu                 # Butane config (OS setup + materia quadlet)
+  templates/
+    hetzner.bu                # Butane template — any Hetzner Cloud server
+    bare-metal.bu              # Butane template — any bare-metal server
+    bare-metal-debug.bu        # minimal RAM-boot discovery-only variant
+  servers/
+    flutterina/
+      server.toml              # per-server config (type, hetzner/bare_metal settings)
+      materia.ign               # gitignored, rendered by `mise ign`
   ghostty.terminfo.b64       # pre-compiled Ghostty terminfo (base64)
-.mise/tasks/                 # mise file tasks (ign, hz/*, clean)
+  BARE-METAL.md              # bare-metal bring-up runbook
+.mise/tasks/                 # mise file tasks (ign, server/new, hz/*, ipxe/*, clean)
 ```
+
+Server identity is unified: one name is the Hetzner Cloud server name, the
+OS hostname, the `MANIFEST.toml` `Hosts.<name>` key, and the
+`provisioning/servers/<name>/` directory. No global server-name env var —
+every server-scoped task takes `--server-name` explicitly. Add a server with
+`mise server:new --server-name <name> --type hetzner|bare-metal`.
 
 ## How it works
 
@@ -75,19 +89,24 @@ SOPS-encrypted). The age private key is baked into Ignition and lives at
 ## Provisioning
 
 ```sh
-mise install                   # installs age, sops, fnox, hcloud, butane, etc.
-mise ign                       # render Ignition (fetches secrets from Proton Pass via fnox)
-mise hz:upload-image           # one-time Flatcar snapshot upload to Hetzner
-mise hz:create                 # provision server (Ignition passed as user_data)
+mise install                                       # installs age, sops, fnox, hcloud, butane, yq, etc.
+mise ign --server-name flutterina                   # render Ignition (fetches secrets from Proton Pass via fnox)
+mise hz:upload-image                                # one-time Flatcar snapshot upload to Hetzner
+mise hz:create --server-name flutterina             # provision server (Ignition passed as user_data)
 ```
+
+To add a new server: `mise server:new --server-name <name> --type
+hetzner|bare-metal`, then follow the printed next steps (or see
+`provisioning/BARE-METAL.md` for the bare-metal/iPXE flow).
 
 To preserve pangolin state across a rebuild:
 
 ```sh
-mise hz:pull-config            # backup runtime volumes to ./pangolin-backup.tar.gz
-mise hz:rebuild --confirm      # rebuild server from latest snapshot + Ignition
-mise hz:push-config            # restore the backup into the fresh server's volumes
+mise hz:pull-config --server-name flutterina        # backup runtime volumes to ./pangolin-backup.tar.gz
+mise hz:rebuild --server-name flutterina --confirm  # rebuild server from latest snapshot + Ignition
+mise hz:push-config --server-name flutterina        # restore the backup into the fresh server's volumes
 ```
 
-Override Hetzner defaults (server name, type, location) with task flags or
-`.mise.local.toml`. See `mise tasks` for all available tasks.
+Override Hetzner instance type/location with task flags or in
+`provisioning/servers/<name>/server.toml`. See `mise tasks` for all
+available tasks.

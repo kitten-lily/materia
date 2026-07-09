@@ -4,7 +4,7 @@
 #USAGE flag "--server-name <name>" help="Server name"
 set -euo pipefail
 
-_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
 
 _src="${usage_src:-./pangolin-backup.tar.gz}"
 if [[ ! -f "$_src" ]]; then

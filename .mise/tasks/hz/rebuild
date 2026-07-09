@@ -4,11 +4,24 @@
 #USAGE flag "--noninteractive" help="Exit 1 instead of 0 when --confirm is not passed (for scripting)"
 #USAGE flag "-v --verbose" help="Pass --verbose to hz:create"
 #USAGE flag "--server-name <name>" help="Server name"
-#USAGE flag "--ign-file <path>" help="Path to Ignition config file"
+#USAGE flag "--ign-file <path>" help="Path to Ignition config file (defaults to provisioning/servers/<name>/materia.ign)"
 set -euo pipefail
 
-_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
-_ign_file="${usage_ign_file:-$IGN_FILE}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_server_toml="provisioning/servers/${_server_name}/server.toml"
+
+if [[ ! -f "$_server_toml" ]]; then
+  gum style --foreground 1 "error: $_server_toml not found — run: mise server:new --server-name $_server_name --type hetzner"
+  exit 1
+fi
+
+_type=$(yq -o=json -p=toml "$_server_toml" | jq -r '.type // empty')
+if [[ "$_type" != "hetzner" ]]; then
+  gum style --foreground 1 "error: $_server_toml has type='$_type', not 'hetzner' — use the ipxe/* bare-metal flow instead"
+  exit 1
+fi
+
+_ign_file="${usage_ign_file:-provisioning/servers/${_server_name}/materia.ign}"
 
 IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 
@@ -36,4 +49,4 @@ fi
 _verbose_flag=()
 [[ -n "${usage_verbose:-}" ]] && _verbose_flag=(--verbose)
 
-mise hz:create "${_verbose_flag[@]}" --server-name "$_server_name"
+mise hz:create "${_verbose_flag[@]}" --server-name "$_server_name" --ign-file "$_ign_file"

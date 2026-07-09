@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#MISE description="Scaffold a new server: creates provisioning/servers/<name>/server.toml and a MANIFEST.toml Hosts entry"
+
+#USAGE flag "--server-name <name>" help="Server name"
+#USAGE flag "--type <type>" help="Provisioning type" {
+#USAGE   choices "hetzner" "bare-metal"
+#USAGE }
+#USAGE flag "--hetzner-type <type>" help="Hetzner server type (hetzner only)" default="cx23"
+#USAGE flag "--hetzner-location <location>" help="Hetzner location (hetzner only)" default="hel1"
+#USAGE flag "--components <list>" help="Comma-separated component names to assign"
+
+set -euo pipefail
+
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_type="${usage_type:?provisioning type required, use --type hetzner|bare-metal}"
+
+_server_dir="provisioning/servers/${_server_name}"
+_server_toml="${_server_dir}/server.toml"
+
+if [[ -e "$_server_dir" ]]; then
+  gum style --foreground 1 "error: $_server_dir already exists"
+  exit 1
+fi
+
+if grep -q "^\[Hosts\.${_server_name}\]" MANIFEST.toml 2>/dev/null; then
+  gum style --foreground 1 "error: MANIFEST.toml already has a [Hosts.${_server_name}] entry"
+  exit 1
+fi
+
+case "$_type" in
+  hetzner|bare-metal) ;;
+  *)
+    gum style --foreground 1 "error: unknown --type '$_type' (expected hetzner or bare-metal)"
+    exit 1
+    ;;
+esac
+
+mkdir -p "$_server_dir"
+
+case "$_type" in
+  hetzner)
+    cat > "$_server_toml" <<EOF
+# Server config for "${_server_name}", read by \`mise ign\` and \`mise hz:*\`.
+# Committed — non-secret.
+
+type = "hetzner"
+
+[hetzner]
+type = "${usage_hetzner_type:-cx23}"
+location = "${usage_hetzner_location:-hel1}"
+EOF
+    ;;
+  bare-metal)
+    cat > "$_server_toml" <<EOF
+# Server config for "${_server_name}", read by \`mise ign\` and \`mise ipxe:*\`.
+# Committed — non-secret.
+
+type = "bare-metal"
+
+[bare_metal]
+# Fill in after a discovery boot: mise ign --server-name ${_server_name} --debug
+data_disks = []
+EOF
+    ;;
+esac
+
+_components_toml="[]"
+if [[ -n "${usage_components:-}" ]]; then
+  _components_toml=$(printf '%s' "${usage_components}" | tr ',' '\n' | jq -R . | jq -sc .)
+fi
+
+{
+  echo ""
+  echo "[Hosts.${_server_name}]"
+  echo "Components = ${_components_toml}"
+} >> MANIFEST.toml
+
+gum style --foreground 2 "==> created $_server_toml"
+gum style --foreground 2 "==> added [Hosts.${_server_name}] to MANIFEST.toml"
+echo ""
+gum style --foreground 8 "Next steps:"
+case "$_type" in
+  hetzner)
+    echo "  mise ign --server-name ${_server_name}"
+    echo "  mise hz:create --server-name ${_server_name}"
+    ;;
+  bare-metal)
+    echo "  mise ign --server-name ${_server_name} --debug   # discovery boot"
+    echo "  mise ipxe:serve --server-name ${_server_name} --debug"
+    echo "  # SSH in, note NVMe/disk device names, fill data_disks in $_server_toml"
+    echo "  mise ign --server-name ${_server_name}            # real ignition"
+    echo "  mise ipxe:serve --server-name ${_server_name}"
+    echo "  see provisioning/BARE-METAL.md for the full runbook"
+    ;;
+esac
+echo ""
+gum style --foreground 8 "If this server needs host-specific secrets, create attributes/${_server_name}.yml:"
+echo "  sops attributes/${_server_name}.yml"

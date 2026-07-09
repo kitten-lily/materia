@@ -5,7 +5,7 @@
 #USAGE flag "--server-name <name>" help="Server name"
 set -euo pipefail
 
-_server_name="${usage_server_name:-$HCLOUD_SERVER_NAME}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
 
 IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 

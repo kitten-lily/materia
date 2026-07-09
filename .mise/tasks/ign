@@ -1,8 +1,53 @@
 #!/usr/bin/env bash
-#MISE description="Render Ignition — fetches age key + SSH pubkey from Proton Pass via fnox, never written to repo tree"
-#MISE sources=["provisioning/materia.bu", "provisioning/ghostty.terminfo.b64"]
-#MISE outputs=["provisioning/materia.ign"]
+#MISE description="Render Ignition for a server — fetches age key + SSH pubkey from Proton Pass via fnox, never written to repo tree"
+
+#USAGE flag "--server-name <name>" help="Server name (must have provisioning/servers/<name>/server.toml)"
+#USAGE flag "--debug" help="Render the bare-metal discovery/debug variant (bare-metal servers only)"
+
 set -euo pipefail
+
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_debug="${usage_debug:-}"
+
+_server_dir="provisioning/servers/${_server_name}"
+_server_toml="${_server_dir}/server.toml"
+
+if [[ ! -f "$_server_toml" ]]; then
+  echo "error: $_server_toml not found — run: mise server:new --server-name $_server_name --type <hetzner|bare-metal>" >&2
+  exit 1
+fi
+
+_type=$(yq -o=json -p=toml "$_server_toml" | jq -r '.type // empty')
+if [[ -z "$_type" ]]; then
+  echo "error: $_server_toml has no 'type' field" >&2
+  exit 1
+fi
+
+case "$_type" in
+  hetzner)
+    if [[ -n "$_debug" ]]; then
+      echo "error: --debug has no effect for type=hetzner (no discovery-boot variant needed on Hetzner Cloud)" >&2
+      exit 1
+    fi
+    _template="provisioning/templates/hetzner.bu"
+    _out="${_server_dir}/materia.ign"
+    ;;
+  bare-metal)
+    if [[ -n "$_debug" ]]; then
+      _template="provisioning/templates/bare-metal-debug.bu"
+      _out="${_server_dir}/materia-debug.ign"
+    else
+      _template="provisioning/templates/bare-metal.bu"
+      _out="${_server_dir}/materia.ign"
+    fi
+    ;;
+  *)
+    echo "error: unknown type '$_type' in $_server_toml (expected hetzner or bare-metal)" >&2
+    exit 1
+    ;;
+esac
+
+[[ -f "$_template" ]] || { echo "error: template not found: $_template" >&2; exit 1; }
 
 # REPO_URL is detected from git origin — no manual setup needed.
 REPO_URL=$(git -C "$PWD" remote get-url origin 2>/dev/null || true)
@@ -16,11 +61,13 @@ tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
 # Fetch the age private key from Proton Pass via fnox and write to tmpdir
-# for butane's --files-dir (referenced as local: key.txt in the .bu).
+# for butane's --files-dir (referenced as local: key.txt in the .bu). Unused
+# by the debug template (no local: refs there) but harmless to fetch anyway.
 fnox get AGE_SECRET_KEY > "$tmpdir/key.txt"
 chmod 600 "$tmpdir/key.txt"
 
 # Fetch the SSH public key for the core user from Proton Pass via fnox.
+# Same key across every server — see AGENTS.md "shared trust domain" note.
 _core_pubkey=$(fnox get CORE_SSH_PUBKEY)
 if [[ -z "$_core_pubkey" ]]; then
   echo "error: materia/Public key not set in Proton Pass — create the item first" >&2
@@ -30,13 +77,26 @@ fi
 # Read the pre-compiled Ghostty terminfo (base64-encoded in the repo).
 _terminfo_b64=$(tr -d '\n' < provisioning/ghostty.terminfo.b64)
 
-# Substitute placeholders in a tmpdir copy of the .bu.
+# Data disks (bare-metal, real config only) — space-separated device list
+# from server.toml, filled in after a discovery boot (--debug).
+_data_disks=$(yq -o=json -p=toml "$_server_toml" | jq -r '(.bare_metal.data_disks // []) | join(" ")')
+if [[ "$_type" == "bare-metal" && -z "$_debug" && -z "$_data_disks" ]]; then
+  echo "error: $_server_toml has no bare_metal.data_disks set — run a discovery boot first:" >&2
+  echo "  mise ign --server-name $_server_name --debug" >&2
+  echo "then identify device names over SSH, fill data_disks in $_server_toml, and re-run without --debug" >&2
+  exit 1
+fi
+
+# Substitute placeholders in a tmpdir copy of the template.
 # Pubkeys contain / and + but not |, so | is safe as the sed delimiter.
+_rendered_bu="$tmpdir/$(basename "$_template")"
 sed \
+  -e "s|\${SERVER_NAME}|${_server_name}|g" \
   -e "s|\${REPO_URL}|${REPO_URL}|g" \
   -e "s|\${CORE_SSH_PUBKEY}|${_core_pubkey}|g" \
   -e "s|\${GHOSTTY_TERMINFO_B64}|${_terminfo_b64}|g" \
-  "$BUTANE_FILE" > "$tmpdir/materia.bu"
+  -e "s|\${DATA_DISKS}|${_data_disks}|g" \
+  "$_template" > "$_rendered_bu"
 
-butane --strict --files-dir "$tmpdir" "$tmpdir/materia.bu" > "$IGN_FILE"
-echo "wrote $IGN_FILE — SECRET: deliver via Hetzner user_data, do NOT commit."
+butane --strict --files-dir "$tmpdir" "$_rendered_bu" > "$_out"
+echo "wrote $_out — SECRET: deliver via Hetzner user_data or iPXE, do NOT commit."
