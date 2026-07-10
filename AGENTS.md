@@ -405,3 +405,97 @@ the quadlet names and the quadlet units reuse them (`--ignore`).
 - Pangolin podman quadlets: https://docs.pangolin.net/self-host/manual/podman-quadlets
 - Pangolin Newt Helm: charts.fossorial.io (newt chart)
 - Renovate: https://docs.renovatebot.com
+
+<!-- BEGIN bigpowers:project -->
+## Project (bigpowers-managed)
+
+This repo manages a home lab environment — it is the single source of truth for
+bringing up and running the infrastructure that makes up the lab. The first (and
+currently only) piece is edge-node servers: Flatcar hosts provisioned via
+Butane/Ignition and the services they run. Materia is the tool used for the
+orchestration half: it templates Podman resources, installs quadlets/configs,
+manages podman secrets, and restarts services. The other half — provisioning the
+servers themselves — is handled by the Butane templates, `mise` tasks, and
+Hetzner/iPXE delivery flows in `provisioning/`. Future pieces of the lab
+(clusters, additional services, etc.) will live alongside the edge-node work as
+the repo grows.
+
+Stack: IaC — TOML + Go templates (`.gotmpl`) + Butane/Ignition + SOPS/age vaults.
+Toolchain pinned via `mise.toml`. No application code, no compiler, no unit tests.
+
+### Commands (bigpowers-managed)
+
+| Action | Command |
+|--------|---------|
+| List tasks | `mise tasks` |
+| Render Ignition | `mise ign --server-name <name>` |
+| Create server | `mise hz:create --server-name <name>` |
+| Rebuild server | `mise hz:rebuild --server-name <name>` |
+| SSH to server | `mise hz:ssh --server-name <name>` |
+| Scaffold server | `mise server:new --server-name <name> --type hetzner\|bare-metal` |
+| Edit vault | `sops edit attributes/vault.yml` |
+| Clean artifacts | `mise clean` |
+| Preflight | `mise clean && mise ign --server-name <name>` |
+| CI | `gh pr checks` (when a PR is open) |
+
+### Architecture (bigpowers-managed)
+
+Materia syncs this repo to `/var/lib/materia/source` on each host, templates
+`.gotmpl` resources with attributes, installs quadlets to
+`/etc/containers/systemd/<component>/` and data files to
+`/var/lib/materia/components/<component>/`, manages podman secrets, and
+restarts changed services. The `pangolin` component runs Pangolin + Gerbil +
+Traefik in a shared-network-namespace pod. Full architecture, locked decisions,
+and gotchas are in the sections above — read them before touching anything.
+
+### Conventions (bigpowers-managed)
+
+- **Focused semantic commits.** One logical change per commit. Subject ≤50 chars,
+  Conventional Commits style (`feat:`, `fix:`, `docs:`, `chore:`). Body only when
+  the "why" isn't obvious from the diff.
+- **Keep the repo generic.** No real domain names, server IPs, or
+  deployment-specific values in tracked files — use `attributes/` vaults.
+- **Pinned image digests.** No `AutoUpdate=registry`. Renovate bumps via PRs.
+- **specs/ is your memory.** All planning output goes to `specs/`. State in
+  `specs/state.yaml`.
+- **Read this file before writing IaC.** Locked architecture decisions and
+  gotchas above will break things in subtle ways if ignored.
+
+### Never (bigpowers-managed)
+
+- Never dismiss reproducible gate failures as pre-existing or out of scope.
+- Never proceed on red Preflight or red CI — invoke quick-fix or fix-bug first.
+- Never put real domain names, server IPs, or secrets in tracked files.
+- Never hand-roll a reconciler, webhook, or seed-secrets service.
+- Never split Pangolin/Gerbil/Traefik into separate network namespaces.
+- Never file upstream issues/PRs without user permission.
+
+### Agent Rules (bigpowers-managed)
+
+- **Workflow Mandate:** You MUST use the bigpowers skills (`plan-work`,
+  `develop-tdd`, `orchestrate-project`) to perform tasks. DO NOT write changes
+  directly in response to a user prompt without planning first.
+- **Always Green:** Preflight and CI must be green before forward work.
+- **Read specs/ before writing code.** Check `specs/state.yaml` for active flow.
+- **All planning MUST be written to `specs/` before any IaC change is generated.**
+- **Write the minimum change that solves the stated problem.** Nothing extra.
+- **Run Preflight after every change.** Show evidence before declaring done.
+<!-- END bigpowers:project -->
+
+<!-- BEGIN bigpowers:context-routing -->
+## Context Routing (bigpowers-managed)
+
+| Glob | AGENTS.md |
+|------|-----------|
+| `*` | `./AGENTS.md` (this file) |
+<!-- END bigpowers:context-routing -->
+
+<!-- BEGIN bigpowers:learned-preferences -->
+## Learned User Preferences (bigpowers-managed)
+
+_None yet — session-state skill appends entries here as preferences are learned._
+
+## Workspace Facts (bigpowers-managed)
+
+_None yet._
+<!-- END bigpowers:learned-preferences -->
