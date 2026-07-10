@@ -73,15 +73,33 @@ fi
 _box_id=$(echo "$_resp" | jq -r '.storage_box.id')
 _box_hostname=$(echo "$_resp" | jq -r '.storage_box.server')
 
-gum spin --spinner dot --title "enabling delete protection on $_box_name" -- \
-  fnox exec -- hcloud storage-box enable-protection "$_box_id" delete
+# The box now exists on Hetzner with this keypair's public half already
+# registered on it. Surface the private key immediately: every step below
+# (protection, snapshot plan, subaccount creation, host-key scan) can abort
+# under `set -e`, which would otherwise unwind straight to the EXIT trap and
+# delete the tempdir — the only copy of this key — before it was ever shown.
+_priv_key=$(cat "$_tmpdir/key")
+gum style --foreground 2 "==> storage box created: $_box_name (id=$_box_id, host=$_box_hostname)"
+echo ""
+gum style --foreground 3 "==> SSH private key for $_box_name — save this now:"
+echo "$_priv_key"
+echo ""
+
+if ! gum spin --spinner dot --title "enabling delete protection on $_box_name" -- \
+  fnox exec -- hcloud storage-box enable-protection "$_box_id" delete; then
+  gum style --foreground 1 "error: failed to enable delete-protection on $_box_name (id=$_box_id) — box and key above are still valid, but the box is NOT delete-protected; check the Hetzner console"
+  exit 1
+fi
 
 if [[ -n "${usage_enable_snapshot_plan:-}" ]]; then
   # Once daily at 03:00 UTC, keep a week's worth of snapshots — a deliberately
   # low default; this is the flag's built-in default, not a new flag surface.
-  gum spin --spinner dot --title "enabling daily snapshot plan on $_box_name" -- \
+  if ! gum spin --spinner dot --title "enabling daily snapshot plan on $_box_name" -- \
     fnox exec -- hcloud storage-box enable-snapshot-plan "$_box_id" \
-      --hour 3 --minute 0 --max-snapshots 7
+      --hour 3 --minute 0 --max-snapshots 7; then
+    gum style --foreground 1 "error: failed to enable snapshot plan on $_box_name (id=$_box_id) — box and key above are still valid; check the Hetzner console"
+    exit 1
+  fi
 fi
 
 gum spin --spinner dot \
@@ -105,16 +123,24 @@ _sub_id=$(echo "$_sub_resp" | jq -r '.subaccount.id')
 
 # subaccount create's response is minimal (id + storage_box only) — describe
 # it to get the generated username.
-_sub_describe=$(fnox exec -- hcloud storage-box subaccount describe "$_box_id" "$_sub_id" --output json)
+_sub_describe=$(fnox exec -- hcloud storage-box subaccount describe "$_box_id" "$_sub_id" --output json || true)
 [[ -n "$_verbose" ]] && echo "$_sub_describe" | jq
+
+if [[ -z "$_sub_describe" ]] || echo "$_sub_describe" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected subaccount describe:"
+  echo "$_sub_describe" | jq 2>/dev/null || true
+  exit 1
+fi
+
 _sub_username=$(echo "$_sub_describe" | jq -r '.username')
+if [[ -z "$_sub_username" || "$_sub_username" == "null" ]]; then
+  gum style --foreground 1 "error: subaccount describe response missing username"
+  exit 1
+fi
 
 gum style --foreground 8 "==> scanning host key for $_box_hostname:23"
 _host_key=$(ssh-keyscan -p 23 -t ed25519 "$_box_hostname" 2>/dev/null)
 
-_priv_key=$(cat "$_tmpdir/key")
-
-gum style --foreground 2 "==> storage box created: $_box_name (id=$_box_id, host=$_box_hostname)"
 echo ""
 gum style --foreground 8 "Next steps — hand off to restic-backup (issue #2):"
 echo "  username:        $_sub_username"
@@ -122,7 +148,7 @@ echo "  hostname:        $_box_hostname (port 23)"
 echo "  home directory:  $_home_directory"
 echo "  host key:        $_host_key"
 echo ""
-echo "  private key (save this now — it is destroyed when this command exits):"
+echo "  private key (shown above right after box creation; repeated here for convenience):"
 echo "$_priv_key"
 echo ""
 gum style --foreground 8 "  sops edit attributes/${_box_name}.yml   # wire the above into restic-backup's config"
