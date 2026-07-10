@@ -98,6 +98,9 @@ provisioning/
     flutterina/
       server.toml                # per-server config (type, hetzner/bare_metal settings)
       materia.ign                 # gitignored, rendered by `mise ign`
+  storageboxes/
+    <name>/
+      storagebox.toml            # per-box config (hetzner type/location, subaccount home dir)
   ghostty.terminfo.b64          # pre-compiled Ghostty terminfo (base64), shared by both templates
   BARE-METAL.md                 # bare-metal bring-up runbook
 mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, butane, yq, etc.)
@@ -238,6 +241,16 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `/etc/extensions/docker-flatcar.raw` and `containerd-flatcar.raw` to
   `/dev/null` — this removes the entire extension (binaries + units) so no
   service masking is needed.
+- **Storage Box SSH keys are box-level, not per-subaccount.** `hcloud
+  storage-box subaccount create`/`update-access-settings` (1.66.0) have no
+  `--ssh-key` flag at all — only `storage-box create --ssh-key` registers a
+  key, and it's registered box-wide, shared by every subaccount under that
+  box; there's no post-create `storage-box update --ssh-key` either.
+  `hz:storagebox:create` works around this by generating the dedicated
+  keypair before creating the box, passing the public half to `storage-box
+  create --ssh-key`, then scoping access via the subaccount's
+  `--home-directory` rather than a separate key. Don't go hunting for a
+  subaccount-level `--ssh-key` flag — it doesn't exist in this CLI version.
 
 ## Provisioning (Butane/Ignition)
 
@@ -335,6 +348,9 @@ server-name env var or default.
 | `mise hz:ssh` | SSH into server as `core@<ip>` |
 | `mise hz:pull-config` | Backup pangolin runtime volumes to a local tarball (before rebuild) |
 | `mise hz:push-config` | Restore tarball into pangolin runtime volumes (after rebuild) |
+| `mise hz:storagebox:create` | Create Hetzner Storage Box with a dedicated SSH key and a backup-scoped subaccount |
+| `mise hz:storagebox:delete` | Delete Hetzner storage box by name (requires --confirm) |
+| `mise hz:storagebox:access` | Re-assert SSH-only access on Hetzner Storage Box (disable Samba/WebDAV) |
 
 `hz:pull-config`/`hz:push-config` operate on the named podman volumes
 (`systemd-pangolin-config`, `systemd-letsencrypt`), not the materia data dir —
@@ -344,6 +360,15 @@ subdirectory), so backups made by the old pangolin-edge repo's tasks against
 `/var/lib/pangolin/config` push straight into a materia host. `push-config`
 works before the first `materia-update` run: it pre-creates the volumes with
 the quadlet names and the quadlet units reuse them (`--ignore`).
+
+`hz:storagebox:*` provisions and manages a Hetzner Storage Box for the
+`restic-backup` component — box + SSH key + backup-scoped subaccount created
+by `create`, locked to SSH-only (no Samba/WebDAV) by both `create` and the
+standalone `access` re-assertion task. `create` prints the connection details
+(username, hostname, home directory, host key, private key) for an operator
+to hand off by hand; consuming that output — wiring it into `attributes/` and
+a `restic-backup` component/manifest — is tracked in issue #2, not
+implemented in this repo yet.
 
 ## Development conventions
 
