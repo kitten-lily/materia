@@ -6,13 +6,16 @@
 
 ## Project
 
-This repo provisions and orchestrates edge-node servers — it is the single
-source of truth for bringing up Flatcar hosts (via Butane/Ignition) and for the
-services they run. [Materia](https://primamateria.systems/) is the tool used for
-the orchestration half: it templates Podman resources, installs quadlets/configs,
-manages podman secrets, and restarts services. The other half — provisioning the
-servers themselves — is handled by the Butane templates, `mise` tasks, and
-Hetzner/iPXE delivery flows in `provisioning/`.
+This repo manages a home lab environment — it is the single source of truth for
+bringing up and running the infrastructure that makes up the lab. The first (and
+currently only) piece is edge-node servers: Flatcar hosts provisioned via
+Butane/Ignition and the services they run. [Materia](https://primamateria.systems/)
+is the tool used for the orchestration half: it templates Podman resources,
+installs quadlets/configs, manages podman secrets, and restarts services. The
+other half — provisioning the servers themselves — is handled by the Butane
+templates, `mise` tasks, and Hetzner/iPXE delivery flows in `provisioning/`.
+Future pieces of the lab (clusters, additional services, etc.) will live
+alongside the edge-node work as the repo grows.
 
 Stack: IaC — TOML + Go templates (`.gotmpl`) + Butane/Ignition + SOPS/age vaults.
 Toolchain pinned via `mise.toml`. No application code, no compiler, no unit tests.
