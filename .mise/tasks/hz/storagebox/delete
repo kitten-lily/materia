@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#MISE description="Delete Hetzner storage box by name (requires --confirm)"
+#USAGE flag "--confirm" help="Confirm deletion (required)"
+#USAGE flag "--noninteractive" help="Exit 1 instead of 0 when --confirm is not passed (for scripting)"
+#USAGE flag "--box-name <name>" help="Storage box name"
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+
+_box_resp=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json 2>/dev/null || echo "{}")
+
+_box_id=$(echo "$_box_resp" | jq -r '.id // empty' 2>/dev/null)
+
+if [[ -z "$_box_id" ]]; then
+  gum style --foreground 8 "==> no storage box named '$_box_name' — nothing to delete"
+  exit 0
+fi
+
+if [[ -z "${usage_confirm:-}" ]]; then
+  gum style --foreground 3 "==> pass --confirm to delete storage box: $_box_name"
+  [[ -n "${usage_noninteractive:-}" ]] && exit 1
+  exit 0
+fi
+
+gum style --foreground 8 "==> deleting storage box: $_box_name (id=$_box_id)"
+
+gum spin --spinner dot --title "deleting $_box_name..." -- \
+  fnox exec -- hcloud storage-box delete $_box_id || true
+
+gum style --foreground 2 "==> deleted: $_box_name (id=$_box_id)"
