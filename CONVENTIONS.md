@@ -6,9 +6,13 @@
 
 ## Project
 
-Materia — a GitOps tool that templates Podman resources, installs quadlets/configs,
-manages podman secrets, and restarts services. This repo is the single source of
-truth for edge-node (Pangolin) orchestration on Flatcar via Podman quadlets.
+This repo provisions and orchestrates edge-node servers — it is the single
+source of truth for bringing up Flatcar hosts (via Butane/Ignition) and for the
+services they run. [Materia](https://primamateria.systems/) is the tool used for
+the orchestration half: it templates Podman resources, installs quadlets/configs,
+manages podman secrets, and restarts services. The other half — provisioning the
+servers themselves — is handled by the Butane templates, `mise` tasks, and
+Hetzner/iPXE delivery flows in `provisioning/`.
 
 Stack: IaC — TOML + Go templates (`.gotmpl`) + Butane/Ignition + SOPS/age vaults.
 Toolchain pinned via `mise.toml`. No application code, no compiler, no unit tests.
