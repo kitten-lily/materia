@@ -70,8 +70,13 @@ if echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
   exit 1
 fi
 
-_box_id=$(echo "$_resp" | jq -r '.storage_box.id')
-_box_hostname=$(echo "$_resp" | jq -r '.storage_box.server')
+_box_id=$(echo "$_resp" | jq -r '.storage_box.id // empty')
+_box_hostname=$(echo "$_resp" | jq -r '.storage_box.server // empty')
+
+if [[ -z "$_box_id" ]]; then
+  gum style --foreground 1 "error: storage box create returned no id — box was NOT created"
+  exit 1
+fi
 
 # The box now exists on Hetzner with this keypair's public half already
 # registered on it. Surface the private key immediately: every step below
