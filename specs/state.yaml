@@ -1,0 +1,12 @@
+workflow_mode: solo-git
+session:
+  active_flow: seed
+  active_epic_id: null
+  active_story_id: null
+git:
+  branch: main
+  base: main
+handoff:
+  next_skill: null
+  note: "seed-conventions complete. Read AGENTS.md for repo architecture, conventions, and gotchas."
+metrics: {}
