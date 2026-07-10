@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+#MISE description="Create Hetzner Storage Box with a dedicated SSH key and a backup-scoped subaccount"
+
+#USAGE flag "-v --verbose" help="Print full API responses"
+#USAGE flag "--box-name <name>" help="Storage Box name"
+#USAGE flag "--box-type <type>" help="Storage Box type (defaults to storagebox.toml's hetzner.type)"
+#USAGE flag "--location <location>" help="Storage Box location (defaults to storagebox.toml's hetzner.location)"
+#USAGE flag "--home-directory <path>" help="Subaccount home directory (defaults to storagebox.toml's subaccount.home_directory)"
+#USAGE flag "--enable-snapshot-plan" help="Enable a daily automatic snapshot plan (default off)"
+
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+_box_toml="provisioning/storageboxes/${_box_name}/storagebox.toml"
+_verbose="${usage_verbose:-}"
+
+if [[ ! -f "$_box_toml" ]]; then
+  gum style --foreground 1 "error: $_box_toml not found"
+  gum style --foreground 8 "storage boxes have no scaffold task — hand-author it, e.g.:"
+  cat <<EOF
+  # Storage box config for "${_box_name}", read by \`mise hz:storagebox:*\`.
+  # Committed — non-secret.
+
+  [hetzner]
+  type = "bx11"
+  location = "fsn1"
+
+  [subaccount]
+  home_directory = "/restic"
+EOF
+  exit 1
+fi
+
+_toml_json=$(yq -o=json -p=toml "$_box_toml")
+_box_type="${usage_box_type:-$(echo "$_toml_json" | jq -r '.hetzner.type // empty')}"
+_location="${usage_location:-$(echo "$_toml_json" | jq -r '.hetzner.location // empty')}"
+_home_directory="${usage_home_directory:-$(echo "$_toml_json" | jq -r '.subaccount.home_directory // empty')}"
+
+_box_type="${_box_type:?box type required — pass --box-type or set hetzner.type in $_box_toml}"
+_location="${_location:?location required — pass --location or set hetzner.location in $_box_toml}"
+_home_directory="${_home_directory:?home directory required — pass --home-directory or set subaccount.home_directory in $_box_toml}"
+
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+gum style --foreground 8 "==> generating dedicated ed25519 keypair for $_box_name"
+ssh-keygen -t ed25519 -N "" -C "restic-backup@${_box_name}" -f "$_tmpdir/key" -q
+
+_box_password=$(openssl rand -base64 32)
+_sub_password=$(openssl rand -base64 32)
+
+gum spin --spinner dot \
+  --title "creating storage box: $_box_name ($_box_type @ $_location)" \
+  -- fnox exec -- hcloud storage-box create --output json \
+    --name "$_box_name" \
+    --type "$_box_type" \
+    --location "$_location" \
+    --password "$_box_password" \
+    --ssh-key "$(cat "$_tmpdir/key.pub")" \
+    --enable-ssh \
+    --enable-samba=false \
+    --enable-webdav=false > "$_tmpdir/resp.json" || true
+
+_resp=$(cat "$_tmpdir/resp.json")
+[[ -n "$_verbose" ]] && echo "$_resp" | jq
+
+if echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected storage box creation:"
+  echo "$_resp" | jq
+  exit 1
+fi
+
+_box_id=$(echo "$_resp" | jq -r '.storage_box.id')
+_box_hostname=$(echo "$_resp" | jq -r '.storage_box.server')
+
+gum spin --spinner dot --title "enabling delete protection on $_box_name" -- \
+  fnox exec -- hcloud storage-box enable-protection "$_box_id" delete
+
+if [[ -n "${usage_enable_snapshot_plan:-}" ]]; then
+  # Once daily at 03:00 UTC, keep a week's worth of snapshots — a deliberately
+  # low default; this is the flag's built-in default, not a new flag surface.
+  gum spin --spinner dot --title "enabling daily snapshot plan on $_box_name" -- \
+    fnox exec -- hcloud storage-box enable-snapshot-plan "$_box_id" \
+      --hour 3 --minute 0 --max-snapshots 7
+fi
+
+gum spin --spinner dot \
+  --title "creating restic subaccount (home=$_home_directory)" \
+  -- fnox exec -- hcloud storage-box subaccount create "$_box_id" --output json \
+    --home-directory "$_home_directory" \
+    --password "$_sub_password" \
+    --enable-ssh \
+    --description "restic-backup" > "$_tmpdir/sub.json" || true
+
+_sub_resp=$(cat "$_tmpdir/sub.json")
+[[ -n "$_verbose" ]] && echo "$_sub_resp" | jq
+
+if echo "$_sub_resp" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected subaccount creation:"
+  echo "$_sub_resp" | jq
+  exit 1
+fi
+
+_sub_id=$(echo "$_sub_resp" | jq -r '.subaccount.id')
+
+# subaccount create's response is minimal (id + storage_box only) — describe
+# it to get the generated username.
+_sub_describe=$(fnox exec -- hcloud storage-box subaccount describe "$_box_id" "$_sub_id" --output json)
+[[ -n "$_verbose" ]] && echo "$_sub_describe" | jq
+_sub_username=$(echo "$_sub_describe" | jq -r '.username')
+
+gum style --foreground 8 "==> scanning host key for $_box_hostname:23"
+_host_key=$(ssh-keyscan -p 23 -t ed25519 "$_box_hostname" 2>/dev/null)
+
+_priv_key=$(cat "$_tmpdir/key")
+
+gum style --foreground 2 "==> storage box created: $_box_name (id=$_box_id, host=$_box_hostname)"
+echo ""
+gum style --foreground 8 "Next steps — hand off to restic-backup (issue #2):"
+echo "  username:        $_sub_username"
+echo "  hostname:        $_box_hostname (port 23)"
+echo "  home directory:  $_home_directory"
+echo "  host key:        $_host_key"
+echo ""
+echo "  private key (save this now — it is destroyed when this command exits):"
+echo "$_priv_key"
+echo ""
+gum style --foreground 8 "  sops edit attributes/${_box_name}.yml   # wire the above into restic-backup's config"
