@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#MISE description="Re-assert SSH-only access on Hetzner Storage Box (disable Samba/WebDAV)"
+#USAGE flag "--box-name <name>" help="Storage box name"
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+
+_box_resp=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json 2>/dev/null || echo "{}")
+
+_box_id=$(echo "$_box_resp" | jq -r '.id // empty' 2>/dev/null)
+
+if [[ -z "$_box_id" ]]; then
+  gum style --foreground 1 "error: storage box '$_box_name' not found"
+  exit 1
+fi
+
+gum spin --spinner dot --title "setting $_box_name to SSH-only (disabling Samba/WebDAV)..." -- \
+  fnox exec -- hcloud storage-box update-access-settings "$_box_id" \
+    --enable-ssh \
+    --enable-samba=false \
+    --enable-webdav=false
+
+gum style --foreground 2 "==> storage box access locked to SSH-only: $_box_name (id=$_box_id)"
