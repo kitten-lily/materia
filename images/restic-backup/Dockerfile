@@ -36,3 +36,19 @@ RUN wget -O /tmp/openssh.tar.gz \
     && ./configure LDFLAGS=-static --with-privsep-path=/tmp \
     && make ssh \
     && cp ssh /out/ssh
+
+COPY wrapper/ /src/wrapper/
+RUN cd /src/wrapper \
+    && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/wrapper . \
+    && strip /out/restic /out/ssh \
+    && printf 'root:x:0:0:root:/root:/bin/sh\n' > /out/passwd \
+    && printf 'root:x:0:\n' > /out/group
+
+FROM scratch
+COPY --from=builder /out/restic /usr/bin/restic
+COPY --from=builder /out/ssh /usr/bin/ssh
+COPY --from=builder /out/wrapper /usr/local/bin/wrapper
+COPY --from=builder /out/passwd /etc/passwd
+COPY --from=builder /out/group /etc/group
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENTRYPOINT ["/usr/local/bin/wrapper"]
