@@ -1,57 +1,9 @@
 # Conventions — Materia Podman Orchestration
 
-> **Read this before any GitHub or git operation.** Repo architecture, locked
-> decisions, and hard-won gotchas live in `AGENTS.md` — read it too. This file
-> holds the process and quality rules all AI agents must follow.
-
-## Project
-
-This repo manages a home lab environment — it is the single source of truth for
-bringing up and running the infrastructure that makes up the lab. The first (and
-currently only) piece is edge-node servers: Flatcar hosts provisioned via
-Butane/Ignition and the services they run. [Materia](https://primamateria.systems/)
-is the tool used for the orchestration half: it templates Podman resources,
-installs quadlets/configs, manages podman secrets, and restarts services. The
-other half — provisioning the servers themselves — is handled by the Butane
-templates, `mise` tasks, and Hetzner/iPXE delivery flows in `provisioning/`.
-Future pieces of the lab (clusters, additional services, etc.) will live
-alongside the edge-node work as the repo grows.
-
-Stack: IaC — TOML + Go templates (`.gotmpl`) + Butane/Ignition + SOPS/age vaults.
-Toolchain pinned via `mise.toml`. No application code, no compiler, no unit tests.
-
-## Commands
-
-This is an infrastructure-as-code repo. There is no test/lint/build cycle in the
-traditional sense — `mise tasks` are the command surface, Renovate handles
-dependency validation, and `materia update` on the target host is the deploy.
-
-| Action | Command |
-|--------|---------|
-| List tasks | `mise tasks` |
-| Render Ignition | `mise ign --server-name <name>` |
-| Create server | `mise hz:create --server-name <name>` |
-| Rebuild server | `mise hz:rebuild --server-name <name>` |
-| SSH to server | `mise hz:ssh --server-name <name>` |
-| Scaffold server | `mise server:new --server-name <name> --type hetzner\|bare-metal` |
-| Edit vault | `sops edit attributes/vault.yml` |
-| Clean artifacts | `mise clean` |
-| Preflight | `mise clean && mise ign --server-name <name>` (renders cleanly, no secrets leak) |
-| CI | `gh pr checks` (when a PR is open) |
-
-**Preflight green** = Ignition renders without error, no secret material in the
-working tree, `git status` shows only intended changes. There is no compiler or
-test suite to be red — "green" here means the IaC is renderable and clean.
-
-## Architecture
-
-Materia syncs this repo to `/var/lib/materia/source` on each host, templates
-`.gotmpl` resources with attributes, installs quadlets to
-`/etc/containers/systemd/<component>/` and data files to
-`/var/lib/materia/components/<component>/`, manages podman secrets, and restarts
-changed services. The `pangolin` component runs Pangolin + Gerbil + Traefik in a
-shared-network-namespace pod. Full architecture, locked decisions, and gotchas
-are in `AGENTS.md` — read it before touching anything.
+> **Read this before any GitHub or git operation.** Project description,
+> commands, architecture, locked decisions, and hard-won gotchas live in
+> `AGENTS.md` — read it first. This file holds the process and quality rules
+> all AI agents must follow.
 
 ## Conventions
 
