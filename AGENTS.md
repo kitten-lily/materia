@@ -242,6 +242,15 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `/etc/extensions/docker-flatcar.raw` and `containerd-flatcar.raw` to
   `/dev/null` — this removes the entire extension (binaries + units) so no
   service masking is needed.
+- **openssh static build: no Alpine package, must build from source.**
+  Alpine 3.22 has no `openssh-static` package (apk returns "no such package").
+  The `restic-backup` image builder stage builds the `ssh` client from the
+  OpenSSH portable tarball with `LDFLAGS=-static --with-privsep-path=/tmp`
+  (privsep is sshd-only; `/tmp` is a harmless placeholder in the builder stage).
+  Static builds need both header and static-archive packages: `zlib-dev` +
+  `zlib-static`, `openssl-dev` + `openssl-libs-static`. The `opensshVersion`
+  ARG in the Dockerfile is Renovate-trackable — bump it when a new release is
+  needed.
 
 ## Provisioning (Butane/Ignition)
 

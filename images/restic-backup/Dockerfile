@@ -9,10 +9,13 @@ ARG opensshVersion=9.9p1
 
 RUN apk add --no-cache \
     git \
+    wget \
     build-base \
     autoconf \
     musl-dev \
+    zlib-dev \
     zlib-static \
+    openssl-dev \
     openssl-libs-static \
     ca-certificates
 
@@ -21,3 +24,15 @@ RUN mkdir -p /out
 # restic — static Go binary, source-pinned (Renovate: resticVersion)
 RUN CGO_ENABLED=0 go install github.com/restic/restic/cmd/restic@${resticVersion} \
     && cp "$(go env GOPATH)/bin/restic" /out/restic
+
+# openssh client — built from source, statically linked (Renovate: opensshVersion).
+# --with-privsep-path=/tmp: privsep only applies to sshd, not the ssh client,
+# but configure requires a path that exists — /tmp is a harmless placeholder
+# in the builder stage and is never carried into the final scratch image.
+RUN wget -O /tmp/openssh.tar.gz \
+      "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-${opensshVersion}.tar.gz" \
+    && tar -xzf /tmp/openssh.tar.gz -C /tmp \
+    && cd /tmp/openssh-${opensshVersion} \
+    && ./configure LDFLAGS=-static --with-privsep-path=/tmp \
+    && make ssh \
+    && cp ssh /out/ssh
