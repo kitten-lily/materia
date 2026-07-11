@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#MISE description="Create a Hetzner Storage Box from storagebox.toml (SSH-only, delete-protected, daily snapshots)"
+
+#USAGE flag "--box-name <name>" help="Storage Box name (matches provisioning/storageboxes/<name>/)"
+
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+_box_toml="provisioning/storageboxes/${_box_name}/storagebox.toml"
+
+if [[ ! -f "$_box_toml" ]]; then
+  gum style --foreground 1 "error: $_box_toml not found — copy provisioning/storageboxes/backup/storagebox.toml as a template"
+  exit 1
+fi
+
+_toml_json=$(yq -o=json -p=toml "$_box_toml")
+_type=$(echo "$_toml_json" | jq -r '.type // "bx11"')
+_location=$(echo "$_toml_json" | jq -r '.location // "hel1"')
+_reachable=$(echo "$_toml_json" | jq -r '.reachable_externally // true')
+_snap_hour=$(echo "$_toml_json" | jq -r '.snapshot_plan.hour // 4')
+_snap_minute=$(echo "$_toml_json" | jq -r '.snapshot_plan.minute // 0')
+_snap_max=$(echo "$_toml_json" | jq -r '.snapshot_plan.max_snapshots // 7')
+
+# Primary-account password — required by the API. Rarely used afterwards
+# (subaccounts do the real work) and resettable via `hcloud storage-box
+# reset-password`, but store it anyway. Hetzner's policy requires at least
+# one upper-case letter, lower-case letter, digit, and special character.
+_pw_b64=$(openssl rand -base64 32 | tr -d '/+=' | tr '/+' 'Aa' | head -c 28)
+_password="${_pw_b64}#9Xa!"
+
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+gum spin --spinner dot \
+  --title "creating storage box: $_box_name ($_type @ $_location)" \
+  -- fnox exec -- hcloud storage-box create --output json \
+    --name "$_box_name" \
+    --type "$_type" \
+    --location "$_location" \
+    --password "$_password" \
+    --enable-ssh=true --enable-samba=false --enable-webdav=false --enable-zfs=false \
+    --reachable-externally="$_reachable" \
+    --enable-protection delete > "$_tmpdir/resp.json" || true
+
+_resp=$(cat "$_tmpdir/resp.json")
+if [[ -z "$_resp" ]] || echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected storage box creation:"
+  echo "$_resp" | jq . 2>/dev/null || echo "$_resp"
+  exit 1
+fi
+
+fnox exec -- hcloud storage-box enable-snapshot-plan "$_box_name" \
+  --hour "$_snap_hour" --minute "$_snap_minute" --max-snapshots "$_snap_max"
+
+# username/server are populated asynchronously — poll describe until set.
+_desc=""
+for _ in $(seq 1 24); do
+  _desc=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json)
+  [[ "$(echo "$_desc" | jq -r '.username // empty')" != "" ]] && break
+  sleep 5
+done
+
+echo "$_desc" | jq '{id, name, username, server, location: .location.name,
+     protection: .protection.delete, snapshot_plan}'
+gum style --foreground 2 "==> storage box created — next: mise hz:storagebox:keyscan --box-name $_box_name"
+gum style --foreground 3 "==> primary account password (shown once — store in Proton Pass: item 'storagebox-${_box_name}', field 'primary-password'):"
+echo "$_password"

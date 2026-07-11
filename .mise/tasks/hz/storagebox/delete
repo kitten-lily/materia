@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#MISE description="Delete a Hetzner Storage Box by name (requires --confirm; protected boxes also need --disable-protection)"
+
+#USAGE flag "--confirm" help="Confirm deletion (required)"
+#USAGE flag "--disable-protection" help="Lift delete protection before deleting"
+#USAGE flag "--box-name <name>" help="Storage Box name"
+
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+
+_resp=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json 2>/dev/null || true)
+_id=$(echo "$_resp" | jq -r '.id // empty' 2>/dev/null || true)
+
+if [[ -z "$_id" ]]; then
+  gum style --foreground 8 "==> no storage box named '$_box_name' — nothing to delete"
+  exit 0
+fi
+
+if [[ -z "${usage_confirm:-}" ]]; then
+  gum style --foreground 3 "==> pass --confirm to delete storage box: $_box_name (id=$_id)"
+  exit 0
+fi
+
+if [[ "$(echo "$_resp" | jq -r '.protection.delete // false')" == "true" ]]; then
+  if [[ -z "${usage_disable_protection:-}" ]]; then
+    gum style --foreground 1 "error: $_box_name is delete-protected — pass --disable-protection as well"
+    exit 1
+  fi
+  fnox exec -- hcloud storage-box disable-protection "$_id" delete
+fi
+
+gum spin --spinner dot --title "deleting $_box_name..." -- \
+  fnox exec -- hcloud storage-box delete "$_id"
+
+gum style --foreground 2 "==> deleted: $_box_name (id=$_id)"

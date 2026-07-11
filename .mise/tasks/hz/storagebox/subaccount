@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#MISE description="Create a per-server Storage Box subaccount (SSH-only, home=backups/<server>)"
+
+#USAGE flag "--box-name <name>" help="Storage Box name"
+#USAGE flag "--server-name <name>" help="Server this subaccount backs up"
+
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_home="backups/${_server_name}"
+
+_existing=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json \
+  | jq -r --arg h "$_home" '.[] | select(.home_directory == $h) | .username' | head -1)
+if [[ -n "$_existing" ]]; then
+  gum style --foreground 1 "error: subaccount for home '$_home' already exists: $_existing"
+  exit 1
+fi
+
+# Password is required by the API. After install-key it's only a fallback
+# credential (and resettable via `hcloud storage-box subaccount
+# reset-password`), but store it anyway. Hetzner's policy requires at least
+# one upper-case letter, lower-case letter, digit, and special character.
+_pw_b64=$(openssl rand -base64 32 | tr -d '/+=' | tr '/+' 'Aa' | head -c 28)
+_password="${_pw_b64}#9Xa!"
+
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+gum spin --spinner dot \
+  --title "creating subaccount for $_server_name on $_box_name" \
+  -- fnox exec -- hcloud storage-box subaccount create "$_box_name" --output json \
+    --name "$_server_name" \
+    --home-directory "$_home" \
+    --password "$_password" \
+    --enable-ssh=true --enable-samba=false --enable-webdav=false \
+    --readonly=false \
+    --reachable-externally=true > "$_tmpdir/resp.json" || true
+
+_resp=$(cat "$_tmpdir/resp.json")
+if [[ -z "$_resp" ]] || echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
+  gum style --foreground 1 "error: Hetzner API rejected subaccount creation:"
+  echo "$_resp" | jq . 2>/dev/null || echo "$_resp"
+  exit 1
+fi
+
+_sub=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json \
+  | jq --arg h "$_home" '[.[] | select(.home_directory == $h)] | first')
+echo "$_sub" | jq '{username, home_directory, server}'
+
+gum style --foreground 2 "==> subaccount created — next: mise hz:storagebox:install-key --box-name $_box_name --server-name $_server_name"
+gum style --foreground 3 "==> subaccount password (shown once — store in Proton Pass: item 'storagebox-${_box_name}', field '${_server_name}-password'):"
+echo "$_password"
