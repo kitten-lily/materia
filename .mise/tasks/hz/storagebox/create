@@ -63,5 +63,5 @@ done
 echo "$_desc" | jq '{id, name, username, server, location: .location.name,
      protection: .protection.delete, snapshot_plan}'
 gum style --foreground 2 "==> storage box created — next: mise hz:storagebox:keyscan --box-name $_box_name"
-gum style --foreground 3 "==> primary account password (shown once — store in Proton Pass as 'storagebox-${_box_name}-primary'):"
+gum style --foreground 3 "==> primary account password (shown once — store in Proton Pass: item 'storagebox-${_box_name}', field 'primary-password'):"
 echo "$_password"

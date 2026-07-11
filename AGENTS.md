@@ -370,7 +370,9 @@ Order per server: `create` → `keyscan` (commit `known_hosts`) →
 `components.restic-backup.storageBoxSshKey`, plus the printed
 `sftp://...` repository attribute. Passwords are printed once — store
 them in Proton Pass (both are resettable via
-`hcloud storage-box [subaccount] reset-password`). Subaccounts have no
+`hcloud storage-box [subaccount] reset-password`) — one item per box
+(`storagebox-<box>`) with a `primary-password` field and a
+`<server>-password` field per subaccount. Subaccounts have no
 API-side SSH keys; `install-ssh-key` writes `<home>/.ssh/authorized_keys`
 in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
 

@@ -49,5 +49,5 @@ _sub=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output jso
 echo "$_sub" | jq '{username, home_directory, server}'
 
 gum style --foreground 2 "==> subaccount created — next: mise hz:storagebox:install-key --box-name $_box_name --server-name $_server_name"
-gum style --foreground 3 "==> subaccount password (shown once — store in Proton Pass as 'storagebox-${_box_name}-${_server_name}'):"
+gum style --foreground 3 "==> subaccount password (shown once — store in Proton Pass: item 'storagebox-${_box_name}', field '${_server_name}-password'):"
 echo "$_password"
