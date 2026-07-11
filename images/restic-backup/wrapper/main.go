@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -113,4 +114,60 @@ func pingEnd(c config, success bool) {
 
 func main() {
 	_ = loadConfig()
+}
+
+// resticCmd builds an exec.Command for restic with the wrapper's env
+// (so RESTIC_REPOSITORY, RESTIC_PASSWORD, etc. propagate) and stdout/stderr
+// wired to the wrapper's own stdout/stderr so restic's output is visible
+// in journalctl.
+func resticCmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("restic", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd
+}
+
+// ensureRepo runs `restic cat config`; if it exits non-zero, runs `restic init`.
+// This makes the first run on a fresh Storage Box self-bootstrapping — no
+// manual init step.
+func ensureRepo(c config) error {
+	if err := resticCmd("cat", "config").Run(); err != nil {
+		log.Printf("restic cat config failed (%v), initializing repository", err)
+		return resticCmd("init").Run()
+	}
+	return nil
+}
+
+// runBackup runs `restic backup <paths> --tag <hostname> --host <hostname>`
+// and returns the restic exit code.
+func runBackup(c config) int {
+	args := append([]string{"backup"}, c.backupPaths...)
+	args = append(args, "--tag", c.hostname, "--host", c.hostname)
+	cmd := resticCmd(args...)
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+// runForget runs `restic forget --prune --keep-daily N --keep-weekly N
+// --keep-monthly N` and returns the restic exit code.
+func runForget(c config) int {
+	cmd := resticCmd(
+		"forget", "--prune",
+		"--keep-daily", strconv.Itoa(c.keepDaily),
+		"--keep-weekly", strconv.Itoa(c.keepWeekly),
+		"--keep-monthly", strconv.Itoa(c.keepMonthly),
+	)
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		return 1
+	}
+	return 0
 }
