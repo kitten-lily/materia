@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#MISE description="Pin a Storage Box's SSH host keys to provisioning/storageboxes/<name>/known_hosts (commit the result)"
+
+#USAGE flag "--box-name <name>" help="Storage Box name"
+
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+_out="provisioning/storageboxes/${_box_name}/known_hosts"
+
+if [[ ! -d "provisioning/storageboxes/${_box_name}" ]]; then
+  gum style --foreground 1 "error: provisioning/storageboxes/${_box_name}/ not found — create storagebox.toml first"
+  exit 1
+fi
+
+_server=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json 2>/dev/null | jq -r '.server // empty' || true)
+if [[ -z "$_server" ]]; then
+  gum style --foreground 1 "error: no storage box named '$_box_name' (or it has no server hostname yet)"
+  exit 1
+fi
+
+# Port 22 is SFTP-only; port 23 is the full SSH service that install-ssh-key
+# (and restic's sftp backend, per #2) uses. Pin both.
+{ ssh-keyscan -p 22 "$_server" 2>/dev/null
+  ssh-keyscan -p 23 "$_server" 2>/dev/null; } | sort -u > "$_out"
+
+if [[ ! -s "$_out" ]]; then
+  rm -f "$_out"
+  gum style --foreground 1 "error: ssh-keyscan returned nothing — is the box reachable from here (reachable_externally)?"
+  exit 1
+fi
+
+gum style --foreground 2 "==> wrote $(wc -l < "$_out") host key entries to $_out"
+gum style --foreground 3 "==> commit this file — #2's restic-backup component installs it for StrictHostKeyChecking=yes"
