@@ -39,8 +39,11 @@ reports "statically linked" / `ldd` reports not a dynamic executable).
 #### ADDED: restic built from a pinned source version
 
 `restic` is compiled via
-`go install github.com/restic/restic/cmd/restic@$resticVersion` where
-`resticVersion` is a `ARG`/`ENV` in the Dockerfile. The pin is the source of
+`CGO_ENABLED=0 go install github.com/restic/restic/cmd/restic@$resticVersion`
+where `resticVersion` is a `ARG`/`ENV` in the Dockerfile. `CGO_ENABLED=0` is
+required, not optional: Alpine's musl toolchain can silently produce a
+dynamically-linked binary if any transitive dependency wants cgo, and
+`FROM scratch` has no dynamic linker to run it. The pin is the source of
 truth for Renovate; no prebuilt binary download.
 
 #### ADDED: openssh client statically linked against musl
@@ -67,11 +70,18 @@ backend that uses TLS.
 
 `.github/workflows/restic-backup-image.yml` triggers on push to `main`
 touching `images/restic-backup/**` or the workflow file, plus
-`workflow_dispatch`. It builds the image with `docker buildx` and pushes to
-`ghcr.io/kitten-lily/materia/restic-backup` with tags `latest` and
-`sha-<short>`. It emits the image digest (workflow output / job summary) so
-#2 can pin `@sha256:...` in the `.container.gotmpl`. Uses `GITHUB_TOKEN` with
-`packages: write` scope.
+`workflow_dispatch`. It builds with `docker/build-push-action` (decided over
+raw `podman build`/`podman push` — the action handles buildx, GHCR auth, and
+layer caching without custom scripting). Job permissions are least-privilege
+and explicit: `contents: read`, `packages: write` — no implicit defaults.
+Before anything is pushed, the workflow loads the built image locally
+(`load: true`, `push: false` on a first build pass) and re-runs the same
+static-link gate as the local check (`--entrypoint /usr/bin/restic ... version`,
+`--entrypoint /usr/bin/ssh ... -V`); the job fails before GHCR is touched if
+either check fails, so a non-static binary can never reach the registry. Only
+then does it push to `ghcr.io/kitten-lily/materia/restic-backup` with tags
+`latest` and `sha-<short>`. It emits the image digest (workflow output / job
+summary) so #2 can pin `@sha256:...` in the `.container.gotmpl`.
 
 #### ADDED: Renovate covers resticVersion and opensshVersion
 
@@ -81,18 +91,23 @@ already covered by Renovate's native docker manager.
 
 ## Steps
 
-1. Create `images/restic-backup/Dockerfile` with a builder stage based on
-   `golang:<goVersion>-alpine` and a final `FROM scratch` stage. Use `ARG
-   resticVersion`, `ARG opensshVersion`, `ARG goVersion` (or pin the builder
-   tag directly). → verify: `grep -c 'FROM scratch' images/restic-backup/Dockerfile` returns 1.
+1. Create `images/restic-backup/Dockerfile` with a builder stage pinned by
+   digest — `FROM golang:<goVersion>-alpine@sha256:<digest>` — matching this
+   repo's git-pinned-digest convention (AGENTS.md "Pinned image digests"),
+   not a floating tag. Renovate's existing native docker manager updates the
+   digest pin automatically once one exists — no new manager needed for this
+   one. Final stage is `FROM scratch`. Use `ARG resticVersion`, `ARG
+   opensshVersion`. → verify: `grep -c 'FROM scratch' images/restic-backup/Dockerfile` returns 1 and `grep -qE 'FROM golang:.*@sha256:' images/restic-backup/Dockerfile`.
 
 2. In the builder stage, install the static-build toolchain:
    `apk add --no-cache git openssh-static zlib-static openssl-libs-static musl-dev build-base autoconf`.
    → verify: `grep -q 'zlib-static' images/restic-backup/Dockerfile`.
 
 3. In the builder stage, build restic via
-   `go install github.com/restic/restic/cmd/restic@$resticVersion` and place
-   the binary at `/out/restic`. → verify: `grep -q 'go install github.com/restic/restic' images/restic-backup/Dockerfile`.
+   `CGO_ENABLED=0 go install github.com/restic/restic/cmd/restic@$resticVersion`
+   and place the binary at `/out/restic`. Do not drop `CGO_ENABLED=0` — see
+   Requirements above for why it's load-bearing, not stylistic. → verify:
+   `grep -q 'CGO_ENABLED=0 go install github.com/restic/restic' images/restic-backup/Dockerfile`.
 
 4. In the builder stage, download + extract the OpenSSH portable tarball at
    `$opensshVersion`, `./configure` with static linking flags
@@ -120,14 +135,20 @@ already covered by Renovate's native docker manager.
    (restic version proves a Go static binary runs in scratch) and
    `podman run --rm --entrypoint /usr/bin/ssh restic-backup-test -V`
    (OpenSSH version proves the static ssh build — the riskiest step).
-   → verify: both commands exit 0 and print version strings.
+   → verify: both commands exit 0 and print version strings. This is the
+   local dry-run of the same gate step 8's workflow enforces in CI — do this
+   one first since local iteration is faster than pushing to see a CI failure.
 
 8. Create `.github/workflows/restic-backup-image.yml` — trigger on push to
    `main` touching `images/restic-backup/**` or the workflow, plus
-   `workflow_dispatch`; build with `docker/build-push-action` (or `podman
-   build` + `podman push`) to `ghcr.io/kitten-lily/materia/restic-backup`,
-   tags `latest` + `sha-<short>`, `packages: write` permission. Emit the
-   digest to the job summary so #2 can pin it. → verify: `grep -q 'ghcr.io/kitten-lily/materia/restic-backup' .github/workflows/restic-backup-image.yml`.
+   `workflow_dispatch`. Permissions block: `contents: read`, `packages:
+   write`, nothing implicit. Build with `docker/build-push-action`, first
+   with `load: true`/`push: false` to get the image into the local daemon,
+   then run step 7's two static-link checks against it as a job step — fail
+   the job here if either check fails. Only on success, push to
+   `ghcr.io/kitten-lily/materia/restic-backup` with tags `latest` +
+   `sha-<short>`. Emit the digest to the job summary so #2 can pin it. →
+   verify: `grep -q 'ghcr.io/kitten-lily/materia/restic-backup' .github/workflows/restic-backup-image.yml && grep -q 'contents: read' .github/workflows/restic-backup-image.yml`.
 
 9. Extend `renovate.json5` `customManagers` with two `custom.regex` entries:
    `resticVersion` (datasource `github-tags`, package `restic/restic`) and
