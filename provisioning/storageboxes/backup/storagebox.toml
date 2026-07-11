@@ -1,0 +1,18 @@
+# Storage Box config for "backup", read by `mise hz:storagebox:*`.
+# Committed — non-secret. Companion to provisioning/servers/*/server.toml.
+
+type = "bx11"       # 1 TB — smallest tier; change-type can grow it later
+location = "hel1"   # same DC region as flutterina
+
+# Provisioning, keyscan, and key installation run from the dev machine
+# (outside the Hetzner network), so external reachability stays on.
+# Access is SSH-only and key/password-authenticated. To flip later:
+#   hcloud storage-box update-access-settings backup --reachable-externally=false
+reachable_externally = true
+
+[snapshot_plan]
+# Hetzner-side daily snapshots — independent safety net if a backup host is
+# ever compromised and prunes its own restic repository (defense in depth
+# beyond restic retention; see issue #4).
+hour = 4            # UTC, daily
+max_snapshots = 7
