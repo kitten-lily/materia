@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#MISE description="Generate an ed25519 keypair and install it for a server's Storage Box subaccount (interactive password prompt)"
+
+#USAGE flag "--box-name <name>" help="Storage Box name"
+#USAGE flag "--server-name <name>" help="Server whose subaccount gets the key"
+
+set -euo pipefail
+
+_box_name="${usage_box_name:?box name required, use --box-name}"
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_home="backups/${_server_name}"
+_known_hosts="provisioning/storageboxes/${_box_name}/known_hosts"
+
+if [[ ! -f "$_known_hosts" ]]; then
+  gum style --foreground 1 "error: $_known_hosts not found — run: mise hz:storagebox:keyscan --box-name $_box_name"
+  exit 1
+fi
+
+_sub=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json \
+  | jq --arg h "$_home" '[.[] | select(.home_directory == $h)] | first // empty')
+_sub_user=$(echo "$_sub" | jq -r '.username // empty')
+_server=$(echo "$_sub" | jq -r '.server // empty')
+
+if [[ -z "$_sub_user" ]]; then
+  gum style --foreground 1 "error: no subaccount with home '$_home' on $_box_name — run: mise hz:storagebox:subaccount --box-name $_box_name --server-name $_server_name"
+  exit 1
+fi
+
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+ssh-keygen -t ed25519 -N "" -C "restic-${_server_name}" -f "$_tmpdir/id_ed25519" >/dev/null
+
+# The box-side install-ssh-key helper appends the key to the subaccount's
+# .ssh/authorized_keys in both formats (OpenSSH for port 23, RFC4716 for
+# port 22). Subaccounts support it just like the primary account.
+gum style --foreground 8 "==> installing key for ${_sub_user}@${_server} — enter the subaccount password when prompted"
+ssh -p 23 \
+  -o UserKnownHostsFile="$_known_hosts" \
+  -o StrictHostKeyChecking=yes \
+  "${_sub_user}@${_server}" install-ssh-key < "$_tmpdir/id_ed25519.pub"
+
+gum style --foreground 2 "==> key installed for ${_sub_user}. Handoff (attribute names finalized in #2):"
+gum style --foreground 3 "1. Private key → SOPS vault:  sops edit attributes/${_server_name}.yml"
+gum style --foreground 3 "   components.restic-backup.storageBoxSshKey: |-   (paste the key below, indented)"
+cat "$_tmpdir/id_ed25519"
+gum style --foreground 3 "2. Repository attribute (same file, non-secret but vault-encrypted anyway):"
+echo "   components.restic-backup.resticRepository: sftp://${_sub_user}@${_server}:23/restic"
+gum style --foreground 3 "3. Commit $_known_hosts if not already committed."
