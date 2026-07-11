@@ -47,6 +47,7 @@ stories:
     risk: P1
     status: planned
     blocks_on: e01s05
+    note: "Owns adding `resticPassword` to attributes/flutterina.yml (sops edit) — not covered by e01s02, which only added storageBoxSshKey + resticRepository. Secrets = [\"resticPassword\", \"storageBoxSshKey\"] in the component MANIFEST.toml has nothing to source without it."
   - id: e01s07
     slug: repo-manifest-role-wiring
     title: "Repo MANIFEST.toml: [Roles.base] + flutterina roles assignment"
@@ -82,4 +83,4 @@ stories:
     bcps: 2
     risk: P1
     status: planned
-    blocks_on: e01s03   # can't verify until the image is published
+    blocks_on: e01s09   # needs secrets (e01s06), manifest wiring (e01s07), and known_hosts (e01s08/e01s09) in place, not just the image
