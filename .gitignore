@@ -22,3 +22,5 @@ key.txt
 
 # Local token cache (fnox / Proton Pass)
 .tokensave/
+
+.pi/
