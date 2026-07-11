@@ -61,5 +61,32 @@
       depNameTemplate: "fosrl/badger",
       datasourceTemplate: "github-tags",
     },
+    {
+      // restic source version pin — compiled from source in the image
+      // builder stage (images/restic-backup/Dockerfile), not a prebuilt
+      // binary download.
+      customType: "regex",
+      description: "restic version in restic-backup Dockerfile",
+      managerFilePatterns: ["/(^|/)images/restic-backup/Dockerfile$/"],
+      matchStrings: [
+        "ARG resticVersion=(?<currentValue>v[^\\s]+)",
+      ],
+      depNameTemplate: "restic/restic",
+      datasourceTemplate: "github-tags",
+    },
+    {
+      // OpenSSH portable source version pin — only load-bearing if the
+      // from-source static build path was taken (see AGENTS.md); harmless
+      // no-op otherwise since Alpine's openssh-static tracks its own
+      // Renovate-independent apk index.
+      customType: "regex",
+      description: "OpenSSH portable version in restic-backup Dockerfile",
+      managerFilePatterns: ["/(^|/)images/restic-backup/Dockerfile$/"],
+      matchStrings: [
+        "ARG opensshVersion=(?<currentValue>[^\\s]+)",
+      ],
+      depNameTemplate: "openssh/openssh-portable",
+      datasourceTemplate: "github-tags",
+    },
   ],
 }
