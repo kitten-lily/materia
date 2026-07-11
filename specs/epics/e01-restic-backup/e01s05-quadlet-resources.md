@@ -9,6 +9,9 @@
 
 ## Context
 
+**Published image digest (from e01s03, run 29161722813, 2026-07-11):**
+`ghcr.io/kitten-lily/materia/restic-backup@sha256:dd42ac9516ee12655d475dd44b5d19aaa74bc14ca30321ab069b8613c7c1b97a`
+
 Wire the `restic-backup` component's systemd/Podman resources. Unlike the
 original #2 plan (which proposed a `.build` quadlet compiling on-host), this
 pulls the CI-built image from GHCR with a pinned digest — the same GitOps

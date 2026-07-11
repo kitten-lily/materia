@@ -2,8 +2,8 @@ id: e01
 slug: restic-backup
 title: "Restic backup component"
 source_issue: https://github.com/kitten-lily/materia/issues/2
-blocks_on: https://github.com/kitten-lily/materia/issues/17   # CI image build & publish
-status: blocked   # blocked on #17 landing the first publishable image digest
+# blocks_on: https://github.com/kitten-lily/materia/issues/17   # CI image build & publish (landed a29b902)
+status: in_progress
 stories:
   - id: e01s01
     slug: storagebox-infra
@@ -21,7 +21,7 @@ stories:
     title: "CI: build & publish restic-backup image to GHCR (Dockerfile + workflow + Renovate)"
     bcps: 5
     risk: P0
-    status: planned
+    status: done
     blocks_on: https://github.com/kitten-lily/materia/issues/17   # this story IS #17's implementation
     note: "Tracked as issue #17. The image (scratch + static restic + static openssh + wrapper) is built in CI, pushed to ghcr.io/kitten-lily/materia/restic-backup with a digest pin. Lands the Dockerfile + GitHub Actions workflow + Renovate managers for resticVersion/opensshVersion."
   - id: e01s04
