@@ -15,4 +15,5 @@ reachable_externally = true
 # ever compromised and prunes its own restic repository (defense in depth
 # beyond restic retention; see issue #4).
 hour = 4            # UTC, daily
+minute = 0          # UTC, daily — hcloud requires this flag
 max_snapshots = 7
