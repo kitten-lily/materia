@@ -19,8 +19,10 @@ fi
 
 # Password is required by the API. After install-key it's only a fallback
 # credential (and resettable via `hcloud storage-box subaccount
-# reset-password`), but store it anyway.
-_password=$(openssl rand -hex 24)
+# reset-password`), but store it anyway. Hetzner's policy requires at least
+# one upper-case letter, lower-case letter, digit, and special character.
+_pw_b64=$(openssl rand -base64 32 | tr -d '/+=' | tr '/+' 'Aa' | head -c 28)
+_password="${_pw_b64}#9Xa!"
 
 _tmpdir=$(mktemp -d)
 trap 'rm -rf "$_tmpdir"' EXIT

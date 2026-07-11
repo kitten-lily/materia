@@ -22,8 +22,10 @@ _snap_max=$(echo "$_toml_json" | jq -r '.snapshot_plan.max_snapshots // 7')
 
 # Primary-account password — required by the API. Rarely used afterwards
 # (subaccounts do the real work) and resettable via `hcloud storage-box
-# reset-password`, but store it anyway.
-_password=$(openssl rand -hex 24)
+# reset-password`, but store it anyway. Hetzner's policy requires at least
+# one upper-case letter, lower-case letter, digit, and special character.
+_pw_b64=$(openssl rand -base64 32 | tr -d '/+=' | tr '/+' 'Aa' | head -c 28)
+_password="${_pw_b64}#9Xa!"
 
 _tmpdir=$(mktemp -d)
 trap 'rm -rf "$_tmpdir"' EXIT
