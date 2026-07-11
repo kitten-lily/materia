@@ -349,6 +349,31 @@ subdirectory), so backups made by the old pangolin-edge repo's tasks against
 works before the first `materia-update` run: it pre-creates the volumes with
 the quadlet names and the quadlet units reuse them (`--ignore`).
 
+### Storage Boxes (backups)
+
+`hz:storagebox:*` provisions the Hetzner Storage Box that the
+`restic-backup` component (#2) backs up to. Same conventions as `hz:*`:
+`hcloud` via `fnox exec`, explicit name flags, config committed as
+`provisioning/storageboxes/<name>/storagebox.toml`.
+
+| Task | Description |
+|---|---|
+| `mise hz:storagebox:create --box-name <n>` | Create box from `storagebox.toml` — SSH-only, delete-protected, daily Hetzner snapshots |
+| `mise hz:storagebox:delete --box-name <n> --confirm` | Delete box (delete-protected boxes also need `--disable-protection`) |
+| `mise hz:storagebox:keyscan --box-name <n>` | Pin the box's SSH host keys to `provisioning/storageboxes/<n>/known_hosts` (commit it) |
+| `mise hz:storagebox:subaccount --box-name <n> --server-name <s>` | Per-server subaccount, home `backups/<s>`, SSH-only |
+| `mise hz:storagebox:install-key --box-name <n> --server-name <s>` | Generate ed25519 key, install via `install-ssh-key` (port 23), print vault handoff |
+
+Order per server: `create` → `keyscan` (commit `known_hosts`) →
+`subaccount` → `install-key` → paste the printed private key into
+`attributes/<server>.yml` (`sops edit`) as
+`components.restic-backup.storageBoxSshKey`, plus the printed
+`sftp://...` repository attribute. Passwords are printed once — store
+them in Proton Pass (both are resettable via
+`hcloud storage-box [subaccount] reset-password`). Subaccounts have no
+API-side SSH keys; `install-ssh-key` writes `<home>/.ssh/authorized_keys`
+in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
+
 ## Development conventions
 
 - **Focused semantic commits.** Each commit covers exactly one logical change.
