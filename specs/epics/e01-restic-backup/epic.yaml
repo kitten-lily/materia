@@ -1,0 +1,85 @@
+id: e01
+slug: restic-backup
+title: "Restic backup component"
+source_issue: https://github.com/kitten-lily/materia/issues/2
+blocks_on: https://github.com/kitten-lily/materia/issues/17   # CI image build & publish
+status: blocked   # blocked on #17 landing the first publishable image digest
+stories:
+  - id: e01s01
+    slug: storagebox-infra
+    title: "Storage Box provisioning tasks + known_hosts"
+    bcps: 0
+    status: done   # shipped in 747117c (feat(hz): storage box provisioning (#4))
+  - id: e01s02
+    slug: flutterina-vault-attrs
+    title: "Per-host vault attrs for restic-backup (repository + SSH key)"
+    bcps: 0
+    status: done   # attributes/flutterina.yml now has storageBoxSshKey + resticRepository
+  # --- blocked on #17 (CI image build) ---
+  - id: e01s03
+    slug: ci-image-build
+    title: "CI: build & publish restic-backup image to GHCR (Dockerfile + workflow + Renovate)"
+    bcps: 5
+    risk: P0
+    status: planned
+    blocks_on: https://github.com/kitten-lily/materia/issues/17   # this story IS #17's implementation
+    note: "Tracked as issue #17. The image (scratch + static restic + static openssh + wrapper) is built in CI, pushed to ghcr.io/kitten-lily/materia/restic-backup with a digest pin. Lands the Dockerfile + GitHub Actions workflow + Renovate managers for resticVersion/opensshVersion."
+  - id: e01s04
+    slug: wrapper-binary
+    title: "Wrapper entrypoint binary (ping, init, backup, forget, ping)"
+    bcps: 4
+    risk: P1
+    status: planned
+    blocks_on: e01s03   # wrapper source must exist for the CI image build to compile it
+    note: "Source lives under images/restic-backup/wrapper/ (owned by #17's build context) so the CI image build is self-contained. This story owns the Go behavior; e01s03 owns compiling it."
+  - id: e01s05
+    slug: quadlet-resources
+    title: "Quadlet resources: .container.gotmpl (Image= pull), .timer"
+    bcps: 3
+    risk: P1
+    status: planned
+    blocks_on: e01s03   # needs the published digest to pin
+    note: "No .build quadlet — the image is pulled from GHCR, same GitOps convention as pangolin/traefik. .container.gotmpl pins Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:..."
+  - id: e01s06
+    slug: component-manifest-secrets
+    title: "Component MANIFEST.toml: Secrets, Services, Defaults"
+    bcps: 2
+    risk: P1
+    status: planned
+    blocks_on: e01s05
+  - id: e01s07
+    slug: repo-manifest-role-wiring
+    title: "Repo MANIFEST.toml: [Roles.base] + flutterina roles assignment"
+    bcps: 1
+    risk: P2
+    status: planned
+    blocks_on: e01s06
+  - id: e01s08
+    slug: known_hosts-resource
+    title: "Ship known_hosts as a data resource (bind-mounted into container)"
+    bcps: 1
+    risk: P2
+    status: planned
+    blocks_on: e01s05
+  - id: e01s09
+    slug: renovate-coverage
+    title: "Renovate: cover restic-backup image digest (quadlet manager)"
+    bcps: 1
+    risk: P2
+    status: planned
+    blocks_on: e01s05
+    note: "The image's resticVersion/opensshVersion pins are owned by #17's Dockerfile Renovate managers. This story only covers the digest pin in the .container.gotmpl (already handled by the existing quadlet manager extended to .gotmpl files)."
+  - id: e01s10
+    slug: agents-doc-update
+    title: "AGENTS.md: document restic-backup component + gotchas"
+    bcps: 1
+    risk: P3
+    status: planned
+    blocks_on: e01s07
+  - id: e01s11
+    slug: local-verification
+    title: "Local verification: pull image + local-repo podman run"
+    bcps: 2
+    risk: P1
+    status: planned
+    blocks_on: e01s03   # can't verify until the image is published
