@@ -1,0 +1,19 @@
+components:
+    restic-backup:
+        storageBoxSshKey: ENC[AES256_GCM,data:RZWe6yP3PvXebSYvGXsdPu5AG0QAhWdleFEkIOpvqYYqiuO+qYacziI368BVCT2X/gokySz8Ywv7FHQ2O2rY7vNUpecTG9HJj/qku2zTRoyMdA9kfbTfrF0Q8Nff9EowIBkI8JjndgZ7PurkDNteFu3NctdVpD4sw0TKTHzqbN+UKDsV98UdHm6eYnLGdhe1O/FI86hqMBjY777SB5dOz9/yDmVv9UR9VlbJBcttk/j3RBtstWIOpEhc3HmO0w8OZz5WLdxK0Wn1Do1ZOWJt7zrE7aaoH0DgSVk/Cx1Ao7NnrEvSoziv6a4aZAoOEABXUzi/1PNUVrGRfFrdMLt3dRiNCJFXPQOXWv1srd1gw/WumY5VReLhJvKW3k/P7WtZiW1P/ltyaz3pvJWw+XXaTVUz8wcpdApY9fgxz5qA0lPW5tutn+KH9yB/uXYZouTNS3rNxMSxZ9+W/hUCUPQqQKTnF99dFb2Kyl0WZPF/Ip+3lwECmJ7OSoltvvuUdjyAyy8EAAH/Md+o5IRYTbi8rF58vVmxsBhHQFA=,iv:Df9gg1ogS/P5dHzhc4M6ROYLKQEZrMfPhZJh5Ew/5VE=,tag:kpn7L2d44vZZYmgXo0RU7A==,type:str]
+        resticRepository: ENC[AES256_GCM,data:TtE3V+N/8WF0XuJWVswxq5W3FbEFQ9wMPvKcPvgC47HmE4iHxbgc7Nqy7CihrtaMucwNHTCE1JjNlLuYVg==,iv:4BDSTNkEq5YIJtotZWI2KvWVHbx6WFxaOatL+mVSQZI=,tag:qj+c7CvSdYEDaSDa51eM1A==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA1TnByaVdvQm9CdXlRQVc0
+            WTZ5bGFYbUNBcitaWWpXRFQyMDdDcU14OFRvCkl1cmo3bXNsOXpjVWZobCt6YWZ6
+            YWxGTFY5L2hGRXVsMVdrdkxDNEhlMk0KLS0tIDVyc1RXY0I3Q1JqZlp6UncrN0hH
+            ZFFoMlZyS29BNGZ1b3o0OXlzVW5PSVkKvvGWVo6Laa28sbheZQy9dmeO85JQlpt0
+            kB1w2zTGe0lJWzfElD9reebIJc7q/XFhT7FhVNDTf9bkRLYqKf75XQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
+    lastmodified: "2026-07-11T10:22:44Z"
+    mac: ENC[AES256_GCM,data:RmXbCMxqrRMnCc+YsJnNz5XtTnuEC+1XytKCYWUf5qmnZUrb1H5kojLBlfsc3d7zCZcm2HKqX/sVraXmwkqVNpl0P521jxpeEsUWjiTAArjiYQyuhZJfmwAEty4+QMdJ/T6NZErt8AQ7CVl+5YexhtzzUJWWNxkAHOGsyuNgB7g=,iv:A7c4lX0H1Q/JpOgjKdcp6POUpzL5e/HPjuzoEd7oN0Y=,tag:MaMR+j1x7yt90MyD/RYTrA==,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.13.2
