@@ -29,7 +29,7 @@ stories:
     title: "Wrapper entrypoint binary (ping, init, backup, forget, ping)"
     bcps: 4
     risk: P1
-    status: planned
+    status: done   # implemented in wrapper-entrypoint-binary branch, merged to main
     blocks_on: e01s03   # wrapper source must exist for the CI image build to compile it
     note: "Source lives under images/restic-backup/wrapper/ (owned by #17's build context) so the CI image build is self-contained. This story owns the Go behavior; e01s03 owns compiling it."
   - id: e01s05
