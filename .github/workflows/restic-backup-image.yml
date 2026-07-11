@@ -1,0 +1,75 @@
+# .github/workflows/restic-backup-image.yml
+name: restic-backup image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "images/restic-backup/**"
+      - ".github/workflows/restic-backup-image.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/kitten-lily/materia/restic-backup
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (local, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: images/restic-backup
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:ci-check
+          build-args: |
+            resticVersion=v0.18.0
+            opensshVersion=9.9p1
+
+      - name: Gate — restic is static and runs
+        run: docker run --rm --entrypoint /usr/bin/restic ${{ env.IMAGE }}:ci-check version
+
+      - name: Gate — ssh is static and runs
+        run: docker run --rm --entrypoint /usr/bin/ssh ${{ env.IMAGE }}:ci-check -V
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute short SHA tag
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: images/restic-backup
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:sha-${{ steps.sha.outputs.short }}
+          build-args: |
+            resticVersion=v0.18.0
+            opensshVersion=9.9p1
+
+      - name: Emit digest to job summary
+        run: |
+          echo "### restic-backup image digest" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ env.IMAGE }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
