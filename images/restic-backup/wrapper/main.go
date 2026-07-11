@@ -113,7 +113,40 @@ func pingEnd(c config, success bool) {
 }
 
 func main() {
-	_ = loadConfig()
+	c := loadConfig()
+
+	if c.repository == "" {
+		log.Fatal("RESTIC_REPOSITORY is required")
+	}
+	if c.password == "" {
+		log.Fatal("RESTIC_PASSWORD is required")
+	}
+	if len(c.backupPaths) == 0 {
+		log.Fatal("BACKUP_PATHS is required")
+	}
+
+	pingStart(c)
+
+	exitCode := runJob(c)
+	pingEnd(c, exitCode == 0)
+	os.Exit(exitCode)
+}
+
+// runJob runs the backup job (ensureRepo -> backup -> forget) and returns
+// the combined exit code. Separated from main so pingEnd always runs after
+// it, regardless of the exit path (os.Exit skips defers).
+func runJob(c config) int {
+	if err := ensureRepo(c); err != nil {
+		log.Printf("ensureRepo failed: %v", err)
+		return 1
+	}
+	backupExit := runBackup(c)
+	forgetExit := runForget(c)
+	if backupExit == 0 && forgetExit == 0 {
+		return 0
+	}
+	log.Printf("backup exit %d, forget exit %d", backupExit, forgetExit)
+	return backupExit | forgetExit
 }
 
 // resticCmd builds an exec.Command for restic with the wrapper's env
