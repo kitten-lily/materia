@@ -18,6 +18,7 @@ key.txt
 .crush/
 
 .claude/worktrees/
+.worktrees/
 
 # Local token cache (fnox / Proton Pass)
 .tokensave/
