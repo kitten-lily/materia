@@ -19,10 +19,25 @@ if [[ -z "$_server" ]]; then
   exit 1
 fi
 
+# Subaccounts connect via their own hostname (e.g. u630269-sub1.your-storagebox.de),
+# derived from the subaccount username — distinct from the primary box hostname.
+# Pin both the primary host and every subaccount host, or install-key / restic's
+# sftp backend will fail StrictHostKeyChecking against the subaccount host.
+mapfile -t _sub_servers < <(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json 2>/dev/null \
+  | jq -r '.[].server // empty' | sort -u)
+
 # Port 22 is SFTP-only; port 23 is the full SSH service that install-ssh-key
-# (and restic's sftp backend, per #2) uses. Pin both.
-{ ssh-keyscan -p 22 "$_server" 2>/dev/null
-  ssh-keyscan -p 23 "$_server" 2>/dev/null; } | sort -u > "$_out"
+# (and restic's sftp backend, per #2) uses. Pin both ports for the primary
+# host and every subaccount host.
+{
+  ssh-keyscan -p 22 "$_server" 2>/dev/null
+  ssh-keyscan -p 23 "$_server" 2>/dev/null
+  for _ss in "${_sub_servers[@]}"; do
+    [[ -n "$_ss" ]] || continue
+    ssh-keyscan -p 22 "$_ss" 2>/dev/null
+    ssh-keyscan -p 23 "$_ss" 2>/dev/null
+  done
+} | sort -u > "$_out"
 
 if [[ ! -s "$_out" ]]; then
   rm -f "$_out"
