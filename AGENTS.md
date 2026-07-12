@@ -215,7 +215,11 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `Secret=...,type=env` are read when the container is created. A rotated value
   needs the secret updated THEN `systemctl restart` the consumer — restarting
   alone won't repopulate. Materia handles the update; the restart is still
-  required.
+  required. **Podman secrets can also go stale** — materia doesn't always
+  detect that a secret's *value* changed (vs. its *name*). After rotating a
+  secret value in the vault, if the container still sees the old value,
+  `sudo podman secret rm materia-<name>` the stale one and re-run
+  `materia-update` to force recreation (BUG-003, layer 3).
 - **Systemd unit inline comments are literal values.**
   `PublishPort=443:443/udp  # HTTP/3` passes the full string including comment
   to Podman. The `/3` in `HTTP/3` triggered "protocol can only be specified
@@ -260,8 +264,24 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   with `jq -Rs .` (JSON-encodes raw bytes, embedded `\n` escapes, no reflow
   risk) piped into `sops --set '["path"]["to"]["key"] <json>' vault.yml`
   — decrypts, sets, and re-encrypts in place, no human ever retypes the
-  value. Verified round-trip byte-exact against a real ed25519 key
-  (`ssh-keygen -y` confirmed the recovered value still loads).
+  value.
+- **OpenSSH private keys need a trailing newline after the END marker.**
+  `ssh`'s `ssh_config` `IdentityFile` loader fails with `error in libcrypto`
+  on an ed25519 key whose final line (`-----END OPENSSH PRIVATE KEY-----`)
+  has no trailing newline, even though `ssh-keygen -y` accepts the same
+  file (OpenSSH bug #3849). Some `ssh-keygen` builds produce a key without
+  the final newline. When storing a key for podman secret mount, ensure the
+  trailing newline is present: `tail -c 1 <file> | wc -l` is 0 if the last
+  byte isn't a newline — append one with `printf '\n' >> <file>`. Do NOT
+  pipe through `sed '$a\'` — that syntax is not portable across GNU/BSD
+  `sed` and can silently corrupt the key content (BUG-003, layer 2).
+- **`ssh-keygen -y` and `ssh` use different key-loading code paths.**
+  `ssh-keygen -y` is more tolerant — it accepts keys with missing trailing
+  newlines that `ssh`'s `IdentityFile` loader rejects with `error in
+  libcrypto`. Don't trust `ssh-keygen -y` alone as a "key is valid" check;
+  always test with an actual `ssh -v` connection attempt (or `ssh -G` for
+  config resolution, though note `ssh -G` does NOT load/parse keys — only
+  a real connection exercises that path).
 - **Templated config files are bind-mounted individually from the data dir.**
   Materia installs templated files to `{{ m_dataDir "pangolin" }}/config/`;
   `.container` files bind-mount each file on top of the runtime volume

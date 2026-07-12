@@ -15,7 +15,19 @@ status: done   # all 11 stories done — closed out by e01s10 (AGENTS.md docs)
 # too permissive for OpenSSH's strict key-file check. materia's secretMount
 # macro can't pass mode= at all (confirmed against materia's own source) —
 # fixed by hand-writing the Secret= line with mode=0400. No image rebuild
-# needed. Confirmed epic status stays "done" — both are discovered defect
+# needed.
+# POST-SHIP: BUG-003 (specs/bugs/BUG-003-storagebox-key-manual-paste-corruption.md)
+# — third through fifth production runs: "error in libcrypto" loading the
+# key. Three layers: (1) manual paste corruption in install-key task — fixed
+# with jq -Rs . + sops --set automation; (2) missing trailing newline after
+# -----END marker (OpenSSH bug #3849, ssh-keygen -y tolerant but ssh's
+# IdentityFile loader rejects) — fixed with tail -c 1 | wc -l + printf '\n'
+# >> (sed '$a\' was a broken intermediate attempt, not portable across
+# GNU/BSD sed); (3) stale podman secret not refreshed after vault update —
+# fixed by podman secret rm + materia-update to force recreation.
+# PRODUCTION VERIFIED: 2026-07-12 18:28 UTC, snapshot 1b66a668, 7.111 KiB,
+# clean exit. Backup timer running daily against the real Storage Box.
+# Confirmed epic status stays "done" — all three are discovered defect
 # fixes, not reopened stories.
 stories:
   - id: e01s01
