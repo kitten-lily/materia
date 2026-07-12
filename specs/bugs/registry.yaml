@@ -1,1 +1,8 @@
-bugs: []
+bugs:
+  - id: BUG-001
+    title: "restic-backup ssh_config mounted at wrong path, host key verification fails"
+    status: fixed
+    severity: P0
+    found: 2026-07-12
+    epic: e01-restic-backup
+    file: specs/bugs/BUG-001-restic-backup-ssh-config-wrong-path.md

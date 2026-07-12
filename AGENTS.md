@@ -110,7 +110,7 @@ components/
     MANIFEST.toml                # component manifest — Secrets, Defaults, Services
     restic-backup.container.gotmpl # oneshot backup job, pulls the GHCR image by digest
     restic-backup.timer.gotmpl   # attribute-driven schedule (resticOnCalendar)
-    ssh_config                   # static /etc/ssh/ssh_config (sftp SSH options)
+    ssh_config                   # static /usr/local/etc/ssh_config (sftp SSH options, see BUG-001)
     known_hosts                  # copy of provisioning/storageboxes/<box>/known_hosts
 images/
   restic-backup/
@@ -277,15 +277,22 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   Static builds need both header and static-archive packages: `zlib-dev` +
   `zlib-static`, `openssl-dev` + `openssl-libs-static`. The `opensshVersion`
   ARG in the Dockerfile is Renovate-trackable — bump it when a new release is
-  needed.
+  needed. **`./configure` with no `--prefix`/`--sysconfdir` defaults the
+  system-wide config path to `/usr/local/etc/ssh_config`, not
+  `/etc/ssh/ssh_config`** — confirmed via `strings` on the built binary
+  (BUG-001). Any `.container.gotmpl` mounting a system ssh config for this
+  binary must target `/usr/local/etc/ssh_config`.
 - **`RESTIC_SFTP_ARGS` is not a real restic env var.** Restic's sftp backend
   only accepts custom SSH args via the `-o sftp.args=...` CLI flag (added
   v0.16.1) — no `-o` flag has an environment-variable form. Since the
   wrapper never passes CLI flags to restic, SSH options (`IdentityFile`,
   `UserKnownHostsFile`, `StrictHostKeyChecking`) are set via a static
-  `ssh_config` data resource bind-mounted to `/etc/ssh/ssh_config` —
-  OpenSSH's system-wide client config, read regardless of `$HOME` (scratch
-  has none).
+  `ssh_config` data resource bind-mounted to `/usr/local/etc/ssh_config`
+  (see BUG-001 — NOT `/etc/ssh/ssh_config`, the conventional path most
+  distro-packaged OpenSSH builds use; this statically-built client's
+  compiled-in sysconfdir defaults to `/usr/local/etc` since the Dockerfile
+  passes no `--sysconfdir` to `./configure`) — OpenSSH's system-wide client
+  config, read regardless of `$HOME` (scratch has none).
 - **Scratch images need `Tmpfs=/tmp` for restic.** Restic stages backup pack
   files in `os.TempDir()` (`/tmp` by default). Scratch has no `/tmp`
   directory at all, so `restic backup` fails with "no such file or
