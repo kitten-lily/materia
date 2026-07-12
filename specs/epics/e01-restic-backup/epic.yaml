@@ -45,16 +45,17 @@ stories:
     title: "Component MANIFEST.toml: Secrets, Services, Defaults"
     bcps: 2
     risk: P1
-    status: blocked   # components/restic-backup/MANIFEST.toml written + verified; resticPassword + hcPingURL attribute values need user's age key / Proton Pass (not available in this environment) — see e01s06 story doc for exact sops commands
+    status: done   # components/restic-backup/MANIFEST.toml (399539a-era commit d5dc505) + resticPassword/hcPingURL attributes added by user (sops edit, commit 3a58ab2)
     blocks_on: e01s05
-    note: "components/restic-backup/MANIFEST.toml done (Secrets, Defaults, Services w/ Stopped+Oneshot on the .service, Static on the .timer — confirmed against materia-manifest.5 docs). Attribute values (resticPassword in attributes/flutterina.yml, hcPingURL in attributes/vault.yml globals) handed off to the user — not covered by e01s02, which only added storageBoxSshKey + resticRepository. Secrets = [\"resticPassword\", \"storageBoxSshKey\"] has nothing to source without it."
+    note: "components/restic-backup/MANIFEST.toml (Secrets, Defaults, Services w/ Stopped+Oneshot on the .service, Static on the .timer — confirmed against materia-manifest.5 docs). resticPassword (attributes/flutterina.yml) and hcPingURL (attributes/vault.yml globals) added by the user via sops edit, commit 3a58ab2."
   - id: e01s07
     slug: repo-manifest-role-wiring
     title: "Repo MANIFEST.toml: [Roles.base] + flutterina roles assignment"
     bcps: 1
     risk: P2
-    status: planned
+    status: done   # MANIFEST.toml: [Hosts.flutterina] Roles=["base"] + [Roles.base] Components=["restic-backup"]
     blocks_on: e01s06
+    note: "ORDERING RISK: flutterina now gets restic-backup assigned before known_hosts (e01s08) ships — the timer can fire and fail to start (missing bind-mount source) before e01s08 lands. Non-fatal/self-healing (daily retry) but land e01s08 before this reaches a real materia update run on flutterina."
   - id: e01s08
     slug: known_hosts-resource
     title: "Ship known_hosts as a data resource (bind-mounted into container)"

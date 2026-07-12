@@ -1,2 +1,6 @@
 [Hosts.flutterina]
 Components = ["pangolin"]
+Roles = ["base"]
+
+[Roles.base]
+Components = ["restic-backup"]

@@ -2,15 +2,15 @@ workflow_mode: solo-git
 session:
   active_flow: build_epic
   active_epic_id: e01
-  active_story_id: e01s06
+  active_story_id: e01s07
 git:
   branch: main
   base: main
 handoff:
   next_skill: null
-  note: "e01s06 (component MANIFEST.toml) code done: components/restic-backup/MANIFEST.toml (Secrets, Defaults, Services). Story status: blocked — needs the USER to run two sops edit commands (resticPassword in attributes/flutterina.yml, hcPingURL in attributes/vault.yml globals) since this environment has no age key / Proton Pass access. See specs/epics/e01-restic-backup/e01s06-component-manifest-secrets.md for exact commands. e01s07 (repo MANIFEST.toml host wiring) is next and does not depend on the attribute values being filled in yet."
+  note: "e01s06 done (vault attrs added by user, commit 3a58ab2). e01s07 done: MANIFEST.toml wires restic-backup into [Roles.base] + flutterina Roles=[\"base\"]. ORDERING RISK flagged in e01s07 story doc: land e01s08 (known_hosts resource) before this reaches a real materia update on flutterina — otherwise the timer can fire and fail to start (missing bind-mount source), non-fatal but avoidable. Next: e01s08 (known_hosts data resource) — recommended next given the ordering risk, or e01s09 (Renovate coverage) / e01s10 (AGENTS.md docs), both also unblocked."
 epic_cycle:
   step: 0
-  current_story: e01s07
+  current_story: e01s08
   audit_result: pending
 metrics: {}
