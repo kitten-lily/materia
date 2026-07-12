@@ -56,9 +56,12 @@ ssh -p 23 \
 _key_json=$(jq -Rs . < "$_tmpdir/id_ed25519")
 sops --set "[\"components\"][\"restic-backup\"][\"storageBoxSshKey\"] ${_key_json}" "$_vault"
 
-gum style --foreground 2 "==> key installed for ${_sub_user} and written to $_vault (components.restic-backup.storageBoxSshKey)."
-gum style --foreground 3 "1. Repository attribute (not secret, but vault-encrypted anyway) — add manually:"
-echo "   sops edit $_vault"
-echo "   components.restic-backup.resticRepository: sftp://${_sub_user}@${_server}:23/restic"
-gum style --foreground 3 "2. Commit $_known_hosts if not already committed."
-gum style --foreground 3 "3. Review the change: git diff $_vault (ciphertext will differ even though the vault is encrypted — that's expected)."
+_repository="sftp://${_sub_user}@${_server}:23/restic"
+_repo_json=$(jq -Rn --arg v "$_repository" '$v')
+sops --set "[\"components\"][\"restic-backup\"][\"resticRepository\"] ${_repo_json}" "$_vault"
+
+gum style --foreground 2 "==> key installed for ${_sub_user} and written to $_vault:"
+gum style --foreground 2 "    components.restic-backup.storageBoxSshKey"
+gum style --foreground 2 "    components.restic-backup.resticRepository = ${_repository}"
+gum style --foreground 3 "1. Commit $_known_hosts if not already committed."
+gum style --foreground 3 "2. Review the change: git diff $_vault (ciphertext will differ even though the vault is encrypted — that's expected)."

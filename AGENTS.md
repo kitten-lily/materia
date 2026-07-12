@@ -493,11 +493,11 @@ the quadlet names and the quadlet units reuse them (`--ignore`).
 | `mise hz:storagebox:install-key --box-name <n> --server-name <s>` | Generate ed25519 key, install via `install-ssh-key` (port 23), write private key straight into the vault |
 
 Order per server: `create` → `keyscan` (commit `known_hosts`) →
-`subaccount` → `install-key` → add the printed `sftp://...` repository
-attribute (`sops edit attributes/<server>.yml`, key
-`components.restic-backup.resticRepository`). `install-key` writes the
-private key (`components.restic-backup.storageBoxSshKey`) directly via
-`sops --set` + `jq -Rs .` — **not** a manual paste into `sops edit`. A
+`subaccount` → `install-key` → the printed `sftp://...` repository
+attribute (`components.restic-backup.resticRepository`) and the SSH key
+(`components.restic-backup.storageBoxSshKey`) are both written straight
+into `attributes/<server>.yml` by `install-key` itself, via `sops --set`
+— no manual `sops edit` step remains for either. A
 multi-line private key copy-pasted by hand into an interactive editor is
 exactly the kind of thing that picks up CRLF/whitespace corruption from
 terminal reflow, producing a key that looks plausible (BEGIN/END markers
