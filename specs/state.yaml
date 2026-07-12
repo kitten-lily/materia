@@ -8,7 +8,7 @@ git:
   base: main
 handoff:
   next_skill: null
-  note: "e01s09 done (verification-only, no renovate.json5 change needed — existing quadlet manager regex already matches components/restic-backup/*.container.gotmpl). Remaining: e01s10 (AGENTS.md docs, blocks_on e01s07+e01s09 — both now done, unblocked) and e01s11 (local verification, blocks_on e01s09 — unblocked)."
+  note: "e01s11 done: local podman verification found + fixed 2 real defects in restic-backup.container.gotmpl — (1) pinned digest was a stale pre-wrapper-logic build (was dd42ac95..., corrected to 9bb02cef9..., root cause: epic recorded the digest from an earlier CI run than the one that actually had the final wrapper code), (2) scratch has no writable /tmp, restic backup failed without Tmpfs=/tmp. Full local-repo cycle verified working (init/backup/incremental/forget/guard-clauses). Flagged but did not fix: CI workflow's gate steps never exercise the wrapper binary at all (why the stale build passed) — recommended follow-up, not done here. Only e01s10 (AGENTS.md docs) remains in the epic — both its blockers (e01s07, e01s09) are done."
 epic_cycle:
   step: 0
   current_story: e01s10
