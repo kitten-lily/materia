@@ -53,7 +53,16 @@ ssh -p 23 \
 # passed permission checks but failed "error in libcrypto" on load).
 # `jq -Rs .` JSON-encodes the raw key bytes exactly (embedded \n escapes,
 # no reflow); `sops --set` decrypts, sets, and re-encrypts in place.
-_key_json=$(jq -Rs . < "$_tmpdir/id_ed25519")
+#
+# Guarantee a trailing newline: OpenSSH's ssh_config IdentityFile loader
+# fails with "error in libcrypto" on an ed25519 key whose final line
+# (-----END ...-----) has no trailing newline, even though ssh-keygen -y
+# accepts the same file (BUG-003, real cause — OpenSSH bug #3849). Some
+# ssh-keygen builds produce a key file without the final newline; `jq -Rs .`
+# faithfully captures whatever bytes are there. Ensure exactly one trailing
+# newline by piping through `sed '$a\'` (adds a newline at EOF only if the
+# last line doesn't end with one).
+_key_json=$(sed '$a\' "$_tmpdir/id_ed25519" | jq -Rs .)
 sops --set "[\"components\"][\"restic-backup\"][\"storageBoxSshKey\"] ${_key_json}" "$_vault"
 
 _repository="sftp://${_sub_user}@${_server}:23/restic"
