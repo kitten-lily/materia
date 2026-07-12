@@ -10,7 +10,7 @@ Tmpfs=/tmp
 Volume=/var/lib/materia/components:/var/lib/materia/components:ro
 Volume=/var/lib/containers/storage/volumes:/var/lib/containers/storage/volumes:ro
 Volume={{ m_dataDir "restic-backup" }}/known_hosts:/run/secrets/known_hosts:ro,Z
-Volume={{ m_dataDir "restic-backup" }}/ssh_config:/etc/ssh/ssh_config:ro,Z
+Volume={{ m_dataDir "restic-backup" }}/ssh_config:/usr/local/etc/ssh_config:ro,Z
 {{ secretMount "storageBoxSshKey" "/run/secrets/ssh_key" }}
 {{ secretEnv "resticPassword" "RESTIC_PASSWORD" }}
 Environment=RESTIC_REPOSITORY={{ .resticRepository }}
