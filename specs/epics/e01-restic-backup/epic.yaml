@@ -61,7 +61,7 @@ stories:
     title: "Ship known_hosts as a data resource (bind-mounted into container)"
     bcps: 1
     risk: P2
-    status: planned
+    status: done   # components/restic-backup/known_hosts — copy of provisioning/storageboxes/backup/known_hosts; closes e01s07's ordering risk
     blocks_on: e01s05
   - id: e01s09
     slug: renovate-coverage

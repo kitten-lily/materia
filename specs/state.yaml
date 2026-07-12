@@ -2,15 +2,15 @@ workflow_mode: solo-git
 session:
   active_flow: build_epic
   active_epic_id: e01
-  active_story_id: e01s07
+  active_story_id: e01s09
 git:
   branch: main
   base: main
 handoff:
   next_skill: null
-  note: "e01s06 done (vault attrs added by user, commit 3a58ab2). e01s07 done: MANIFEST.toml wires restic-backup into [Roles.base] + flutterina Roles=[\"base\"]. ORDERING RISK flagged in e01s07 story doc: land e01s08 (known_hosts resource) before this reaches a real materia update on flutterina — otherwise the timer can fire and fail to start (missing bind-mount source), non-fatal but avoidable. Next: e01s08 (known_hosts data resource) — recommended next given the ordering risk, or e01s09 (Renovate coverage) / e01s10 (AGENTS.md docs), both also unblocked."
+  note: "e01s08 done: components/restic-backup/known_hosts shipped (copy of provisioning/storageboxes/backup/known_hosts), closing e01s07's ordering risk — restic-backup is now safe for a real materia update run on flutterina. Remaining planned stories: e01s09 (Renovate digest coverage), e01s10 (AGENTS.md docs, blocks_on e01s07+e01s09), e01s11 (local verification, blocks_on e01s09) — epic close to done."
 epic_cycle:
   step: 0
-  current_story: e01s08
+  current_story: e01s09
   audit_result: pending
 metrics: {}
