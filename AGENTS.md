@@ -314,14 +314,18 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   came from which commit" — don't infer it from run ordering or timestamps
   alone.
 - **A CI "gate" step only proves what it actually invokes.**
-  `restic-backup-image.yml`'s gate steps run `restic version` and `ssh -V`
-  to prove those binaries are static and functional — they never invoke
-  `/usr/local/bin/wrapper` (the actual entrypoint). This is why a stale/
-  incomplete wrapper build was able to publish successfully: the gate
-  tested the dependencies, not the product. A local `podman run` +
-  `strings`-on-the-binary check (or a CI gate step that exercises the
-  wrapper's guard clauses) is needed to actually verify application logic
-  shipped.
+  `restic-backup-image.yml`'s original gate steps ran `restic version` and
+  `ssh -V` to prove those binaries are static and functional — neither
+  ever invoked `/usr/local/bin/wrapper` (the actual entrypoint). This is
+  why a stale/incomplete wrapper build was able to publish successfully:
+  the gate tested the dependencies, not the product (issue #19, found via
+  e01s11's local `podman run` + `strings`-on-the-binary check). **Fixed:**
+  a third gate step now runs the image with no env vars set and asserts a
+  non-zero exit plus the exact `RESTIC_REPOSITORY is required` message —
+  cheap (no real backend/secrets needed) but proves the wrapper's actual
+  Go logic executed, not just its static dependencies. Verified locally
+  against both the old stale digest (correctly fails the new gate) and the
+  corrected one (passes) before landing.
 - **Duplicated source-of-truth values need a flagged pairing, not just a
   comment.** Two values in this repo are intentionally copied from an
   external or provisioning-time source into a materia attribute/resource,

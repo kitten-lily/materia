@@ -45,6 +45,28 @@ jobs:
       - name: Gate — ssh is static and runs
         run: docker run --rm --entrypoint /usr/bin/ssh ${{ env.IMAGE }}:ci-check -V
 
+      - name: Gate — wrapper binary runs and validates required env
+        run: |
+          # Missing RESTIC_REPOSITORY should fail fast with a clear message —
+          # proves the wrapper's actual logic (not just its dependencies)
+          # shipped. Catches the class of bug from issue #19: an image built
+          # from a stub/incomplete wrapper still passes the restic/ssh gates
+          # above since neither of them touches the wrapper at all.
+          set +e
+          output=$(docker run --rm ${{ env.IMAGE }}:ci-check 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "wrapper exited 0 with no required env vars set — expected a fatal guard-clause exit"
+            echo "$output"
+            exit 1
+          fi
+          echo "$output" | grep -q "RESTIC_REPOSITORY is required" || {
+            echo "wrapper did not produce the expected guard-clause message"
+            echo "$output"
+            exit 1
+          }
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
