@@ -354,6 +354,22 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   update`) ever starts it. Pair with `Oneshot = true` ("prevents materia
   from checking if this service started successfully") for jobs that don't
   stay running.
+- **Minimus images run as non-root (UID 1000), not root like most upstream
+  images.** Three things break when switching from an upstream image to a
+  minimus equivalent: (1) **privileged port binding** — UID 1000 can't bind
+  to ports < 1024 without `CAP_NET_BIND_SERVICE`; add
+  `AddCapability=NET_BIND_SERVICE` to the `.container.gotmpl`. (2) **named
+  volume write permissions** — podman named volumes are root-owned by
+  default; add `User=1000`/`Group=1000` to the `.volume` quadlet file so the
+  volume is created with the right ownership (confirmed: quadlet `.volume`
+  files support `User=`/`Group=` directly, per podman-volume.unit.5). For
+  existing volumes with root-owned content, chown on the host before
+  restarting: `sudo podman unshare chown -R 1000:1000 <volume-path>`. (3)
+  **plugin/download directories** — directories the upstream image created
+  as root (e.g. traefik's `/plugins-storage`) don't exist or aren't writable
+  by UID 1000; use `Tmpfs=/plugins-storage` for ephemeral writable dirs (the
+  badger plugin re-downloads on each boot, ~1s). Confirmed by local smoke
+  test during issue #8's traefik minimus migration.
 - **CI can publish more than one image per push — verify the digest against
   the run, not just "the latest one someone noted down".** A digest
   recorded during earlier epic work turned out to belong to a CI run
