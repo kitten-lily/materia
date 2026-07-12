@@ -10,9 +10,15 @@ _box_name="${usage_box_name:?box name required, use --box-name}"
 _server_name="${usage_server_name:?server name required, use --server-name}"
 _home="backups/${_server_name}"
 _known_hosts="provisioning/storageboxes/${_box_name}/known_hosts"
+_vault="attributes/${_server_name}.yml"
 
 if [[ ! -f "$_known_hosts" ]]; then
   gum style --foreground 1 "error: $_known_hosts not found — run: mise hz:storagebox:keyscan --box-name $_box_name"
+  exit 1
+fi
+
+if [[ ! -f "$_vault" ]]; then
+  gum style --foreground 1 "error: $_vault not found — create it first: sops $_vault"
   exit 1
 fi
 
@@ -40,10 +46,19 @@ ssh -p 23 \
   -o StrictHostKeyChecking=yes \
   "${_sub_user}@${_server}" install-ssh-key < "$_tmpdir/id_ed25519.pub"
 
-gum style --foreground 2 "==> key installed for ${_sub_user}. Handoff (attribute names finalized in #2):"
-gum style --foreground 3 "1. Private key → SOPS vault:  sops edit attributes/${_server_name}.yml"
-gum style --foreground 3 "   components.restic-backup.storageBoxSshKey: |-   (paste the key below, indented)"
-cat "$_tmpdir/id_ed25519"
-gum style --foreground 3 "2. Repository attribute (same file, non-secret but vault-encrypted anyway):"
+# Inject the private key straight into the vault via `sops --set`, not a
+# manual copy-paste into `sops edit`. A multi-line private key pasted by
+# hand into an interactive editor is exactly the kind of thing that picks
+# up CRLF/whitespace corruption from terminal reflow (BUG-003: a key that
+# passed permission checks but failed "error in libcrypto" on load).
+# `jq -Rs .` JSON-encodes the raw key bytes exactly (embedded \n escapes,
+# no reflow); `sops --set` decrypts, sets, and re-encrypts in place.
+_key_json=$(jq -Rs . < "$_tmpdir/id_ed25519")
+sops --set "[\"components\"][\"restic-backup\"][\"storageBoxSshKey\"] ${_key_json}" "$_vault"
+
+gum style --foreground 2 "==> key installed for ${_sub_user} and written to $_vault (components.restic-backup.storageBoxSshKey)."
+gum style --foreground 3 "1. Repository attribute (not secret, but vault-encrypted anyway) — add manually:"
+echo "   sops edit $_vault"
 echo "   components.restic-backup.resticRepository: sftp://${_sub_user}@${_server}:23/restic"
-gum style --foreground 3 "3. Commit $_known_hosts if not already committed."
+gum style --foreground 3 "2. Commit $_known_hosts if not already committed."
+gum style --foreground 3 "3. Review the change: git diff $_vault (ciphertext will differ even though the vault is encrypted — that's expected)."
