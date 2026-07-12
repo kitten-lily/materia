@@ -6,8 +6,10 @@ Requires=app.service
 [Container]
 Pod=pangolin.pod
 ContainerName=traefik
-Image=docker.io/traefik:v3.7@sha256:1cb3845d7a05e1473c9086351426597e911db49db382b6e4769f9b0744962ac8
+Image=reg.mini.dev/traefik:3.7.7@sha256:941454652ae4b0a98088987dfb5100b50cf14bed043e257f71524b36bded664d
 Exec=--configFile=/etc/traefik/traefik_config.yml
+AddCapability=NET_BIND_SERVICE
+Tmpfs=/plugins-storage
 {{ secretEnv "cfDnsApiToken" "CF_DNS_API_TOKEN" }}
 Volume={{ m_dataDir "pangolin" }}/traefik:/etc/traefik:ro,z
 Volume=letsencrypt.volume:/letsencrypt:z
