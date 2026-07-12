@@ -11,7 +11,11 @@ Volume=/var/lib/materia/components:/var/lib/materia/components:ro
 Volume=/var/lib/containers/storage/volumes:/var/lib/containers/storage/volumes:ro
 Volume={{ m_dataDir "restic-backup" }}/known_hosts:/run/secrets/known_hosts:ro,Z
 Volume={{ m_dataDir "restic-backup" }}/ssh_config:/usr/local/etc/ssh_config:ro,Z
-{{ secretMount "storageBoxSshKey" "/run/secrets/ssh_key" }}
+# secretMount can't pass mode= (materia's macro only ever emits
+# type=mount,target=<value>, see BUG-002) — hand-written to force 0400.
+# Podman's type=mount default (0444) is group/other-readable, which
+# OpenSSH's strict private-key permission check refuses to load.
+Secret=materia-storageBoxSshKey,type=mount,target=/run/secrets/ssh_key,mode=0400
 {{ secretEnv "resticPassword" "RESTIC_PASSWORD" }}
 Environment=RESTIC_REPOSITORY={{ .resticRepository }}
 Environment=RESTIC_HOST={{ m_facts "hostname" }}
