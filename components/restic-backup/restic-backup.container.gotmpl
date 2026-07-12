@@ -5,7 +5,8 @@ After=network-online.target
 
 [Container]
 ContainerName=restic-backup
-Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:dd42ac9516ee12655d475dd44b5d19aaa74bc14ca30321ab069b8613c7c1b97a
+Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:9bb02cef9f5c97f84294ca77f59b1feef642dda9ddf7b2653f34386f6c5479ee
+Tmpfs=/tmp
 Volume=/var/lib/materia/components:/var/lib/materia/components:ro
 Volume=/var/lib/containers/storage/volumes:/var/lib/containers/storage/volumes:ro
 Volume={{ m_dataDir "restic-backup" }}/known_hosts:/run/secrets/known_hosts:ro,Z
