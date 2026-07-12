@@ -2,15 +2,15 @@ workflow_mode: solo-git
 session:
   active_flow: build_epic
   active_epic_id: e01
-  active_story_id: e01s09
+  active_story_id: e01s10
 git:
   branch: main
   base: main
 handoff:
   next_skill: null
-  note: "e01s08 done: components/restic-backup/known_hosts shipped (copy of provisioning/storageboxes/backup/known_hosts), closing e01s07's ordering risk — restic-backup is now safe for a real materia update run on flutterina. Remaining planned stories: e01s09 (Renovate digest coverage), e01s10 (AGENTS.md docs, blocks_on e01s07+e01s09), e01s11 (local verification, blocks_on e01s09) — epic close to done."
+  note: "e01s09 done (verification-only, no renovate.json5 change needed — existing quadlet manager regex already matches components/restic-backup/*.container.gotmpl). Remaining: e01s10 (AGENTS.md docs, blocks_on e01s07+e01s09 — both now done, unblocked) and e01s11 (local verification, blocks_on e01s09 — unblocked)."
 epic_cycle:
   step: 0
-  current_story: e01s09
+  current_story: e01s10
   audit_result: pending
 metrics: {}

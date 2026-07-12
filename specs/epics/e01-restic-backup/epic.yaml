@@ -68,9 +68,9 @@ stories:
     title: "Renovate: cover restic-backup image digest (quadlet manager)"
     bcps: 1
     risk: P2
-    status: planned
+    status: done   # verified only — no renovate.json5 change needed, existing quadlet manager regex already matches components/restic-backup/*.container.gotmpl
     blocks_on: e01s05
-    note: "The image's resticVersion/opensshVersion pins are owned by #17's Dockerfile Renovate managers. This story only covers the digest pin in the .container.gotmpl (already handled by the existing quadlet manager extended to .gotmpl files)."
+    note: "The image's resticVersion/opensshVersion pins are owned by #17's Dockerfile Renovate managers (confirmed live via origin/renovate/restic-restic-0.x). This story confirmed the digest pin in the .container.gotmpl is covered by the existing quadlet manager (unscoped regex, already matches) — no config change required."
   - id: e01s10
     slug: agents-doc-update
     title: "AGENTS.md: document restic-backup component + gotchas"
