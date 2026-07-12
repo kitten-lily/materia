@@ -72,6 +72,19 @@ KubeStellar and Pangolin live ABOVE node layer.
   in `MANIFEST.toml` `[Defaults]` and are templated into config files via
   `{{ .badgerVersion }}`. Renovate's regex manager targets the manifest, not
   the templated output.
+- **Host-generic components are assigned via `[Roles.base]`, not per-host
+  `Components`.** `restic-backup` backs up generic host paths
+  (`/var/lib/materia/components`, `/var/lib/containers/storage/volumes`), so
+  every server should get it automatically. It's assigned to the `base` role
+  (`[Roles.base] Components = ["restic-backup"]`) and hosts opt in with
+  `Roles = ["base"]`, rather than listing it directly in each host's
+  `Components`. New servers get it for free.
+- **`restic-backup` is `Type=oneshot` + timer-activated, not `Restart=always`.**
+  No `[Install]` section on the `.container.gotmpl` (never started directly);
+  `Stopped = true` + `Oneshot = true` in the component manifest tell Materia
+  to never auto-start it and not to flag a quick exit as a failure. Only
+  `restic-backup.timer` (`Static = true`, `WantedBy=timers.target`) triggers
+  it, on the `resticOnCalendar` attribute-driven schedule.
 
 ## Repo layout
 
@@ -93,6 +106,16 @@ components/
     traefik/
       traefik_config.yml.gotmpl  # Traefik static config (templated)
       dynamic_config.yml.gotmpl  # Traefik dynamic config (templated)
+  restic-backup/                 # restic-backup component (role-assigned, see below)
+    MANIFEST.toml                # component manifest — Secrets, Defaults, Services
+    restic-backup.container.gotmpl # oneshot backup job, pulls the GHCR image by digest
+    restic-backup.timer.gotmpl   # attribute-driven schedule (resticOnCalendar)
+    ssh_config                   # static /etc/ssh/ssh_config (sftp SSH options)
+    known_hosts                  # copy of provisioning/storageboxes/<box>/known_hosts
+images/
+  restic-backup/
+    Dockerfile                   # scratch + static restic + static openssh + wrapper
+    wrapper/                     # Go entrypoint: ping, init, backup, forget
 provisioning/
   templates/
     hetzner.bu                  # Butane template for any Hetzner Cloud server
@@ -102,6 +125,10 @@ provisioning/
     flutterina/
       server.toml                # per-server config (type, hetzner/bare_metal settings)
       materia.ign                 # gitignored, rendered by `mise ign`
+  storageboxes/
+    <box>/
+      storagebox.toml             # Storage Box config (type, location, snapshot plan)
+      known_hosts                  # keyscanned SSH host keys, source of truth for the copy above
   ghostty.terminfo.b64          # pre-compiled Ghostty terminfo (base64), shared by both templates
   BARE-METAL.md                 # bare-metal bring-up runbook
 mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, butane, yq, etc.)
@@ -251,6 +278,60 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `zlib-static`, `openssl-dev` + `openssl-libs-static`. The `opensshVersion`
   ARG in the Dockerfile is Renovate-trackable — bump it when a new release is
   needed.
+- **`RESTIC_SFTP_ARGS` is not a real restic env var.** Restic's sftp backend
+  only accepts custom SSH args via the `-o sftp.args=...` CLI flag (added
+  v0.16.1) — no `-o` flag has an environment-variable form. Since the
+  wrapper never passes CLI flags to restic, SSH options (`IdentityFile`,
+  `UserKnownHostsFile`, `StrictHostKeyChecking`) are set via a static
+  `ssh_config` data resource bind-mounted to `/etc/ssh/ssh_config` —
+  OpenSSH's system-wide client config, read regardless of `$HOME` (scratch
+  has none).
+- **Scratch images need `Tmpfs=/tmp` for restic.** Restic stages backup pack
+  files in `os.TempDir()` (`/tmp` by default). Scratch has no `/tmp`
+  directory at all, so `restic backup` fails with "no such file or
+  directory" on the temp pack path unless the `.container.gotmpl` adds
+  `Tmpfs=/tmp` (quadlet's tmpfs-mount directive — ephemeral, not part of any
+  materia-managed path, so it doesn't trip the data-dir-drift gotcha above).
+- **`Stopped = true` is the general "never auto-start" flag, not just for
+  `.build`/`.image` services.** Confirmed against the materia manifest
+  reference: "Prevents materia from starting the service." Any timer-
+  activated oneshot service (not just build/image quadlets) should set it —
+  used for `restic-backup.service` so only its `.timer` (not `materia
+  update`) ever starts it. Pair with `Oneshot = true` ("prevents materia
+  from checking if this service started successfully") for jobs that don't
+  stay running.
+- **CI can publish more than one image per push — verify the digest against
+  the run, not just "the latest one someone noted down".** A digest
+  recorded during earlier epic work turned out to belong to a CI run
+  triggered before the final application logic was merged (a different,
+  earlier run on the same day, from a commit that touched the Dockerfile
+  but not yet the full wrapper source). The image pulled and ran — podman
+  pull succeeded, exit code was 0 — but the binary was empty of the
+  expected logic (confirmed with `strings` on the extracted binary; zero
+  matches for expected log-message literals). `gh run list
+  --workflow=<file>` + `gh run view <id> --log` (grep for
+  `containerimage.digest`) is the authoritative source for "which digest
+  came from which commit" — don't infer it from run ordering or timestamps
+  alone.
+- **A CI "gate" step only proves what it actually invokes.**
+  `restic-backup-image.yml`'s gate steps run `restic version` and `ssh -V`
+  to prove those binaries are static and functional — they never invoke
+  `/usr/local/bin/wrapper` (the actual entrypoint). This is why a stale/
+  incomplete wrapper build was able to publish successfully: the gate
+  tested the dependencies, not the product. A local `podman run` +
+  `strings`-on-the-binary check (or a CI gate step that exercises the
+  wrapper's guard clauses) is needed to actually verify application logic
+  shipped.
+- **Duplicated source-of-truth values need a flagged pairing, not just a
+  comment.** Two values in this repo are intentionally copied from an
+  external or provisioning-time source into a materia attribute/resource,
+  with no tooling enforcing they stay in sync: `hcPingURL`
+  (`attributes/vault.yml globals`, mirrors the Proton Pass
+  `healthchecks/ping-url` field the `.bu` template also reads at transpile
+  time) and `known_hosts` (`components/restic-backup/known_hosts`, mirrors
+  `provisioning/storageboxes/<box>/known_hosts` refreshed by `mise
+  hz:storagebox:keyscan`). If either upstream value rotates, update both
+  copies manually.
 
 ## Provisioning (Butane/Ignition)
 
@@ -441,6 +522,8 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   https://primamateria.systems/documentation/latest/reference/materia-config-age.5.html
 - SOPS: https://github.com/getsops/sops
 - Age: https://github.com/FiloSottile/age
+- restic scripting/env vars: https://restic.readthedocs.io/en/stable/075_scripting.html
+- restic sftp backend: https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html
 - Pangolin docker compose: https://docs.pangolin.net/self-host/manual/docker-compose
 - Pangolin podman quadlets: https://docs.pangolin.net/self-host/manual/podman-quadlets
 - Pangolin Newt Helm: charts.fossorial.io (newt chart)

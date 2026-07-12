@@ -1,16 +1,13 @@
 workflow_mode: solo-git
 session:
-  active_flow: build_epic
-  active_epic_id: e01
-  active_story_id: e01s10
+  active_flow: null
+  active_epic_id: null
+  active_story_id: null
 git:
   branch: main
   base: main
 handoff:
   next_skill: null
-  note: "e01s11 done: local podman verification found + fixed 2 real defects in restic-backup.container.gotmpl — (1) pinned digest was a stale pre-wrapper-logic build (was dd42ac95..., corrected to 9bb02cef9..., root cause: epic recorded the digest from an earlier CI run than the one that actually had the final wrapper code), (2) scratch has no writable /tmp, restic backup failed without Tmpfs=/tmp. Full local-repo cycle verified working (init/backup/incremental/forget/guard-clauses). Flagged but did not fix: CI workflow's gate steps never exercise the wrapper binary at all (why the stale build passed) — recommended follow-up, not done here. Only e01s10 (AGENTS.md docs) remains in the epic — both its blockers (e01s07, e01s09) are done."
-epic_cycle:
-  step: 0
-  current_story: e01s10
-  audit_result: pending
+  note: "Epic e01 (restic-backup) is DONE — all 11 stories closed. AGENTS.md/CLAUDE.md updated with the component tree, 2 architecture-decision bullets, 6 gotchas, and 2 restic doc links from this epic's discoveries. Not yet pushed to origin (local main is several commits ahead of origin/main — see git log). Real production verification (sftp connectivity to the Storage Box, first materia update on flutterina) is still outstanding but out of scope for any repo-local story — it happens at actual deploy time. Recommended next: push to origin, then a real materia update on flutterina to confirm the sftp path end-to-end; separately, consider a follow-up story for the flagged CI gate blind spot (restic-backup-image.yml never exercises the wrapper binary)."
+epic_cycle: {}
 metrics: {}

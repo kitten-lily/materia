@@ -3,7 +3,7 @@ slug: restic-backup
 title: "Restic backup component"
 source_issue: https://github.com/kitten-lily/materia/issues/2
 # blocks_on: https://github.com/kitten-lily/materia/issues/17   # CI image build & publish (landed a29b902)
-status: in_progress
+status: done   # all 11 stories done — closed out by e01s10 (AGENTS.md docs)
 stories:
   - id: e01s01
     slug: storagebox-infra
@@ -76,7 +76,7 @@ stories:
     title: "AGENTS.md: document restic-backup component + gotchas"
     bcps: 1
     risk: P3
-    status: planned   # unblocked — e01s07 and e01s09 both done
+    status: done   # AGENTS.md updated: repo layout, 2 architecture-decision bullets, 6 gotchas, 2 restic doc links
     blocks_on: e01s07
   - id: e01s11
     slug: local-verification
