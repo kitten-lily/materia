@@ -37,9 +37,9 @@ stories:
     title: "Quadlet resources: .container.gotmpl (Image= pull), .timer"
     bcps: 3
     risk: P1
-    status: planned
+    status: done   # components/restic-backup/{restic-backup.container.gotmpl,restic-backup.timer.gotmpl,ssh_config}
     blocks_on: e01s03   # needs the published digest to pin
-    note: "No .build quadlet — the image is pulled from GHCR, same GitOps convention as pangolin/traefik. .container.gotmpl pins Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:..."
+    note: "No .build quadlet — the image is pulled from GHCR, same GitOps convention as pangolin/traefik. .container.gotmpl pins Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:... DISCOVERY: RESTIC_SFTP_ARGS is not a real restic env var (no -o flag has an env-var form); resolved with a mounted /etc/ssh/ssh_config data resource instead. Component MANIFEST.toml (Secrets/Services/Defaults, incl. hcPingURL + resticPassword attributes) still needed — e01s06."
   - id: e01s06
     slug: component-manifest-secrets
     title: "Component MANIFEST.toml: Secrets, Services, Defaults"

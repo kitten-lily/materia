@@ -66,11 +66,11 @@ everything under them generically (no per-component/per-volume enumeration).
   `{{ m_dataDir "restic-backup" }}/known_hosts` (e01s08), bind-mounted
   read-only into the container.
 - `Environment=RESTIC_REPOSITORY=sftp:...` is NOT set here directly — the
-  repository string is an attribute, templated in. But the SSH *options* that
-  restic's sftp backend passes to `ssh` must be set so scratch (no `$HOME`)
-  works: `Environment=RESTIC_SFTP_ARGS=-o
-  UserKnownHostsFile=/run/secrets/known_hosts -o StrictHostKeyChecking=yes -i
-  /run/secrets/ssh_key` (restic's sftp backend passes these to `ssh`).
+  repository string is an attribute, templated in as
+  `Environment=RESTIC_REPOSITORY={{ .resticRepository }}`. The SSH *options*
+  restic's sftp backend hands to `ssh` are wired via a mounted `ssh_config`
+  (see Risks — `RESTIC_SFTP_ARGS` does not exist as an env var; a static
+  `/etc/ssh/ssh_config` bind mount replaces it), not an environment variable.
 
 #### ADDED: Env vars consumed by the wrapper (e01s04)
 
@@ -101,9 +101,14 @@ files are not templated by Materia unless they end in `.gotmpl`; if the
 2. Set `[Service] Type=oneshot` + `RemainAfterExit=yes` and NO `[Install]`
    section in the `.container.gotmpl`. → verify: `grep -q 'Type=oneshot' components/restic-backup/restic-backup.container.gotmpl && ! grep -q 'WantedBy=' components/restic-backup/restic-backup.container.gotmpl`.
 
-3. Set `Environment=RESTIC_SFTP_ARGS=-o UserKnownHostsFile=/run/secrets/known_hosts -o StrictHostKeyChecking=yes -i /run/secrets/ssh_key`
-   so restic's sftp backend invokes `ssh` with explicit paths (scratch has no
-   `$HOME` to write to). → verify: `grep -q 'RESTIC_SFTP_ARGS' components/restic-backup/restic-backup.container.gotmpl`.
+3. Create `components/restic-backup/ssh_config` (plain data resource, no
+   `.gotmpl`) with `IdentityFile /run/secrets/ssh_key`, `IdentitiesOnly yes`,
+   `UserKnownHostsFile /run/secrets/known_hosts`, `StrictHostKeyChecking yes`
+   under `Host *`, and bind-mount it to `/etc/ssh/ssh_config` in the
+   `.container.gotmpl` (OpenSSH's system-wide client config, read regardless
+   of `$HOME` — scratch has none). → verify: `grep -q 'ssh_config'
+   components/restic-backup/restic-backup.container.gotmpl && test -f
+   components/restic-backup/ssh_config`.
 
 4. Create `components/restic-backup/restic-backup.timer.gotmpl` with
    `OnCalendar={{ .onCalendar }}`, `Unit=restic-backup.service`,
@@ -147,11 +152,19 @@ files are not templated by Materia unless they end in `.gotmpl`; if the
   section of the `.container.gotmpl` (systemd honors it for the wrapper's
   exec even if quadlet docs warn about it) — or set `TimeoutStopSec=` and
   test. If systemd kills the job, raise it. Detect early in e01s11.
-- **`RESTIC_SFTP_ARGS` env name.** Restic's sftp backend reads
-  `RESTIC_SFTP_ARGS` (space-separated args passed to `ssh`). Confirm the env
-  var name against restic docs during implementation — if it's
-  `RESTIC_SSH_ARGS` or similar, adjust. (This is the DISCOVERY MANDATE item
-  for this story.)
+- **`RESTIC_SFTP_ARGS` env name — RESOLVED, does not exist.** Confirmed
+  against restic docs/changelog during implementation: restic has no env var
+  for sftp SSH args. The only mechanism is `-o sftp.args=...` (added in
+  v0.16.1, available in the pinned v0.18.0), a CLI flag the wrapper
+  (e01s04, already merged) does not pass. Since `-o` flags have no env-var
+  form, `RESTIC_SFTP_ARGS` was dropped entirely. **Resolution:** ship a
+  static `ssh_config` data resource (no `.gotmpl` — paths are fixed
+  in-container paths, no attribute substitution needed) bind-mounted to
+  `/etc/ssh/ssh_config`, the OpenSSH client's system-wide config file, read
+  regardless of `$HOME` (the scratch image has none). It sets `IdentityFile`,
+  `IdentitiesOnly yes`, `UserKnownHostsFile`, and `StrictHostKeyChecking yes`
+  pointing at the same `/run/secrets/ssh_key` and `/run/secrets/known_hosts`
+  mount paths — no wrapper or restic changes required.
 - **SELinux labels on host bind mounts.** `/var/lib/containers/storage/volumes`
   may need `:z` not `:ro` — test on an enforcing-SELinux host (flutterina is
   Flatcar, permissive by default, so this won't bite immediately but keep

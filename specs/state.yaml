@@ -1,12 +1,16 @@
 workflow_mode: solo-git
 session:
-  active_flow: seed
-  active_epic_id: null
-  active_story_id: null
+  active_flow: build_epic
+  active_epic_id: e01
+  active_story_id: e01s05
 git:
-  branch: main
+  branch: e01s05-quadlet-resources
   base: main
 handoff:
-  next_skill: null
-  note: "seed-conventions complete. Read AGENTS.md for repo architecture, conventions, and gotchas."
+  next_skill: plan-work
+  note: "e01s05 (quadlet resources) implemented: components/restic-backup/{restic-backup.container.gotmpl,restic-backup.timer.gotmpl,ssh_config}. Discovery: RESTIC_SFTP_ARGS is not a real restic env var — resolved via a mounted /etc/ssh/ssh_config data resource. Not yet committed/merged. Next: e01s06 (component MANIFEST.toml — Secrets, Services, Defaults, incl. adding hcPingURL + resticPassword attributes)."
+epic_cycle:
+  step: 7
+  current_story: e01s05
+  audit_result: pending
 metrics: {}
