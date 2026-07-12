@@ -1,0 +1,27 @@
+[Unit]
+Description=Restic backup
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=restic-backup
+Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:dd42ac9516ee12655d475dd44b5d19aaa74bc14ca30321ab069b8613c7c1b97a
+Volume=/var/lib/materia/components:/var/lib/materia/components:ro
+Volume=/var/lib/containers/storage/volumes:/var/lib/containers/storage/volumes:ro
+Volume={{ m_dataDir "restic-backup" }}/known_hosts:/run/secrets/known_hosts:ro,Z
+Volume={{ m_dataDir "restic-backup" }}/ssh_config:/etc/ssh/ssh_config:ro,Z
+{{ secretMount "storageBoxSshKey" "/run/secrets/ssh_key" }}
+{{ secretEnv "resticPassword" "RESTIC_PASSWORD" }}
+Environment=RESTIC_REPOSITORY={{ .resticRepository }}
+Environment=RESTIC_HOST={{ m_facts "hostname" }}
+Environment=HC_PING_URL={{ .hcPingURL }}
+Environment=HC_SLUG=restic-backup-{{ m_facts "hostname" }}
+Environment=KEEP_DAILY={{ m_default "resticKeepDaily" "7" }}
+Environment=KEEP_WEEKLY={{ m_default "resticKeepWeekly" "4" }}
+Environment=KEEP_MONTHLY={{ m_default "resticKeepMonthly" "6" }}
+Environment=BACKUP_PATHS=/var/lib/materia/components /var/lib/containers/storage/volumes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=900

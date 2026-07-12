@@ -1,0 +1,5 @@
+Host *
+    IdentityFile /run/secrets/ssh_key
+    IdentitiesOnly yes
+    UserKnownHostsFile /run/secrets/known_hosts
+    StrictHostKeyChecking yes
