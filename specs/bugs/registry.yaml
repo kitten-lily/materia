@@ -13,3 +13,10 @@ bugs:
     found: 2026-07-12
     epic: e01-restic-backup
     file: specs/bugs/BUG-002-restic-backup-secret-mount-permissions.md
+  - id: BUG-003
+    title: "storageBoxSshKey manual paste corrupted the key (error in libcrypto)"
+    status: fixed-tooling-needs-user-action
+    severity: P0
+    found: 2026-07-12
+    epic: e01-restic-backup
+    file: specs/bugs/BUG-003-storagebox-key-manual-paste-corruption.md

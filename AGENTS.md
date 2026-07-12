@@ -248,6 +248,20 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `materia-` prefix matches the default `SecretName()` behavior (plain
   string concatenation, confirmed via the project's own test mocks) as long
   as `secrets_prefix` isn't overridden.
+- **Never hand off a multi-line secret via manual copy-paste into `sops
+  edit`.** `mise hz:storagebox:install-key` used to `cat` a freshly
+  generated private key to the terminal with instructions to paste it into
+  an interactive editor session under a YAML `|-` block. Terminal
+  scrollback reflow, clipboard managers, or one misindented line can
+  silently corrupt a multi-line key while leaving it looking plausible
+  (BEGIN/END markers intact) — `ssh` then fails to load it with
+  `error in libcrypto` (BUG-003), a much harder-to-diagnose failure than an
+  outright rejected key. Fix: inject secret file content programmatically
+  with `jq -Rs .` (JSON-encodes raw bytes, embedded `\n` escapes, no reflow
+  risk) piped into `sops --set '["path"]["to"]["key"] <json>' vault.yml`
+  — decrypts, sets, and re-encrypts in place, no human ever retypes the
+  value. Verified round-trip byte-exact against a real ed25519 key
+  (`ssh-keygen -y` confirmed the recovered value still loads).
 - **Templated config files are bind-mounted individually from the data dir.**
   Materia installs templated files to `{{ m_dataDir "pangolin" }}/config/`;
   `.container` files bind-mount each file on top of the runtime volume
@@ -476,14 +490,19 @@ the quadlet names and the quadlet units reuse them (`--ignore`).
 | `mise hz:storagebox:delete --box-name <n> --confirm` | Delete box (delete-protected boxes also need `--disable-protection`) |
 | `mise hz:storagebox:keyscan --box-name <n>` | Pin the box's SSH host keys to `provisioning/storageboxes/<n>/known_hosts` (commit it) |
 | `mise hz:storagebox:subaccount --box-name <n> --server-name <s>` | Per-server subaccount, home `backups/<s>`, SSH-only |
-| `mise hz:storagebox:install-key --box-name <n> --server-name <s>` | Generate ed25519 key, install via `install-ssh-key` (port 23), print vault handoff |
+| `mise hz:storagebox:install-key --box-name <n> --server-name <s>` | Generate ed25519 key, install via `install-ssh-key` (port 23), write private key straight into the vault |
 
 Order per server: `create` → `keyscan` (commit `known_hosts`) →
-`subaccount` → `install-key` → paste the printed private key into
-`attributes/<server>.yml` (`sops edit`) as
-`components.restic-backup.storageBoxSshKey`, plus the printed
-`sftp://...` repository attribute. Passwords are printed once — store
-them in Proton Pass (both are resettable via
+`subaccount` → `install-key` → add the printed `sftp://...` repository
+attribute (`sops edit attributes/<server>.yml`, key
+`components.restic-backup.resticRepository`). `install-key` writes the
+private key (`components.restic-backup.storageBoxSshKey`) directly via
+`sops --set` + `jq -Rs .` — **not** a manual paste into `sops edit`. A
+multi-line private key copy-pasted by hand into an interactive editor is
+exactly the kind of thing that picks up CRLF/whitespace corruption from
+terminal reflow, producing a key that looks plausible (BEGIN/END markers
+intact) but fails to load (`error in libcrypto`) — see BUG-003. Passwords
+are printed once — store them in Proton Pass (both are resettable via
 `hcloud storage-box [subaccount] reset-password`) — one item per box
 (`storagebox-<box>`) with a `primary-password` field and a
 `<server>-password` field per subaccount. Subaccounts have no
