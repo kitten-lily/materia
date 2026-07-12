@@ -57,12 +57,15 @@ ssh -p 23 \
 # Guarantee a trailing newline: OpenSSH's ssh_config IdentityFile loader
 # fails with "error in libcrypto" on an ed25519 key whose final line
 # (-----END ...-----) has no trailing newline, even though ssh-keygen -y
-# accepts the same file (BUG-003, real cause — OpenSSH bug #3849). Some
-# ssh-keygen builds produce a key file without the final newline; `jq -Rs .`
-# faithfully captures whatever bytes are there. Ensure exactly one trailing
-# newline by piping through `sed '$a\'` (adds a newline at EOF only if the
-# last line doesn't end with one).
-_key_json=$(sed '$a\' "$_tmpdir/id_ed25519" | jq -Rs .)
+# may accept the same file (BUG-003, real cause — OpenSSH bug #3849). Some
+# ssh-keygen builds produce a key file without the final newline. Append a
+# newline in-place if missing — `tail -c 1 | wc -l` is 0 when the last byte
+# isn't a newline, 1 when it is. Do NOT pipe the key through `sed '$a\'`
+# (the previous attempt): that mangled the key on some sed implementations.
+if [[ $(tail -c 1 "$_tmpdir/id_ed25519" | wc -l) -eq 0 ]]; then
+  printf '\n' >> "$_tmpdir/id_ed25519"
+fi
+_key_json=$(jq -Rs . < "$_tmpdir/id_ed25519")
 sops --set "[\"components\"][\"restic-backup\"][\"storageBoxSshKey\"] ${_key_json}" "$_vault"
 
 _repository="sftp://${_sub_user}@${_server}:23/restic"
