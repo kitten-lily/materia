@@ -7,10 +7,10 @@ git:
   branch: main
   base: main
 handoff:
-  next_skill: plan-work
-  note: "e01s05 (quadlet resources) merged to main (836a273), 2 commits ahead of origin/main, not pushed. Next: e01s06 (component MANIFEST.toml — Secrets, Services, Defaults, incl. adding hcPingURL + resticPassword attributes to attributes/flutterina.yml via sops edit)."
+  next_skill: null
+  note: "e01s06 (component MANIFEST.toml) code done: components/restic-backup/MANIFEST.toml (Secrets, Defaults, Services). Story status: blocked — needs the USER to run two sops edit commands (resticPassword in attributes/flutterina.yml, hcPingURL in attributes/vault.yml globals) since this environment has no age key / Proton Pass access. See specs/epics/e01-restic-backup/e01s06-component-manifest-secrets.md for exact commands. e01s07 (repo MANIFEST.toml host wiring) is next and does not depend on the attribute values being filled in yet."
 epic_cycle:
   step: 0
-  current_story: e01s06
+  current_story: e01s07
   audit_result: pending
 metrics: {}
