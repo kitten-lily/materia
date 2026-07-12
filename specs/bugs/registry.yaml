@@ -6,3 +6,10 @@ bugs:
     found: 2026-07-12
     epic: e01-restic-backup
     file: specs/bugs/BUG-001-restic-backup-ssh-config-wrong-path.md
+  - id: BUG-002
+    title: "storageBoxSshKey secret mount too permissive for OpenSSH (0444)"
+    status: fixed
+    severity: P0
+    found: 2026-07-12
+    epic: e01-restic-backup
+    file: specs/bugs/BUG-002-restic-backup-secret-mount-permissions.md

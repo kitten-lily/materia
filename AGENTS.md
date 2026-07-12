@@ -235,6 +235,19 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 - **Secrets prefix.** Materia prefixes podman secrets with `materia-` by
   default (`containers.secrets_prefix` config). The `secretEnv`/`secretMount`
   macros handle this transparently — don't manually prefix the name.
+- **`secretMount` cannot set `mode=`, `uid=`, or `gid=`.** Confirmed against
+  materia's actual source (`internal/materia/snippet.go`): the macro only
+  ever emits `Secret=<name>,type=mount,target=<value>` — despite the
+  materia-templates(5) docs implying "additional arguments as defined in the
+  Podman manual" are supported. Podman's `type=mount` default mode (`0444`
+  in the version tested) is group/other-readable, which breaks anything with
+  strict permission requirements (OpenSSH private keys refuse to load with
+  "Permissions ... too open" — BUG-002). For secrets needing a specific mode,
+  bypass the macro and hand-write the `Secret=` line directly, e.g.
+  `Secret=materia-<name>,type=mount,target=<path>,mode=0400` — the
+  `materia-` prefix matches the default `SecretName()` behavior (plain
+  string concatenation, confirmed via the project's own test mocks) as long
+  as `secrets_prefix` isn't overridden.
 - **Templated config files are bind-mounted individually from the data dir.**
   Materia installs templated files to `{{ m_dataDir "pangolin" }}/config/`;
   `.container` files bind-mount each file on top of the runtime volume

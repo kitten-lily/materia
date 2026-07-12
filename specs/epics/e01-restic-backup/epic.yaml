@@ -8,8 +8,15 @@ status: done   # all 11 stories done — closed out by e01s10 (AGENTS.md docs)
 # — first real production run failed "Host key verification failed" because
 # the ssh_config mount (e01s05) targeted /etc/ssh/ssh_config, but the static
 # ssh binary's compiled-in sysconfdir default is /usr/local/etc. Fixed by
-# retargeting the mount, no image rebuild needed. Confirmed epic status stays
-# "done" — this is a discovered defect fix, not a reopened story.
+# retargeting the mount, no image rebuild needed.
+# POST-SHIP: BUG-002 (specs/bugs/BUG-002-restic-backup-secret-mount-permissions.md)
+# — second real production run got past host key verification then failed
+# to load the ssh private key: Podman's type=mount secret default (0444) is
+# too permissive for OpenSSH's strict key-file check. materia's secretMount
+# macro can't pass mode= at all (confirmed against materia's own source) —
+# fixed by hand-writing the Secret= line with mode=0400. No image rebuild
+# needed. Confirmed epic status stays "done" — both are discovered defect
+# fixes, not reopened stories.
 stories:
   - id: e01s01
     slug: storagebox-infra
