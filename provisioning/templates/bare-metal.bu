@@ -273,6 +273,13 @@ storage:
               # Tighten to a subnet (ip saddr <subnet> tcp dport 22 accept)
               # if the management IP is stable and known.
               tcp dport 22 accept
+              # DNS from podman containers — the podman bridge's built-in
+              # DNS resolver (dnsname plugin) listens on the bridge gateway
+              # IP (e.g. 10.89.0.1:53). Container DNS queries arrive on the
+              # host's cni-podman0 interface → INPUT chain, not FORWARD.
+              # Without this, containers can't resolve any hostname.
+              iifname { "cni-podman0", "podman0" } udp dport 53 accept
+              iifname { "cni-podman0", "podman0" } tcp dport 53 accept
             }
             chain forward {
               type filter hook forward priority 0; policy drop;
