@@ -6,6 +6,8 @@ components:
     beszel-agent:
         beszelToken: ENC[AES256_GCM,data:29JlmoXmrrFqRrTTCbowV5rTGfx7yRsaC/pKOSZQMQPfb+0H,iv:PRntTtt4wCzsP2mJz4hQ1rcX+/0gbgwjbWBMENtqdaY=,tag:mk39zdsw3pTeiOA9LQTS/A==,type:str]
         beszelKey: ENC[AES256_GCM,data:lQ92Xcv9NmMXv2euvrI5sbx0c26nlCEYzT7Zq4CkL4YoLVk9NhIrChl8Kr7S36xDkl/LDFLEaRqUjw1Hw0FZ4qNAMgw94y9NPcJXt0CsYHY=,iv:I5en2dP5yGI8KqHTSXTUaMFPApegMVEfEUxDcJItFGU=,tag:ceTjCCOomLYtUkyD9o1ObQ==,type:str]
+    newt:
+        newtProvisioningKey: ENC[AES256_GCM,data:+bid458r0XXloDeD8GCuMAAuL5164rF9SqA+zob+J47o3tMIX2qe9a19iWS7mmXrWBCbtWgjhhbvWbX9,iv:5mgeTQm9TJAe/hF/HlcZRzeRhQ3C2qbGJrP1KKeo4KM=,tag:DvYUZIasr94JHR6CQWDXyw==,type:str]
 sops:
     age:
         - enc: |
@@ -17,7 +19,7 @@ sops:
             TjkDZIzUsCpO9n4JHkqZB24KMiRsVJcVLrr3sxUVyU1vlcFgtE3yzA==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
-    lastmodified: "2026-07-13T18:29:00Z"
-    mac: ENC[AES256_GCM,data:NmaoHtbrHkOFQ2yJaw6Cwy6W3bxKzSlfNn4bC2Q+sq7bhAHGXDr/fCj0H8nmIPnj98FIsVYleEjUk5sWvaUVLA84zxKa2t+thMcbUxeMEkWOke+tmsv1bmltzjIkDh58ELc2Dn9EwEh7fw6CAYH+M3yAoBpRAYSuQppcYkEe+80=,iv:nYyzWZefMIMZ8JOBpOjmLmCzjmtU3/yi3nRVlbJLshs=,tag:sW2DmgV4KguHnH+8hXXCeg==,type:str]
+    lastmodified: "2026-07-13T19:06:38Z"
+    mac: ENC[AES256_GCM,data:lHjYIcx+IHZXqWi93t7wUsAtbWtx3WX1cX9DrQORLkguCQEzFErf/+dnfSmg/lOCJBPQTHNBuiykZtjDrJKaAppLfgltioEgW0+BxPDzKrtllbilVmoy96DC8FEMkNlacIn6BWUKp1Td6YhTn1jRXGzhxWIdMFLUE5x7Dp2DFyQ=,iv:+ecbf+HsJLFh+cI/vtAzxEVAgYOfkP5AC1ymHI8otqU=,tag:Vkn9BtFCHeHUJJIvOsN9HA==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.2

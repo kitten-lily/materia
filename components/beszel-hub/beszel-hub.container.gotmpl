@@ -8,8 +8,14 @@ ContainerName=beszel-hub
 Image=docker.io/henrygd/beszel:0.18.7@sha256:a849ad80814b6a1a3be665304dcace5d4854b3bed7bde4dd1227e8ce1b82d477
 # Standalone container — NOT in pangolin.pod. The hub is isolated from the
 # edge node's shared network namespace (a misbehaving hub must not be able to
-# affect public ingress). Routed to the public internet via Pangolin's local
-# site + resource feature (TLS + badger auth), not manual Traefik config.
+# affect public ingress). Routed to the public internet via Newt tunnel
+# (on flutterina: Newt + beszel-hub share the newt-net network, so Newt
+# reaches the hub by container name "beszel-hub:8090" — no PublishPort needed
+# for the tunnel path). The PublishPort is kept as a safety net for the
+# existing local-site resource path until the dashboard is reconfigured to
+# route through the tunnel instead. Once that's done, PublishPort can be
+# removed.
+Network=newt-net
 PublishPort=8090:8090
 Environment=APP_URL=https://beszel.{{ .baseDomain }}
 Volume=beszel-data.volume:/beszel_data:z

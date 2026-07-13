@@ -1,0 +1,68 @@
+[Unit]
+Description=Newt tunnel client (Pangolin site connector)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=newt
+Image=docker.io/fosrl/newt:1.14.0@sha256:e64dd1bdeaee29a9a631c867b9946dea1606cbbad36d154c36cfc0b1a08efafc
+
+# Join the newt-net named network — container name resolution works on named
+# networks (not the default bridge), so Pangolin resource targets use
+# container names (e.g. beszel-hub:8090), not IPs or published ports.
+# Services that should be tunnel-reachable add Network=newt-net to their
+# own .container.gotmpl. Services NOT on newt-net are invisible to the tunnel.
+Network=newt-net
+
+# Persist the provisioning-exchanged id/secret across restarts.
+# Newt writes config.json here after exchanging the provisioning key on
+# first boot; on subsequent boots it reads from this file instead of
+# re-provisioning. The volume survives container restarts and image updates.
+Volume=newt-config.volume:/var/newt:z
+
+# Podman socket for container discovery — lets Pangolin inspect containers
+# on newt-net (metadata, IPs, port mappings). Read-only: discovery only,
+# no container mutation. Podman's socket is Docker-compatible.
+# The socket is already enabled by every .bu template's
+# enable-podman-socket.service, so no extra provisioning is needed.
+Volume=/run/podman/podman.sock:/var/run/docker.sock:ro
+
+# The provisioning key (spk_...) — consumed once on first boot, then Newt
+# persists its own id/secret to the config volume. After that the key is
+# unused (but kept in the vault for re-provisioning if the volume is wiped).
+{{ secretEnv "newtProvisioningKey" "NEWT_PROVISIONING_KEY" }}
+
+# Pangolin server endpoint — the edge node's public URL.
+# Uses the global baseDomain (same as beszel-hub/beszel-agent).
+Environment=PANGOLIN_ENDPOINT=https://pangolin.{{ .baseDomain }}
+
+# Site name — the server's hostname, so the site appears as e.g. "bow" in
+# the Pangolin dashboard. m_facts "hostname" resolves the OS hostname,
+# matching the MANIFEST.toml Hosts.<name> assignment.
+Environment=NEWT_NAME={{ m_facts "hostname" }}
+
+# Config file path inside the container (on the named volume).
+Environment=CONFIG_FILE=/var/newt/config.json
+
+# Docker integration — container discovery via the podman socket.
+Environment=DOCKER_SOCKET=unix:///var/run/docker.sock
+
+# Provisioning blueprint — applied once at provisioning time (imperative
+# bootstrap, not declarative). Creates the site in Pangolin with Docker
+# socket discovery enabled. After first boot, the dashboard is the source
+# of truth — dashboard edits are NOT overwritten. The blueprint is a
+# materia data resource (templated with the hostname), installed to the
+# data dir and bind-mounted here.
+Volume={{ m_dataDir "newt" }}/blueprint.yaml:/etc/newt/blueprint.yaml:ro,z
+Environment=PROVISIONING_BLUEPRINT_FILE=/etc/newt/blueprint.yaml
+
+# Enforce that resource targets must be on the same network as Newt
+# (newt-net). Prevents Newt from proxying to containers on other networks
+# — defense in depth beyond the network segmentation itself.
+Environment=DOCKER_ENFORCE_NETWORK_VALIDATION=true
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

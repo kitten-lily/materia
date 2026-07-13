@@ -1,0 +1,7 @@
+Secrets = ["newtProvisioningKey"]
+
+[Defaults]
+
+[[Services]]
+Service = "newt.service"
+RestartedBy = ["newt.container", "newt.network"]

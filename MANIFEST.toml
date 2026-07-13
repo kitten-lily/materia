@@ -1,10 +1,13 @@
 [Hosts.flutterina]
 Components = ["pangolin", "beszel-hub"]
-Roles = ["base"]
+Roles = ["base", "tunneled"]
 
 [Roles.base]
 Components = ["restic-backup", "beszel-agent"]
 
+[Roles.tunneled]
+Components = ["newt"]
+
 [Hosts.bow]
 Components = []
-Roles = ["base"]
+Roles = ["base", "tunneled"]

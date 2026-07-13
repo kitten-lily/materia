@@ -1,0 +1,4 @@
+sites:
+  {{ m_facts "hostname" }}:
+    name: {{ m_facts "hostname" }}
+    docker-socket-enabled: true

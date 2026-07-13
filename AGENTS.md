@@ -85,6 +85,35 @@ KubeStellar and Pangolin live ABOVE node layer.
   to never auto-start it and not to flag a quick exit as a failure. Only
   `restic-backup.timer` (`Static = true`, `WantedBy=timers.target`) triggers
   it, on the `resticOnCalendar` attribute-driven schedule.
+- **Newt tunnel client: shared `newt-net` network + provisioning keys.** Any
+  host that needs to expose container services through the Pangolin edge
+  gets the `newt` component via `[Roles.tunneled]`. Newt joins a named
+  podman network (`newt-net`); services that should be tunnel-reachable
+  also join `newt-net`, and Newt reaches them by **container name** (not
+  IP, not `PublishPort`). Container name resolution only works on named
+  networks, not the default bridge — this is why `newt-net` exists as a
+  `.network` quadlet rather than relying on the default bridge. Services
+  NOT on `newt-net` are invisible to the tunnel. `DOCKER_ENFORCE_NETWORK_
+  VALIDATION=true` adds defense in depth: Newt validates that a target
+  container is on `newt-net` before proxying. No `PublishPort` on Newt —
+  it's an outbound-only WebSocket client that dials to the Pangolin edge,
+  so it works behind the nftables closed-posture firewall (all outbound
+  allowed). Provisioning uses Pangolin **provisioning keys** (`spk_...`):
+  Newt exchanges the key for its own `id` + `secret` on first boot and
+  persists them to a named volume (`newt-config.volume`). No manual
+  "create site in dashboard → copy credentials → sops --set" step. The
+  key is consumed once; kept in the vault for re-provisioning. The
+  provisioning blueprint (`blueprint.gotmpl`) is **imperative**
+  (`--provisioning-blueprint-file`, not `--blueprint-file`): applied once
+  at first boot to auto-create the site, then the dashboard is the source
+  of truth. See `specs/plans/issue-newt-component.md`.
+- **Newt on the edge node (flutterina) too, for health checks.** The edge
+  node itself runs Newt not to tunnel external traffic in, but so that
+  Pangolin's Health Checks feature can reach standalone containers like
+  beszel-hub through the tunnel (by container name on `newt-net`) instead
+  of via local-site resources (which require the podman bridge gateway IP
+  and don't work with Pangolin's arbitrary HTTP health checks). Both
+  flutterina and bow are in `[Roles.tunneled]`.
 
 ## Repo layout
 
@@ -119,6 +148,12 @@ components/
   beszel-agent/                  # beszel monitoring agent (role-assigned, see below)
     MANIFEST.toml                # component manifest — Secrets = ["beszelToken"], Defaults, Services
     beszel-agent.container.gotmpl # Network=host, podman socket mount, connects to hub via public URL
+  newt/                          # Pangolin tunnel client (role-assigned, [Roles.tunneled])
+    MANIFEST.toml                # component manifest — Secrets = ["newtProvisioningKey"], Services
+    newt.container.gotmpl        # userspace WireGuard tunnel client, joins newt-net network
+    newt.network                 # named podman network for tunnel-reachable services
+    newt-config.volume           # named volume for Newt's provisioned id/secret
+    blueprint.gotmpl             # provisioning blueprint (imperative, applied once at first boot)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
@@ -452,19 +487,19 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   copies manually.
 - **Beszel hub is a standalone container, not in `pangolin.pod`.** The hub
   runs outside the pod's shared network namespace and is routed to the public
-  internet via Pangolin's [local site + resource](https://docs.pangolin.net/manage/sites/understanding-sites)
-  feature (TLS + badger auth via Pangolin's own Traefik), not by manual
-  `dynamic_config.yml.gotmpl` changes. Joining the pod would put a
-  monitoring service in the same network namespace as the edge node's public
-  ingress — a misbehaving hub could affect the gateway. Keeping it standalone
-  isolates it. Because it's standalone, Pangolin (in the pod) cannot reach it
-  via `localhost:8090` (that's the pod's localhost, not the host's); the
-  local-site resource target must use the host IP or the podman bridge
-  gateway IP (e.g. `10.88.0.1:8090`) — refs [pangolin #456](https://github.com/fosrl/pangolin/issues/456).
-  The hub and agent are separate components (`beszel-hub` assigned to
-  `Hosts.flutterina`, `beszel-agent` assigned to `[Roles.base]`) to avoid the
-  "install but don't start" complexity of conditional resource rendering —
-  materia has no native conditional-rendering mechanism. See
+  internet via Newt tunnel (on flutterina: Newt + beszel-hub share the
+  `newt-net` network, so Newt reaches the hub by container name
+  `beszel-hub:8090`), not by manual `dynamic_config.yml.gotmpl` changes.
+  Joining the pod would put a monitoring service in the same network
+  namespace as the edge node's public ingress — a misbehaving hub could
+  affect the gateway. Keeping it standalone isolates it. The hub also joins
+  `newt-net` so the tunnel path works; the `PublishPort=8090:8090` is kept
+  as a safety net for the previous local-site resource path until the
+  dashboard is fully reconfigured to route through the tunnel. The hub and
+  agent are separate components (`beszel-hub` assigned to
+  `Hosts.flutterina`, `beszel-agent` assigned to `[Roles.base]`) to avoid
+  the "install but don't start" complexity of conditional resource
+  rendering — materia has no native conditional-rendering mechanism. See
   `specs/plans/issue-20-beszel-monitoring.md`.
 - **Monitoring the monitor: beszel hub liveness is a Pangolin-native health
   check, not a custom systemd timer.** Beszel is itself the alerting system,
@@ -572,6 +607,34 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   re-run the script (`sudo /opt/lvm/setup-data-vg.sh`), then `sudo
   systemctl restart lvm-data.service` (or just reboot). The script is
   safe to run repeatedly.
+- **Newt container name resolution only works on named podman networks,
+  not the default bridge.** When Newt runs on the default bridge
+  (`Network=bridge` or no `Network=`), it sends container **IP addresses**
+  to Pangolin — which are dynamic (change on restart), making resource
+  targets fragile. On a named network (e.g. `newt-net` via a `.network`
+  quadlet), Newt sends container **names** (hostnames), which are stable.
+  This is why the `newt` component creates a `newt.network` resource and
+  the container uses `Network=newt-net` — and why services that should be
+  tunnel-reachable must also add `Network=newt-net` to their own
+  `.container.gotmpl`. Confirmed via Pangolin docs: "Running in Network
+  Mode 'bridge': IP addresses will be used; Running with defined network:
+  Hostnames will be used." Do NOT use `Network=host` for Newt — it breaks
+  container name discovery entirely and gives access to all host
+  interfaces.
+- **Newt provisioning keys are consumed once.** The `spk_...` key in the
+  vault is exchanged for a unique `id` + `secret` on first boot, which
+  Newt persists to `newt-config.volume`. On subsequent boots, Newt reads
+  the persisted credentials and ignores the key. If the config volume is
+  wiped (`podman volume rm`), Newt can't re-provision with the same key —
+  create a new key in the Pangolin dashboard and update the vault. The
+  key has a max usage count set at creation time; each host consumes one.
+- **`DOCKER_ENFORCE_NETWORK_VALIDATION=true` is defense in depth, not a
+  replacement for network segmentation.** Newt validates that a target
+  container is on `newt-net` before proxying, and reports unreachable
+  targets instead of proxying to the wrong container. But the primary
+  isolation is the network itself — a container not on `newt-net` is
+  invisible to Newt regardless of this flag. Keep both: the network for
+  isolation, the flag for catching misconfigured resource targets.
 
 ## Provisioning (Butane/Ignition)
 
