@@ -3,4 +3,4 @@ Components = ["pangolin", "beszel-hub"]
 Roles = ["base"]
 
 [Roles.base]
-Components = ["restic-backup"]
+Components = ["restic-backup", "beszel-agent"]
