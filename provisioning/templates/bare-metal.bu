@@ -206,7 +206,12 @@ storage:
           fi
           # Stage 2: create the LV (skip if already present).
           if ! lvdisplay vg_data/lv_data >/dev/null 2>&1; then
-            lvcreate -n lv_data -l 100%FREE vg_data
+            # -y answers yes to the signature-wipe prompt — a stale
+            # crypto_LUKS/ext4/swap signature from a previous install on
+            # the same disk space makes lvcreate abort without it (no
+            # terminal to answer the prompt). -Z zeros the first 4 KiB
+            # of the new LV (signature wipe) — belt-and-braces with -y.
+            lvcreate -y -Z y -n lv_data -l 100%FREE vg_data
             echo "lvm-data: created lv_data."
           else
             echo "lvm-data: lv_data already present."
