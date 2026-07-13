@@ -276,10 +276,14 @@ storage:
               # DNS from podman containers — the podman bridge's built-in
               # DNS resolver (dnsname plugin) listens on the bridge gateway
               # IP (e.g. 10.89.0.1:53). Container DNS queries arrive on the
-              # host's cni-podman0 interface → INPUT chain, not FORWARD.
+              # host's podman bridge interface → INPUT chain, not FORWARD.
               # Without this, containers can't resolve any hostname.
-              iifname { "cni-podman0", "podman0" } udp dport 53 accept
-              iifname { "cni-podman0", "podman0" } tcp dport 53 accept
+              # The interface name varies by podman version: cni-podman0,
+              # podman0, podman1, etc. Match the podman bridge subnet
+              # (10.89.0.0/24 is the default) instead of hardcoding the
+              # interface name — more robust across versions.
+              ip saddr 10.89.0.0/24 udp dport 53 accept
+              ip saddr 10.89.0.0/24 tcp dport 53 accept
             }
             chain forward {
               type filter hook forward priority 0; policy drop;
@@ -287,9 +291,12 @@ storage:
               # through the forward chain (not output), so policy drop here
               # breaks all container networking (DNS, image pulls, tunnel
               # connections). Allow established connections and traffic
-              # from podman bridge interfaces (cni-podman0, etc.).
+              # from the podman bridge subnet (10.89.0.0/24 is the default).
+              # Match by subnet instead of interface name — the bridge
+              # interface name varies by podman version (podman0, podman1,
+              # cni-podman0, etc.).
               ct state established,related accept
-              iifname { "cni-podman0", "podman0" } accept
+              ip saddr 10.89.0.0/24 accept
             }
             chain output {
               type filter hook output priority 0; policy accept;
