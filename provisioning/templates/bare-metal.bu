@@ -229,9 +229,11 @@ storage:
             echo "lvm-data: lv_data already formatted as ext4."
           fi
           # Stage 4: mount (skip if already in fstab).
+          # Flatcar doesn't ship /etc/fstab (no traditional root fstab), so
+          # grep would error on a missing file — guard with || true.
           uuid=$(blkid -s UUID -o value "$dev")
           mkdir -p /var/lib/materia-data
-          if ! grep -q "/var/lib/materia-data" /etc/fstab; then
+          if ! grep -q "/var/lib/materia-data" /etc/fstab 2>/dev/null; then
             echo "UUID=$uuid /var/lib/materia-data ext4 defaults,nofail 0 2" >> /etc/fstab
             echo "lvm-data: added fstab entry."
           fi
