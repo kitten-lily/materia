@@ -558,6 +558,7 @@ server-name env var or default.
 | `mise hz:ssh` | SSH into server as `core@<ip>` |
 | `mise hz:pull-config` | Backup pangolin runtime volumes to a local tarball (before rebuild) |
 | `mise hz:push-config` | Restore tarball into pangolin runtime volumes (after rebuild) |
+| `mise hz:podman-gateway` | Print a server's podman bridge gateway IP (for Pangolin local-site resource targets pointing at standalone containers like beszel-hub) |
 
 `hz:pull-config`/`hz:push-config` operate on the named podman volumes
 (`systemd-pangolin-config`, `systemd-letsencrypt`), not the materia data dir —

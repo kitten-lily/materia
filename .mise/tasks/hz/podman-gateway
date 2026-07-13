@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="Print a server's podman bridge gateway IP (for Pangolin local-site resource targets)"
+#USAGE flag "--server-name <name>" help="Server name"
+#USAGE flag "--network <name>" help="Podman network name" default="podman"
+
+set -euo pipefail
+
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_network="${usage_network:-podman}"
+
+IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
+if [[ -z "$_ip" ]]; then
+  gum style --foreground 1 "error: no server named '$_server_name'"
+  exit 1
+fi
+
+_ssh=(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+
+_gateway=$("${_ssh[@]}" "core@$_ip" "sudo podman network inspect $_network" | jq -r '.[0].subnets[0].gateway // empty')
+
+if [[ -z "$_gateway" ]]; then
+  gum style --foreground 1 "error: could not resolve gateway for network '$_network' on $_server_name ($_ip)"
+  exit 1
+fi
+
+echo "$_gateway"
