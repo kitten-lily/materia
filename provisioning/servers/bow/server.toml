@@ -1,0 +1,8 @@
+# Server config for "bow", read by `mise ign` and `mise ipxe:*`.
+# Committed — non-secret.
+
+type = "bare-metal"
+
+[bare_metal]
+# Fill in after a discovery boot: mise ign --server-name bow --debug
+data_disks = ["/dev/nvme0n1", "/dev/nvme1n1"]

@@ -35,7 +35,6 @@ storage:
     - { path: /etc/materia, mode: 0755 }
     - { path: /var/lib/materia, mode: 0755 }
     - { path: /opt/lvm, mode: 0755 }
-    - { path: /etc/nftables.d, mode: 0755 }
 
   links:
     # Pure-podman node: disable built-in Docker and containerd sysexts by symlinking
@@ -214,7 +213,15 @@ storage:
     # generic, no k8s-specifics). Materia-managed services (pangolin, etc.)
     # are assigned per-host in MANIFEST.toml and reach the network via their
     # own container networking — this host-level posture stays closed.
-    - path: /etc/nftables.d/closed.conf
+    #
+    # Written to /etc/nftables.conf (the conventional path the base
+    # nftables.service expects — its ConditionPathExists checks this file).
+    # The source repo used a dropin to redirect ExecStart at
+    # /etc/nftables.d/closed.conf, but that leaves the base unit's
+    # ConditionPathExists=/etc/nftables.conf unmet, so systemd skips the
+    # entire service (dropin never runs). Putting the rules at the path
+    # the condition checks avoids the dropin entirely.
+    - path: /etc/nftables.conf
       mode: 0644
       user:
         name: root
@@ -280,15 +287,13 @@ systemd:
         [Install]
         WantedBy=multi-user.target
 
-    # --- nftables: apply closed-posture rules at boot ---
+    # nftables.service: the base unit (shipped by Flatcar) runs
+    # `nft -f /etc/nftables.conf` at boot, gated on
+    # ConditionPathExists=/etc/nftables.conf. Our rules file above
+    # satisfies the condition, so just enabling the unit is enough —
+    # no ExecStart dropin needed.
     - name: nftables.service
       enabled: true
-      dropins:
-        - name: closed-posture.conf
-          contents: |
-            [Service]
-            ExecStart=
-            ExecStart=/usr/sbin/nft -f /etc/nftables.d/closed.conf
 
 passwd:
   users:

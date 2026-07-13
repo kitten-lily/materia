@@ -530,6 +530,20 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   Traefik → beszel-hub. Dashboard-only change, no repo/IaC involved — but
   easy to miss since the *routing* half of local-site setup looks correct
   right up until this auth layer silently intercepts every request.
+- **nftables.service ships with `ConditionPathExists=/etc/nftables.conf`** —
+  the base unit (provided by Flatcar/the distro) gates its own startup on
+  the conventional config path existing. A dropin that redirects
+  `ExecStart=` to a custom rules file (e.g. `/etc/nftables.d/closed.conf`)
+  is not enough: the condition is evaluated *before* the dropin's
+  `ExecStart` would run, so if `/etc/nftables.conf` doesn't exist, systemd
+  skips the entire service (`Active: inactive (dead)`, `Condition: start
+  condition unmet`) and the dropin never executes. Fix: write the rules to
+  `/etc/nftables.conf` directly (the path the condition checks) and drop
+  the `ExecStart` dropin — the base unit already runs `nft -f
+  /etc/nftables.conf` at boot. Confirmed on `bow` (bare-metal, issue #9):
+  the first implementation used a `closed-posture.conf` dropin redirecting
+  to `/etc/nftables.d/closed.conf`, and `nftables.service` was skipped on
+  every boot with no error — the closed-posture firewall never applied.
 
 ## Provisioning (Butane/Ignition)
 

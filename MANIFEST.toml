@@ -4,3 +4,6 @@ Roles = ["base"]
 
 [Roles.base]
 Components = ["restic-backup", "beszel-agent"]
+
+[Hosts.bow]
+Components = []
