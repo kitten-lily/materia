@@ -232,6 +232,30 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   to Podman. The `/3` in `HTTP/3` triggered "protocol can only be specified
   once". Rule: quadlet file comments must be on their own lines, never inline
   after a value.
+- **`Environment=` values containing a space MUST be quoted, or systemd
+  silently truncates/splits them.** Quadlet's `Environment=` follows
+  systemd's `Environment=` parsing rules (confirmed:
+  `podman-systemd.unit(5)`, "uses the same format as services in
+  systemd"), which split unquoted values on whitespace. Two real bugs
+  found this way: (1) `beszel-agent.container.gotmpl`'s
+  `Environment=KEY={{ .beszelKey }}` — an ed25519 public key
+  (`ssh-ed25519 AAAA...`) contains a space, so the agent only ever
+  received `KEY=ssh-ed25519` (no key data), failing with `ssh: no key
+  found` at every startup. (2) `restic-backup.container.gotmpl`'s
+  `Environment=BACKUP_PATHS=/var/lib/materia/components
+  /var/lib/containers/storage/volumes` — confirmed via `systemctl cat` +
+  `podman inspect` on flutterina that the container only ever received
+  `--env BACKUP_PATHS=/var/lib/materia/components`; the podman volumes
+  path was silently dropped since the component shipped, meaning
+  pangolin-config/letsencrypt/beszel-data etc. were never backed up.
+  Fix: quote the whole assignment —
+  `Environment="KEY={{ .beszelKey }}"` /
+  `Environment="BACKUP_PATHS=path1 path2"`. Audit any new
+  `Environment=` line whose templated value might contain a space
+  (public keys, multi-path lists, anything with a comment/description)
+  before assuming it "just works" — there is no local materia template
+  renderer to catch this; it only surfaces as a runtime failure on the
+  actual host.
 - **`.gotmpl` suffix is stripped.** `config.yml.gotmpl` installs as
   `config.yml`. Only the last `.gotmpl` is stripped; `conf.gotmpl.gotmpl`
   installs as `conf.gotmpl`.

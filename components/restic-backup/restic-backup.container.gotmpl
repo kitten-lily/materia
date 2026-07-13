@@ -24,7 +24,7 @@ Environment=HC_SLUG=restic-backup-{{ m_facts "hostname" }}
 Environment=KEEP_DAILY={{ m_default "resticKeepDaily" "7" }}
 Environment=KEEP_WEEKLY={{ m_default "resticKeepWeekly" "4" }}
 Environment=KEEP_MONTHLY={{ m_default "resticKeepMonthly" "6" }}
-Environment=BACKUP_PATHS=/var/lib/materia/components /var/lib/containers/storage/volumes
+Environment="BACKUP_PATHS=/var/lib/materia/components /var/lib/containers/storage/volumes"
 
 [Service]
 Type=oneshot
