@@ -305,6 +305,19 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   appears in the plan — no error anywhere. This (not the attributes engine) was
   why podman secrets weren't created; with it fixed, SOPS creates them fine and
   no manual `podman secret create` workaround is needed.
+- **Attribute scoping is strict per-component — a missing key is a fatal
+  vault-load error, not a template no-op.** `attributes/vault.yml`'s
+  `components.<name>.*` keys are only visible when templating that specific
+  component; they are NOT inherited by other components even if the value is
+  conceptually shared. `beszel-hub.container.gotmpl`'s `{{ .baseDomain }}`
+  referenced a value that existed only under `components.pangolin`, so
+  materia-update failed with `map has no entry for key "baseDomain"` while
+  loading beszel-hub — and because this is a fatal load error, it aborted
+  the *entire* run, blocking reconciliation of every component on the host,
+  not just beszel-hub. Fix: any value used by more than one component
+  belongs in top-level `globals` (`sops --set '["globals"]["key"] "value"'`
+  + `sops unset attributes/vault.yml '["components"]["old-owner"]["key"]'`
+  via `fnox exec --`), not duplicated per-component.
 - **Containers reach each other over localhost.** In a pod, all containers
   share one network namespace. Traefik/Gerbil configs reference `localhost:3001`,
   not `app:3001`. The `server.internal_hostname` in `config.yml` is `localhost`.
