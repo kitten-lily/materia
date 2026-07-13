@@ -1,0 +1,5 @@
+[Defaults]
+
+[[Services]]
+Service = "beszel-hub.service"
+RestartedBy = ["beszel-hub.container"]

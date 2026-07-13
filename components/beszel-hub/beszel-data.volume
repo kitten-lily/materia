@@ -1,0 +1,5 @@
+# Named volume for beszel hub persistent data (/beszel_data).
+# The henrygd/beszel image runs as root (alpine-based, not a minimus image),
+# so no User=/Group= here — unlike letsencrypt.volume which sets them for the
+# minimus traefik. See specs/plans/issue-20-beszel-monitoring.md.
+[Volume]

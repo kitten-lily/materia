@@ -116,6 +116,10 @@ images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
     wrapper/                     # Go entrypoint: ping, init, backup, forget
+  beszel-hub/                    # beszel monitoring hub (standalone, flutterina-only)
+    MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
+    beszel-hub.container.gotmpl  # standalone container, port 8090, routed via Pangolin local site
+    beszel-data.volume           # named volume for /beszel_data (root-owned, no User=/Group=)
 provisioning/
   templates/
     hetzner.bu                  # Butane template for any Hetzner Cloud server
@@ -406,6 +410,44 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `provisioning/storageboxes/<box>/known_hosts` refreshed by `mise
   hz:storagebox:keyscan`). If either upstream value rotates, update both
   copies manually.
+- **Beszel hub is a standalone container, not in `pangolin.pod`.** The hub
+  runs outside the pod's shared network namespace and is routed to the public
+  internet via Pangolin's [local site + resource](https://docs.pangolin.net/manage/sites/understanding-sites)
+  feature (TLS + badger auth via Pangolin's own Traefik), not by manual
+  `dynamic_config.yml.gotmpl` changes. Joining the pod would put a
+  monitoring service in the same network namespace as the edge node's public
+  ingress — a misbehaving hub could affect the gateway. Keeping it standalone
+  isolates it. Because it's standalone, Pangolin (in the pod) cannot reach it
+  via `localhost:8090` (that's the pod's localhost, not the host's); the
+  local-site resource target must use the host IP or the podman bridge
+  gateway IP (e.g. `10.88.0.1:8090`) — refs [pangolin #456](https://github.com/fosrl/pangolin/issues/456).
+  The hub and agent are separate components (`beszel-hub` assigned to
+  `Hosts.flutterina`, `beszel-agent` assigned to `[Roles.base]`) to avoid the
+  "install but don't start" complexity of conditional resource rendering —
+  materia has no native conditional-rendering mechanism. See
+  `specs/plans/issue-20-beszel-monitoring.md`.
+- **Monitoring the monitor: beszel hub liveness is a Pangolin-native health
+  check, not a custom systemd timer.** Beszel is itself the alerting system,
+  so a silently-dead hub would leave the whole fleet blind with no alarm.
+  Pangolin has a built-in [Health Checks](https://docs.pangolin.net/manage/alerting/health-checks)
+  feature (Alerting section) that supports *arbitrary* (standalone) HTTP
+  checks against any address a Pangolin site can reach — not just checks
+  tied to a routable resource target. An arbitrary HTTP check against the
+  hub's pocketbase `/api/health` endpoint, paired with an
+  [Alert Rule](https://docs.pangolin.net/manage/alerting/alert-rules)
+  (email and/or webhook on unhealthy/recovery), replaces what would
+  otherwise be a bespoke systemd timer + healthchecks.io ping — no new
+  IaC, configured entirely in the Pangolin dashboard. The check target
+  address has the same reachability constraint as the local-site resource
+  target (Pangolin's site process cannot use `localhost:8090` for a
+  standalone container — see the gotcha above), so it's set up and
+  verified alongside that local-site resource, tracked in #22. Agent-down
+  alerts, by contrast, are handled *inside* beszel via its native Shoutrrr
+  webhook notifications (configured in the hub UI, Settings > Notifications,
+  not IaC — beszel stores them in its DB). The split is deliberate: the
+  Pangolin health check covers hub-down (which beszel can't self-report),
+  beszel's own webhooks cover agent-down (which Pangolin can't see). Both
+  are deploy-time dashboard configuration, zero component code. See #24.
 
 ## Provisioning (Butane/Ignition)
 
