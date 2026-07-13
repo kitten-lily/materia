@@ -232,11 +232,13 @@ storage:
           mount -a
           echo "lvm-data: VG vg_data + lv_data ready at /var/lib/materia-data."
 
-    # --- nftables: default-drop inbound, allow outbound (closed posture) ---
-    # Ported near-verbatim from server-provisioning's hosting.bu (already
-    # generic, no k8s-specifics). Materia-managed services (pangolin, etc.)
-    # are assigned per-host in MANIFEST.toml and reach the network via their
-    # own container networking — this host-level posture stays closed.
+    # --- nftables: default-drop inbound, allow SSH + outbound (closed posture) ---
+    # Materia-managed services (pangolin, etc.) are assigned per-host in
+    # MANIFEST.toml and reach the network via their own container
+    # networking — this host-level posture stays closed except for SSH,
+    # which is needed to administer a remote bare-metal box with no
+    # cloud serial console (unlike Hetzner, which has the Hetzner web
+    # console as a fallback).
     #
     # Written to /etc/nftables.conf (the conventional path the base
     # nftables.service expects — its ConditionPathExists checks this file).
@@ -260,6 +262,10 @@ storage:
               iif lo accept
               ip protocol icmp accept
               ip6 nexthdr icmpv6 accept
+              # SSH — admin access on a remote box with no cloud console.
+              # Tighten to a subnet (ip saddr <subnet> tcp dport 22 accept)
+              # if the management IP is stable and known.
+              tcp dport 22 accept
             }
             chain forward {
               type filter hook forward priority 0; policy drop;

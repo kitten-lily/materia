@@ -216,7 +216,7 @@ sudo journalctl -u materia-update.service -n 50 --no-pager
 | iPXE fetches but Flatcar doesn't boot | Wrong Flatcar channel/version — check `FLATCAR_CHANNEL`/`FLATCAR_VERSION` env vars. Secure Boot still on. |
 | Can't SSH into RAM-booted box | `bare-metal-debug.bu` only has the `core` user + your SSH key — confirm the key matches. DHCP gave an unexpected IP — check the box's console for the assigned address. |
 | `lvm-data.service` failed | `journalctl -u lvm-data.service` — usually wrong disk device names in `data_disks`. Re-run discovery boot, confirm `lsblk` output, fix `server.toml`, re-render, reboot. |
-| Lost SSH after nftables applied | The closed-posture rules drop all inbound by default. Connect via physical/serial console, `sudo systemctl stop nftables` (or add a temporary input rule for SSH). If you need persistent SSH, add an nftables rule accepting your SSH port to `/etc/nftables.conf` before the final reboot — see `bare-metal.bu`. |
+| Lost SSH after nftables applied | The closed-posture rules drop all inbound by default, but the template allows `tcp dport 22` for remote admin. If you tightened the rules (removed the SSH exception) and locked yourself out: connect via physical/serial console, `sudo systemctl stop nftables`, re-add the SSH rule to `/etc/nftables.conf`, `sudo systemctl start nftables`. |
 | `materia-update.service` failed | `journalctl -u materia-update.service` — check the repo URL, age key, and SOPS vault decryption. The dead-man's-switch ping URL (healthchecks.io) failing is harmless (leading `-` on the curl). |
 | USB stick not bootable | See [USB troubleshooting](#usb-troubleshooting) below. |
 

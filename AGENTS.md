@@ -615,7 +615,8 @@ service, no GitHub App credentials (materia replaces all of those).
 window and loads the WireGuard kernel module (for Gerbil) — both specific to
 the current single-Hetzner-VPS edge role, kept as-is rather than generalized
 further. `provisioning/templates/bare-metal.bu` additionally sets up an LVM
-data volume and a closed-inbound nftables posture — see
+data volume and a closed-inbound nftables posture (SSH allowed for remote
+admin — no cloud console fallback on bare metal) — see
 `provisioning/BARE-METAL.md`.
 
 ### Butane changes don't reach a running host
