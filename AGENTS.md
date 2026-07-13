@@ -530,20 +530,28 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   Traefik → beszel-hub. Dashboard-only change, no repo/IaC involved — but
   easy to miss since the *routing* half of local-site setup looks correct
   right up until this auth layer silently intercepts every request.
-- **nftables.service ships with `ConditionPathExists=/etc/nftables.conf`** —
-  the base unit (provided by Flatcar/the distro) gates its own startup on
-  the conventional config path existing. A dropin that redirects
-  `ExecStart=` to a custom rules file (e.g. `/etc/nftables.d/closed.conf`)
-  is not enough: the condition is evaluated *before* the dropin's
-  `ExecStart` would run, so if `/etc/nftables.conf` doesn't exist, systemd
-  skips the entire service (`Active: inactive (dead)`, `Condition: start
-  condition unmet`) and the dropin never executes. Fix: write the rules to
-  `/etc/nftables.conf` directly (the path the condition checks) and drop
-  the `ExecStart` dropin — the base unit already runs `nft -f
-  /etc/nftables.conf` at boot. Confirmed on `bow` (bare-metal, issue #9):
-  the first implementation used a `closed-posture.conf` dropin redirecting
-  to `/etc/nftables.d/closed.conf`, and `nftables.service` was skipped on
-  every boot with no error — the closed-posture firewall never applied.
+- **nftables.service ships with a `ConditionPathExists=` on its rules
+  file, and the exact path depends on the Flatcar/nftables version.** The
+  base unit gates its own startup on the rules file existing — a dropin
+  that redirects `ExecStart=` to a custom path is not enough: the
+  condition is evaluated *before* the dropin's `ExecStart` would run, so
+  if the expected file doesn't exist, systemd skips the entire service
+  (`Active: inactive (dead)`, `Condition: start condition unmet`) and the
+  dropin never executes. The path itself varies by version: older
+  nftables builds check `/etc/nftables.conf`, newer builds (Flatcar
+  4593+, nftables 1.1.x) check `/etc/nftables/rules/main.nft` and
+  `ExecStart` uses `nft 'flush ruleset; include
+  "/etc/nftables/rules/main.nft"'` (an include, not `nft -f`). Fix:
+  write the rules to the exact path the base unit's condition checks
+  (`systemctl cat nftables.service` on the target to confirm) and drop
+  the `ExecStart` dropin — the base unit already loads the rules at boot.
+  If the unit uses `include` (not `nft -f`), omit `flush ruleset` from
+  the rules file — the service flushes before including. Confirmed on
+  `bow` (bare-metal, Flatcar 4593.2.4, issue #9): the first implementation
+  used a dropin redirecting to `/etc/nftables.d/closed.conf`; the second
+  wrote to `/etc/nftables.conf` (the path older Flatcar versions use) —
+  both left the condition unmet and `nftables.service` was skipped on
+  every boot with no error. The closed-posture firewall never applied.
 - **LVM setup-script idempotency must be per-stage, not one big guard.**
   The first `bare-metal.bu` LVM script guarded the entire body with `if
   vgdisplay vg_data; then echo "nothing to do"; exit 0; fi`. A previous
