@@ -116,6 +116,10 @@ images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
     wrapper/                     # Go entrypoint: ping, init, backup, forget
+  beszel-hub/                    # beszel monitoring hub (standalone, flutterina-only)
+    MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
+    beszel-hub.container.gotmpl  # standalone container, port 8090, routed via Pangolin local site
+    beszel-data.volume           # named volume for /beszel_data (root-owned, no User=/Group=)
 provisioning/
   templates/
     hetzner.bu                  # Butane template for any Hetzner Cloud server
@@ -406,6 +410,22 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `provisioning/storageboxes/<box>/known_hosts` refreshed by `mise
   hz:storagebox:keyscan`). If either upstream value rotates, update both
   copies manually.
+- **Beszel hub is a standalone container, not in `pangolin.pod`.** The hub
+  runs outside the pod's shared network namespace and is routed to the public
+  internet via Pangolin's [local site + resource](https://docs.pangolin.net/manage/sites/understanding-sites)
+  feature (TLS + badger auth via Pangolin's own Traefik), not by manual
+  `dynamic_config.yml.gotmpl` changes. Joining the pod would put a
+  monitoring service in the same network namespace as the edge node's public
+  ingress — a misbehaving hub could affect the gateway. Keeping it standalone
+  isolates it. Because it's standalone, Pangolin (in the pod) cannot reach it
+  via `localhost:8090` (that's the pod's localhost, not the host's); the
+  local-site resource target must use the host IP or the podman bridge
+  gateway IP (e.g. `10.88.0.1:8090`) — refs [pangolin #456](https://github.com/fosrl/pangolin/issues/456).
+  The hub and agent are separate components (`beszel-hub` assigned to
+  `Hosts.flutterina`, `beszel-agent` assigned to `[Roles.base]`) to avoid the
+  "install but don't start" complexity of conditional resource rendering —
+  materia has no native conditional-rendering mechanism. See
+  `specs/plans/issue-20-beszel-monitoring.md`.
 
 ## Provisioning (Butane/Ignition)
 

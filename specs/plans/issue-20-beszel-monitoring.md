@@ -245,6 +245,34 @@ The existing `quadlet` manager matches all `.container.gotmpl` files. Both
 tags — Renovate should pick them up automatically. Verify after the first
 Renovate run via the Dependency Dashboard.
 
+## Hub implementation refinements (verified pre-impl, 2026-07-13)
+
+- **Image runs as root**, not a minimus image (alpine-based; official
+  docker-compose has no `user:` directive). Consequence: `beszel-data.volume`
+  needs **no `User=`/`Group=`** (unlike `letsencrypt.volume`, which has them
+  for the minimus traefik). Port 8090 > 1024 → no `NET_BIND_SERVICE`.
+- **No `/beszel_socket` volume** — that's only for a co-located agent
+  connecting via unix socket. Our agent connects over the public WebSocket
+  URL, so the hub only mounts `/beszel_data`.
+- **Confirmed digest:** `0.18.7` @
+  `sha256:a849ad80814b6a1a3be665304dcace5d4854b3bed7bde4dd1227e8ce1b82d477`.
+- **Hub needs no vault changes** — `APP_URL` uses the existing `baseDomain`
+  attribute directly. The `beszelHubUrl` global attribute is the *agent's*
+  concern (sub-issue #23), not the hub's.
+- **No `Secrets` in the hub component manifest** — `APP_URL` is non-secret;
+  the admin user is created in the web UI, not via env var.
+- **No healthcheck in the first cut** — the hub has no systemd dependents
+  (the agent connects via the public URL, not a systemd dependency). Keep
+  it minimal; can add `/beszel health --url http://localhost:8090` later if
+  monitoring of the hub's own health is wanted.
+- **Port exposure (open question, tracked in #22):** `PublishPort=8090:8090`
+  binds 0.0.0.0 on the host so the Pangolin container (in the pod's network
+  namespace) can reach the hub via the podman bridge gateway IP. This exposes
+  8090 on flutterina's public IP without TLS. `hetzner.bu` sets no host-level
+  firewall (only `bare-metal.bu` has nftables), so this is a real exposure
+  until the Pangolin local-site resource + a Hetzner cloud firewall rule are
+  in place. Resolved at deploy time, not in IaC.
+
 ## Implementation steps
 
 1. Create `components/beszel-hub/` (MANIFEST.toml, container, volume) with

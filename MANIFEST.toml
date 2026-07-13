@@ -1,5 +1,5 @@
 [Hosts.flutterina]
-Components = ["pangolin"]
+Components = ["pangolin", "beszel-hub"]
 Roles = ["base"]
 
 [Roles.base]
