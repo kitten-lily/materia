@@ -172,7 +172,8 @@ disk yet). SSH in and install Flatcar to the boot disk:
 
 ```sh
 ssh core@<box-lan-ip>
-sudo flatcar-install -d <boot-disk> -i <(curl -s http://<LAN-IP>:8080/materia.ign)
+curl -s http://<LAN-IP>:8080/materia.ign -o /tmp/materia.ign
+sudo flatcar-install -d <boot-disk> -i /tmp/materia.ign
 sudo reboot
 ```
 
