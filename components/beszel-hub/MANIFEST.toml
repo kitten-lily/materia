@@ -3,15 +3,3 @@
 [[Services]]
 Service = "beszel-hub.service"
 RestartedBy = ["beszel-hub.container"]
-
-[[Services]]
-Service = "beszel-hub-healthcheck.service"
-# Timer-activated oneshot — never auto-started by materia, and a non-zero
-# exit (hub unhealthy) must not be flagged as a materia failure. Same
-# Stopped=true + Oneshot=true pattern as restic-backup.service.
-Stopped = true
-Oneshot = true
-
-[[Services]]
-Service = "beszel-hub-healthcheck.timer"
-Static = true
