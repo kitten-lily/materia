@@ -511,6 +511,25 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   container stats; the podman socket is already enabled by every `.bu`
   template's `enable-podman-socket.service`, so no extra provisioning is
   needed for it.
+- **Pangolin public resources default to Pangolin's own auth (Platform SSO),
+  which breaks the agent's WebSocket handshake.** Confirmed on flutterina:
+  `curl -sSD- https://beszel.<baseDomain>/` returned `302` to
+  `https://pangolin.<baseDomain>/auth/resource/<uuid>?redirect=...`, and
+  `beszel-agent.service` logged `WebSocket connection failed
+  err="unexpected status code: 302"` on every retry — even though the
+  local-site resource itself was configured correctly (routing worked,
+  the redirect target proved the resource exists and Traefik reached it).
+  Per Pangolin's docs, *all public resources have Pangolin auth enabled by
+  default* — an unauthenticated request gets redirected to an interactive
+  login page. Beszel's agent can't complete that flow (it's a headless
+  WebSocket client authenticating itself via TOKEN/KEY), and beszel-hub
+  already has its own agent authentication — Pangolin's auth layer on top
+  is redundant and fatal to the connection. Fix: in the Pangolin dashboard,
+  open the `beszel.<baseDomain>` resource and disable authentication (no
+  Pangolin auth / public, no SSO) so requests pass straight through to
+  Traefik → beszel-hub. Dashboard-only change, no repo/IaC involved — but
+  easy to miss since the *routing* half of local-site setup looks correct
+  right up until this auth layer silently intercepts every request.
 
 ## Provisioning (Butane/Ignition)
 
