@@ -638,6 +638,27 @@ subdirectory), so backups made by the old pangolin-edge repo's tasks against
 works before the first `materia-update` run: it pre-creates the volumes with
 the quadlet names and the quadlet units reuse them (`--ignore`).
 
+### iPXE tasks (bare-metal delivery)
+
+Bare-metal servers don't get Ignition via cloud `user_data` — they boot
+from a USB stick with iPXE, which chain-loads a `boot.ipxe` script from
+a temporary HTTP server on the workstation. The `ipxe:*` tasks handle
+the USB firmware + HTTP serving. See `provisioning/BARE-METAL.md` for
+the full runbook.
+
+| Task | Description |
+|---|---|
+| `mise ipxe:download` | Download `ipxe.iso` to cache + print manual `dd` instructions |
+| `mise ipxe:firmware` | Download `ipxe.iso` + `dd` to a USB stick (interactive `gum choose` pick) |
+| `mise ipxe:serve` | Serve `boot.ipxe` + `materia.ign` (or `materia-debug.ign` with `--debug`) via foreground `podman run nginx:alpine` — requires `--server-name` |
+
+`ipxe:serve` discovers the workstation's LAN IP, renders `boot.ipxe`
+with that IP baked into `ignition.config.url`, and maps host `IPXE_PORT`
+(default 8080) → container 80 (nginx listens on 80, not 8080). It resolves
+`provisioning/servers/<name>/materia.ign`, falling back to
+`materia-debug.ign` if the real one doesn't exist yet. Override the
+Flatcar channel/version via `FLATCAR_CHANNEL`/`FLATCAR_VERSION` env vars.
+
 ### Storage Boxes (backups)
 
 `hz:storagebox:*` provisions the Hetzner Storage Box that the

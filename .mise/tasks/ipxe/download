@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+#MISE description="Download iPXE ISO (UEFI+BIOS via CD emulation) and print instructions"
+
+set -euo pipefail
+
+FIRMWARE_URL="https://boot.ipxe.org/ipxe.iso"
+FIRMWARE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/provisioning"
+FIRMWARE_FILE="$FIRMWARE_DIR/ipxe.iso"
+
+mkdir -p "$FIRMWARE_DIR"
+if [[ ! -f "$FIRMWARE_FILE" ]] || [[ "${IPXE_REFRESH:-0}" == "1" ]]; then
+  echo "downloading iPXE ISO from $FIRMWARE_URL ..."
+  curl -L --fail -o "$FIRMWARE_FILE" "$FIRMWARE_URL"
+fi
+
+echo ""
+gum style --foreground 2 "  ✓ iPXE ISO ready: $FIRMWARE_FILE"
+ls -la "$FIRMWARE_FILE"
+echo ""
+
+gum style --bold "── Write it to a USB stick ─────────────────────────────────────────"
+cat <<'EOF'
+  # Pick the USB stick — confirm with lsblk BEFORE dd'ing:
+  lsblk -d -o NAME,SIZE,MODEL,TRAN
+  # Unmount any mounted partitions on it:
+  sudo umount /dev/sdX1 /dev/sdX2 2>/dev/null
+  # Write (replace /dev/sdX with the actual device from lsblk):
+  sudo dd if="$FIRMWARE_FILE" of=/dev/sdX bs=4M status=progress conv=fsync oflag=direct
+  sync && sudo eject /dev/sdX
+
+  Why .iso instead of .efi: the .iso includes its own hybrid MBR + EFI
+  boot sectors so it boots on virtually any UEFI or legacy BIOS via CD
+  emulation. The .efi variant needs the firmware to support direct EFI
+  binary loading from USB, which not all boards do reliably.
+EOF
+echo ""
+
+gum style --bold "── Boot the target box ────────────────────────────────────────────"
+cat <<'EOF'
+  1. Plug the USB stick into the target box; power on.
+  2. Mash the UEFI boot-menu key (Del / F2 / F10 / F12 — varies by board).
+  3. Pick the USB stick from the one-time boot menu.
+  4. iPXE boots and presents a text prompt. Press Ctrl-B if you don't
+     see one within a couple of seconds.
+
+  If the boot menu doesn't show the stick, BIOS settings to check:
+    - Secure Boot: must be OFF (iPXE + Flatcar bootloaders are unsigned).
+    - Boot from USB / Legacy USB support: enabled.
+    - Boot order: USB ahead of the internal disk.
+EOF
+echo ""
+
+gum style --bold "── At the iPXE prompt, type ────────────────────────────────────────"
+cat <<'EOF'
+  iPXE> dhcp                                                # get an IP
+  iPXE> chain http://<LAN-IP>:8080/boot.ipxe               # fetch & run script
+
+  Replace <LAN-IP> with the workstation's LAN IP — same one mise
+  ipxe:serve reports when it starts.
+EOF
+echo ""
+
+gum style --bold "── In another terminal, start the iPXE HTTP server ─────────────────"
+cat <<'EOF'
+  mise ipxe:serve --server-name <name>   # discovers LAN IP, writes boot.ipxe, runs podman nginx:alpine
+
+  Default settings:
+    - serves boot.ipxe + materia.ign (or materia-debug.ign with --debug)
+      on <lan-ip>:8080
+    - Flatcar CDN: https://stable.release.flatcar-linux.net/amd64-usr/current
+    - container is foreground; Ctrl-C stops it
+
+  Override via env vars if needed:
+    FLATCAR_CHANNEL=beta   FLATCAR_VERSION=4722.0.0   mise ipxe:serve --server-name <name>
+    IPXE_PORT=9090                                          mise ipxe:serve --server-name <name>
+EOF
+echo ""
+
+gum style --bold "── Caveat: RAM boot vs disk install ────────────────────────────────"
+cat <<'EOF'
+  The default boot.ipxe runs Flatcar entirely in RAM (no disk write). To
+  actually install to disk, SSH into the RAM-booted Flatcar and run
+  flatcar-install by hand:
+    sudo flatcar-install -d <boot-disk> -i <(curl -s http://<lan-ip>:8080/materia.ign)
+  then reboot. See provisioning/BARE-METAL.md for the full sequence.
+
+  A fully declarative one-boot install (Ignition storage.disks + a
+  self-installing first-boot unit) is a known future improvement, not
+  implemented here.
+EOF
+echo ""
+
+gum style --foreground 10 "Done. Plug the stick, boot the box, then run: mise ipxe:serve --server-name <name>"

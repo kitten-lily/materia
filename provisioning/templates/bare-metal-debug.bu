@@ -1,0 +1,22 @@
+# Butane template for a bare-metal RAM-boot discovery session.
+# Rendered by `mise ign --server-name <n> --debug` into
+# provisioning/servers/<n>/materia-debug.ign.
+#
+# Minimal Ignition: just enough to boot Flatcar entirely in RAM via iPXE
+# and give the `core` user SSH access via the security key. NOTHING ELSE —
+# no LVM, no nftables, no materia quadlet. Used to identify disk device
+# names and NIC names before filling in server.toml's bare_metal.data_disks
+# and rendering the real bare-metal.bu.
+#
+# The ign task fetches the age key + SSH pubkey from Proton Pass regardless
+# (the debug template doesn't reference local: key.txt, but the fetch is
+# harmless and the task does it unconditionally).
+
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - "${CORE_SSH_PUBKEY}"

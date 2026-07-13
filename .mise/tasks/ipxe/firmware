@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Download iPXE ISO and write it to a USB stick (interactive pick)"
+
+set -euo pipefail
+
+FIRMWARE_URL="https://boot.ipxe.org/ipxe.iso"
+FIRMWARE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/provisioning"
+FIRMWARE_FILE="$FIRMWARE_DIR/ipxe.iso"
+
+mkdir -p "$FIRMWARE_DIR"
+if [[ ! -f "$FIRMWARE_FILE" ]]; then
+  echo "downloading iPXE ISO from $FIRMWARE_URL ..."
+  curl -L -o "$FIRMWARE_FILE" "$FIRMWARE_URL"
+fi
+ls -la "$FIRMWARE_FILE"
+echo ""
+
+# Pick a USB stick.
+_choices=$(lsblk -d -o NAME,TRAN -n | awk '$2 == "usb" {print "/dev/" $1}')
+if [[ -z "$_choices" ]]; then
+  echo "error: no USB devices found (lsblk TRAN=usb)" >&2
+  exit 1
+fi
+_target=$(printf '%s\n' "$_choices" | gum choose --header "Write iPXE ISO to which USB stick?")
+[[ -z "$_target" ]] && { echo "aborted." >&2; exit 1; }
+
+# Unmount any partitions on the target first.
+for part in $(lsblk -n -o NAME "$_target" | tail -n +2); do
+  umount "/dev/$part" 2>/dev/null || true
+done
+
+echo ""
+gum style --foreground 3 "  WARNING: this will overwrite the entire USB stick at $_target."
+gum confirm "  Continue?" || { echo "aborted." >&2; exit 1; }
+
+sudo dd if="$FIRMWARE_FILE" of="$_target" bs=4M status=progress conv=fsync oflag=direct
+sync
+sudo eject "$_target"
+echo ""
+gum style --foreground 2 "  ✓ iPXE ISO written to $_target"
+echo ""
+gum style --foreground 8 "  Plug into the target box, enter UEFI boot menu, pick the USB stick."
+gum style --foreground 8 "  At the iPXE prompt:  dhcp  ;  chain http://<lan-ip>:8080/boot.ipxe"
+gum style --foreground 8 "  In another terminal:  mise ipxe:serve --server-name <name>"

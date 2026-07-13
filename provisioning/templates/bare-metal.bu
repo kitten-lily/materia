@@ -1,0 +1,297 @@
+# Butane template for any bare-metal Flatcar server — pure-podman +
+# materia-managed runtime, delivered via iPXE (not cloud user_data).
+# Rendered per-server by `mise ign --server-name <n>` into
+# provisioning/servers/<n>/materia.ign.
+#
+# Same materia/pure-podman baseline as hetzner.bu (explicit hostname,
+# pure-podman sysext symlinks, policy.json, enabled-sysext.conf, Ghostty
+# terminfo, materia config + age key + materia-update quadlet + timer,
+# enable-podman-socket oneshot, core user SSH key). The explicit
+# /etc/hostname write is load-bearing here: bare metal has no cloud
+# metadata service, so without it the box keeps whatever hostname the
+# firmware/dhcp hands out and materia's m_facts "hostname" can't resolve
+# the MANIFEST.toml Hosts.<name> assignment.
+#
+# Two patterns ported from the sibling server-provisioning repo's
+# hosting.bu, generalized away from their kubernetes-specific use:
+#   - LVM data-disk setup (single lv_data, not 4 named k8s LVs)
+#   - nftables closed-firewall posture (default-drop inbound)
+#
+# Substituted at transpile time (via `mise ign`):
+#   - ${SERVER_NAME} → /etc/hostname (load-bearing — no metadata service)
+#   - ${REPO_URL} → materia source repo
+#   - ${CORE_SSH_PUBKEY} → core user authorized_keys
+#   - ${GHOSTTY_TERMINFO_B64} → terminfo blob
+#   - ${HC_PING_URL} → healthchecks slug-mode base URL
+#   - ${DATA_DISKS} → space-separated device list from server.toml's
+#     bare_metal.data_disks (filled in after a discovery boot)
+# Treat the rendered .ign as a SECRET — never commit.
+
+variant: flatcar
+version: 1.1.0
+
+storage:
+  directories:
+    - { path: /etc/materia, mode: 0755 }
+    - { path: /var/lib/materia, mode: 0755 }
+    - { path: /opt/lvm, mode: 0755 }
+    - { path: /etc/nftables.d, mode: 0755 }
+
+  links:
+    # Pure-podman node: disable built-in Docker and containerd sysexts by symlinking
+    # their .raw files to /dev/null. This removes the entire extension (binaries +
+    # systemd units) so no service masking is needed. The -docker/-containerd
+    # syntax in enabled-sysext.conf doesn't work (flatcar/Flatcar#1481).
+    - path: /etc/extensions/docker-flatcar.raw
+      target: /dev/null
+      overwrite: true
+    - path: /etc/extensions/containerd-flatcar.raw
+      target: /dev/null
+      overwrite: true
+
+  files:
+    # Explicit hostname — ties the OS hostname to this server's name, which
+    # materia's m_facts "hostname" macro uses to resolve MANIFEST.toml's
+    # Hosts.<name> assignment. SERVER_NAME is substituted at transpile time.
+    # Load-bearing on bare metal: no cloud metadata service to set it later.
+    - path: /etc/hostname
+      mode: 0644
+      # Flatcar's image ships /etc/hostname; without overwrite Ignition
+      # fails first boot when the existing contents differ.
+      overwrite: true
+      contents:
+        inline: "${SERVER_NAME}\n"
+
+    # Podman requires a policy.json to allow image pulls; Flatcar doesn't ship one.
+    - path: /etc/containers/policy.json
+      mode: 0644
+      contents:
+        inline: |
+          {"default":[{"type":"insecureAcceptAnything"}]}
+
+    # Opt-in first-party Podman sysext (updated with the OS). Docker + containerd
+    # are disabled via /dev/null symlinks above, not via this file.
+    - path: /etc/flatcar/enabled-sysext.conf
+      mode: 0644
+      contents: { inline: "podman\n" }
+
+    # Ghostty terminfo — pre-compiled and base64-encoded in the repo
+    # (provisioning/ghostty.terminfo.b64). Flatcar's /usr is read-only, so
+    # install to /etc (overlay). ncurses checks /etc/terminfo by default.
+    - path: /etc/terminfo/x/xterm-ghostty
+      mode: 0644
+      contents:
+        source: data:;base64,${GHOSTTY_TERMINFO_B64}
+
+    # Materia config — points at this repo, uses SOPS with age backend.
+    # REPO_URL is substituted at transpile time by the ign task.
+    - path: /etc/materia/config.toml
+      mode: 0644
+      contents:
+        inline: |
+          [source]
+          kind = "git"
+          url = "${REPO_URL}"
+
+          attributes = "sops"
+
+          [sops]
+          base_dir = "attributes"
+
+    # Age private key for SOPS vault decryption — baked from Proton Pass.
+    - path: /etc/materia/key.txt
+      mode: 0600
+      contents:
+        local: key.txt
+
+    # Materia quadlet — runs materia rootful containerized, pulls the repo,
+    # templates resources, installs quadlets/configs, manages podman secrets,
+    # and restarts services. Triggered by materia-update.timer.
+    - path: /etc/containers/systemd/materia-update.container
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Materia: quadlet manager
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          Type=oneshot
+          # Dead-man's-switch pings (healthchecks.io slug mode). Leading "-"
+          # keeps a down monitoring endpoint from blocking or failing the
+          # update itself. $$ is systemd escaping - the shell sees $EXIT_STATUS.
+          ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null ${HC_PING_URL}/materia-update-${SERVER_NAME}/start
+          ExecStopPost=-/usr/bin/bash -c 'url="${HC_PING_URL}/materia-update-${SERVER_NAME}"; [ "$$EXIT_STATUS" = "0" ] || url="$$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "$$url"'
+
+          [Container]
+          Image=ghcr.io/stryan/materia:stable
+          ContainerName=materia
+          Exec=update
+
+          Environment=MATERIA_SOURCE__KIND="git"
+          Environment=MATERIA_SOURCE__URL=${REPO_URL}
+          Environment=MATERIA_ATTRIBUTES="sops"
+          Environment=MATERIA_SOPS__BASE_DIR="attributes"
+          Environment=SOPS_AGE_KEY_FILE=/etc/materia/key.txt
+
+          SecurityLabelDisable=true
+          HostName=%q
+          Network=host
+
+          Volume=/etc/materia:/etc/materia
+          Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+          Volume=/run/podman/podman.sock:/run/podman/podman.sock
+          Volume=/var/lib/materia:/var/lib/materia
+          Volume=/etc/containers/systemd:/etc/containers/systemd
+          Volume=/usr/local/bin:/usr/local/bin
+          Volume=/etc/systemd/system:/etc/systemd/system
+
+    # Timer — runs materia update shortly after boot (including first boot,
+    # so a fresh server converges without waiting for the calendar run) and
+    # daily thereafter. For more frequent syncs, shorten OnCalendar or trigger
+    # externally (e.g. via SSH). Plain systemd unit (not a quadlet).
+    - path: /etc/systemd/system/materia-update.timer
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Materia daily update
+
+          [Timer]
+          OnBootSec=2min
+          OnCalendar=*-*-* 05:00:00
+          Unit=materia-update.service
+
+          [Install]
+          WantedBy=timers.target
+
+    # --- LVM data VG setup script (idempotent) ---
+    # Generalized from server-provisioning's hosting.bu: single lv_data LV
+    # (not 4 named k8s LVs), mounted at /var/lib/materia-data. DATA_DISKS is
+    # a space-separated device list substituted from server.toml's
+    # bare_metal.data_disks by the ign task.
+    - path: /opt/lvm/setup-data-vg.sh
+      mode: 0755
+      user:
+        name: root
+      contents:
+        inline: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if vgdisplay vg_data >/dev/null 2>&1; then
+            echo "lvm-data: vg_data already present, nothing to do."
+            exit 0
+          fi
+          # Device list substituted from server.toml's bare_metal.data_disks.
+          # Filled in after a discovery boot identifies the real device names.
+          DEVS=(${DATA_DISKS})
+          for d in "${DEVS[@]}"; do
+            [ -b "$d" ] || { echo "lvm-data: missing block device: $d" >&2; exit 1; }
+          done
+          # Wipe any existing partition table (sgdisk --zap-all) so pvcreate will
+          # accept the whole-disk PV. DO NOT create a new partition — pvcreate
+          # refuses partitioned disks. The whole disk becomes the PV.
+          for d in "${DEVS[@]}"; do
+            sgdisk --zap-all "$d"
+          done
+          pvcreate "${DEVS[@]}"
+          vgcreate vg_data "${DEVS[@]}"
+          # Single data LV using all remaining space.
+          lvcreate -n lv_data -l 100%FREE vg_data
+          # -F forces overwrite of any stale filesystem / LUKS / etc. signature
+          # left over from a previous install (mkfs.ext4 prompts otherwise and
+          # the script has no terminal to answer with).
+          mkfs.ext4 -F -L data "/dev/vg_data/lv_data"
+          uuid=$(blkid -s UUID -o value "/dev/vg_data/lv_data")
+          mkdir -p /var/lib/materia-data
+          echo "UUID=$uuid /var/lib/materia-data ext4 defaults,nofail 0 2" >> /etc/fstab
+          mount -a
+          echo "lvm-data: VG vg_data + lv_data created and mounted at /var/lib/materia-data."
+
+    # --- nftables: default-drop inbound, allow outbound (closed posture) ---
+    # Ported near-verbatim from server-provisioning's hosting.bu (already
+    # generic, no k8s-specifics). Materia-managed services (pangolin, etc.)
+    # are assigned per-host in MANIFEST.toml and reach the network via their
+    # own container networking — this host-level posture stays closed.
+    - path: /etc/nftables.d/closed.conf
+      mode: 0644
+      user:
+        name: root
+      contents:
+        inline: |
+          #!/usr/sbin/nft -f
+          flush ruleset
+          table inet filter {
+            chain input {
+              type filter hook input priority 0; policy drop;
+              ct state established,related accept
+              iif lo accept
+              ip protocol icmp accept
+              ip6 nexthdr icmpv6 accept
+            }
+            chain forward {
+              type filter hook forward priority 0; policy drop;
+            }
+            chain output {
+              type filter hook output priority 0; policy accept;
+            }
+          }
+
+systemd:
+  units:
+    # Enable the materia timer at first boot.
+    - name: materia-update.timer
+      enabled: true
+    # The podman sysext isn't loaded when Ignition processes systemd units,
+    # so `enabled: true` on podman.socket is silently ignored. This oneshot
+    # unit runs after sysexts are merged and enables the socket manually.
+    - name: enable-podman-socket.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Enable podman socket after sysexts are loaded
+        After=systemd-sysext.service
+        Requires=systemd-sysext.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/bin/systemctl enable --now podman.socket
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
+
+    # --- LVM data VG setup (one-shot, idempotent) ---
+    # Same marker-file idiom as server-provisioning's hosting.bu: runs once,
+    # touches /etc/lvm-data.applied so a reboot doesn't re-run the script.
+    - name: lvm-data.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Set up LVM data VG (idempotent)
+        After=local-fs.target
+        ConditionPathExists=!/etc/lvm-data.applied
+        [Service]
+        Type=oneshot
+        ExecStart=/opt/lvm/setup-data-vg.sh
+        ExecStartPost=/usr/bin/touch /etc/lvm-data.applied
+        RemainAfterExit=yes
+        [Install]
+        WantedBy=multi-user.target
+
+    # --- nftables: apply closed-posture rules at boot ---
+    - name: nftables.service
+      enabled: true
+      dropins:
+        - name: closed-posture.conf
+          contents: |
+            [Service]
+            ExecStart=
+            ExecStart=/usr/sbin/nft -f /etc/nftables.d/closed.conf
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - "${CORE_SSH_PUBKEY}"

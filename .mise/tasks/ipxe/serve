@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#MISE description="Serve boot.ipxe + materia.ign via podman for iPXE provisioning. Foreground; Ctrl-C to stop."
+
+#USAGE flag "--server-name <name>" help="Server name (must have provisioning/servers/<name>/materia.ign or materia-debug.ign)"
+#USAGE flag "--debug" help="Serve materia-debug.ign instead of materia.ign (discovery boot)"
+
+set -euo pipefail
+
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_debug="${usage_debug:-}"
+PORT="${IPXE_PORT:-8080}"
+CHANNEL="${FLATCAR_CHANNEL:-stable}"
+VERSION="${FLATCAR_VERSION:-current}"
+FLATCAR_BASE="https://${CHANNEL}.release.flatcar-linux.net/amd64-usr/${VERSION}"
+
+_server_dir="provisioning/servers/${_server_name}"
+_real_ign="${_server_dir}/materia.ign"
+_debug_ign="${_server_dir}/materia-debug.ign"
+
+# Resolve which Ignition file to serve.
+# --debug forces the debug variant; otherwise prefer the real one, falling
+# back to the debug one if the real one hasn't been rendered yet (e.g.
+# data_disks not yet filled in).
+if [[ -n "$_debug" ]]; then
+  if [[ ! -f "$_debug_ign" ]]; then
+    echo "error: $_debug_ign not found — run: mise ign --server-name $_server_name --debug" >&2
+    exit 1
+  fi
+  _ign="$_debug_ign"
+  _served_name="materia-debug.ign"
+elif [[ -f "$_real_ign" ]]; then
+  _ign="$_real_ign"
+  _served_name="materia.ign"
+elif [[ -f "$_debug_ign" ]]; then
+  _ign="$_debug_ign"
+  _served_name="materia-debug.ign"
+  echo "note: $_real_ign not found, falling back to $_debug_ign" >&2
+else
+  echo "error: no Ignition file found in $_server_dir" >&2
+  echo "  run:  mise ign --server-name $_server_name            (real config)" >&2
+  echo "  or:   mise ign --server-name $_server_name --debug    (discovery boot)" >&2
+  exit 1
+fi
+
+# Discover the workstation's default-route LAN IPv4 address (printed so
+# you know what to type at the iPXE prompt).
+lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/ {print $7; exit}')
+if [[ -z "$lan_ip" ]]; then
+  echo "error: no default-route IPv4 address found (is the network up?)" >&2
+  exit 1
+fi
+echo "discovered LAN IP: $lan_ip"
+echo "serving Ignition: $_ign"
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+chmod 0755 "$tmpdir"
+cp "$_ign" "$tmpdir/$_served_name"
+chmod 0644 "$tmpdir/$_served_name"
+
+# boot.ipxe is rendered with the LAN IP baked into ignition.config.url.
+# Always reference materia.ign in the script (the iPXE chain fetches by
+# that name); the actual file in the tmpdir is the resolved one renamed to
+# materia.ign so the chain URL matches regardless of --debug.
+if [[ "$_served_name" == "materia-debug.ign" ]]; then
+  # Also expose it as materia.ign so boot.ipxe's hardcoded URL works.
+  cp "$_ign" "$tmpdir/materia.ign"
+  chmod 0644 "$tmpdir/materia.ign"
+fi
+
+cat > "$tmpdir/boot.ipxe" <<EOF
+#!ipxe
+set base-url ${FLATCAR_BASE}
+kernel \${base-url}/flatcar_production_pxe.vmlinuz initrd=flatcar_production_pxe_image.cpio.gz flatcar.first_boot=1 ignition.config.url=http://${lan_ip}:${PORT}/materia.ign
+initrd \${base-url}/flatcar_production_pxe_image.cpio.gz
+boot
+EOF
+chmod 0644 "$tmpdir/boot.ipxe"
+
+echo ""
+echo "serving:"
+ls -la "$tmpdir"
+echo ""
+echo "  iPXE chain URL:  http://${lan_ip}:${PORT}/boot.ipxe"
+echo "  Ignition URL:    http://${lan_ip}:${PORT}/materia.ign"
+echo ""
+echo "On the target box:"
+echo "  iPXE> dhcp"
+echo "  iPXE> chain http://${lan_ip}:${PORT}/boot.ipxe"
+echo ""
+echo "Troubleshooting if iPXE gets 'connection reset':"
+echo "  - From the workstation:  curl -v http://${lan_ip}:${PORT}/boot.ipxe"
+echo "  - Is podman listening?   ss -tlnp | grep ${PORT}"
+echo "  - Firewall?              sudo iptables -S INPUT"
+echo "  - LAN reachable?         ping ${lan_ip}  (from the target)"
+echo ""
+echo "Press Ctrl-C to stop."
+echo ""
+
+# Bind to 0.0.0.0 instead of the LAN IP specifically — works around
+# rootless-podman host-routing quirks where binding to a specific
+# interface IP can RST connections that arrive via that interface
+# (slirp4netns doesn't always NAT inbound properly to bound IPs).
+# iPXE fetches the LAN IP from boot.ipxe anyway, so the bind address
+# is just for reachability — 0.0.0.0 is fine.
+#
+# Map host PORT → container 80 (nginx:alpine listens on 80 by default,
+# NOT 8080 — mapping 8080:8080 leaves the container's 8080 empty, so
+# podman's forwarder RSTs every connection after TCP handshake).
+exec podman run --rm --name ipxe-serve \
+  -p "${PORT}:80" \
+  -v "${tmpdir}:/usr/share/nginx/html:ro,Z" \
+  docker.io/nginx:alpine
