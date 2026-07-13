@@ -587,6 +587,23 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   wrote to `/etc/nftables.conf` (the path older Flatcar versions use) —
   both left the condition unmet and `nftables.service` was skipped on
   every boot with no error. The closed-posture firewall never applied.
+- **A closed nftables posture must allow podman container traffic in
+  BOTH the `forward` AND `input` chains.** Podman containers route
+  outbound traffic through the `forward` chain (NAT'd by podman), not
+  the `output` chain — so `forward policy drop` with no accept rules
+  breaks all container networking (image pulls, tunnel connections,
+  DNS). Additionally, container DNS queries to the podman bridge gateway
+  (e.g. `10.89.0.1:53`) arrive on the host's bridge interface → `input`
+  chain, not `forward` — so `input policy drop` without a DNS exception
+  causes `lookup: i/o timeout` on every hostname resolution from a
+  container. Fix: in `forward`, accept `ct state established,related` +
+  `ip saddr 10.89.0.0/24` (podman default bridge subnet); in `input`,
+  accept `ip saddr 10.89.0.0/24 udp/tcp dport 53`. **Match by subnet, not
+  interface name** — the podman bridge interface name varies by version
+  (`cni-podman0`, `podman0`, `podman1`, etc.); the subnet (`10.89.0.0/24`)
+  is stable. Confirmed on `bow`: the bridge was named `podman1`, so
+  `iifname { "cni-podman0", "podman0" }` rules silently didn't match.
+  Flutterina (Hetzner) has no nftables, so this only affects bare-metal.
 - **LVM setup-script idempotency must be per-stage, not one big guard.**
   The first `bare-metal.bu` LVM script guarded the entire body with `if
   vgdisplay vg_data; then echo "nothing to do"; exit 0; fi`. A previous
