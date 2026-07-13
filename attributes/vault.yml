@@ -6,6 +6,7 @@
 globals:
     hcPingURL: ENC[AES256_GCM,data:BgXaaGvL3EoxjReNJQvDGZ+/QXcBSLQiXJDx1GSCG+7pXNoTVHJaNvjs,iv:jc401OaHui9svBkd3DpQ/GwnmfvJ8ScF3ElqMqCWfN0=,tag:f1N9jY0BeLcF0SR/BOjXPA==,type:str]
     baseDomain: ENC[AES256_GCM,data:JKdKjVZbUFjP,iv:HGfpqDfp14r8bG9P4zOyVgconHCT1htZbszYb4E1IIE=,tag:a+1ojKKU4iELkqb/meSzvw==,type:str]
+    beszelHubUrl: ENC[AES256_GCM,data:SsuuI0KP9vyP80kruCE91uVLcQhPLHLz,iv:daORCXQom0LARapB1fw0TdGeb1MSfIw03jStOCsBvRc=,tag:WLVgb/avBW4Ki6NMkJTedQ==,type:str]
 components:
     pangolin:
         acmeEmail: ENC[AES256_GCM,data:4FmELQpYofabvkrEFvYRJ6Gt,iv:LQKA1s8HOrf3p57dUdHmdNp/Xcwb0VHJsiGDB13iEmg=,tag:8w5bqbBczZ8JCGEg0JjWCw==,type:str]
@@ -22,7 +23,7 @@ sops:
             MDB3Z/G7kjbXEGEmfxMmUw5AaOJcLXD3PJU2sCrpAxkV1GhmouCJHw==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
-    lastmodified: "2026-07-13T14:50:41Z"
-    mac: ENC[AES256_GCM,data:CkL4MecN+QgWdPJbMKGesqVGClzZnGhJ6sWHlg50g+nN36ata48N6Tv75H7ER7aP1b3OCCrLSCSr2Ww0GGYclGSKb6TqUAmGpXKqNBcVzg5Q/31miKXmXBlaJHxLXHhwif8v7FuGrVlETv0+HeY7MAniozHwyVL7qRg3b+pgO3Q=,iv:xjXSOMUhShCS/yI5of/sM+G/TcbDJh5MdmKOz5xLBus=,tag:ogCZjpZCdUTpNVjMkUZqVQ==,type:str]
+    lastmodified: "2026-07-13T15:22:07Z"
+    mac: ENC[AES256_GCM,data:xCvzx9sZOjoSbCn10Fwz16ZisytMiX9bYDkug2f8k2osMXJ2bY04Ks4cz8MwL4myEU/j9WDAJ4hfwgoZPHvX3BxQS8b0bQXICHx/Z+vbP900pJGMHblmsELofkUWiYIaNcOr25Z5TOMH4GiZrRuysyDLMhRdJ1rcWnVvF/SdnVc=,iv:0SHiHT1umqqKncBpHbueTAqnbQfq9FjopKd2iwi7eW4=,tag:vH0JbCL2eeTIh5hhoet8zg==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.2

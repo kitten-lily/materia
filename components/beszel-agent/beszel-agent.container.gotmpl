@@ -1,0 +1,20 @@
+[Unit]
+Description=Beszel agent
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=beszel-agent
+Image=docker.io/henrygd/beszel-agent:0.18.7@sha256:8874e2c53f9de5e063a6a80d6b617e20fa593ac5dc4eb4c6ce1f912f510f38f8
+Network=host
+Volume=/run/podman/podman.sock:/run/podman/podman.sock:ro
+{{ secretEnv "beszelToken" "TOKEN" }}
+Environment=KEY={{ .beszelKey }}
+Environment=HUB_URL={{ .beszelHubUrl }}
+Environment=SYSTEM_NAME={{ m_facts "hostname" }}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

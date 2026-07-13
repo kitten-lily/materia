@@ -112,14 +112,17 @@ components/
     restic-backup.timer.gotmpl   # attribute-driven schedule (resticOnCalendar)
     ssh_config                   # static /usr/local/etc/ssh_config (sftp SSH options, see BUG-001)
     known_hosts                  # copy of provisioning/storageboxes/<box>/known_hosts
-images/
-  restic-backup/
-    Dockerfile                   # scratch + static restic + static openssh + wrapper
-    wrapper/                     # Go entrypoint: ping, init, backup, forget
   beszel-hub/                    # beszel monitoring hub (standalone, flutterina-only)
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
     beszel-hub.container.gotmpl  # standalone container, port 8090, routed via Pangolin local site
     beszel-data.volume           # named volume for /beszel_data (root-owned, no User=/Group=)
+  beszel-agent/                  # beszel monitoring agent (role-assigned, see below)
+    MANIFEST.toml                # component manifest — Secrets = ["beszelToken"], Defaults, Services
+    beszel-agent.container.gotmpl # Network=host, podman socket mount, connects to hub via public URL
+images/
+  restic-backup/
+    Dockerfile                   # scratch + static restic + static openssh + wrapper
+    wrapper/                     # Go entrypoint: ping, init, backup, forget
 provisioning/
   templates/
     hetzner.bu                  # Butane template for any Hetzner Cloud server
@@ -461,6 +464,29 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   Pangolin health check covers hub-down (which beszel can't self-report),
   beszel's own webhooks cover agent-down (which Pangolin can't see). Both
   are deploy-time dashboard configuration, zero component code. See #24.
+- **Beszel agent bootstrap is a two-step, not-automatable deploy — do not
+  wire `[Roles.base] Components` until secrets exist.** The hub generates
+  `TOKEN` (WebSocket registration) and `KEY` (agent auth) only *after* an
+  admin adds the system in its web UI, but `beszel-agent` is assigned via
+  `[Roles.base]` (same pattern as `restic-backup` — every host gets it for
+  free). If the role assignment lands before `attributes/<server>.yml` has
+  `components.beszel-agent.beszelToken`/`beszelKey`, the next
+  `materia-update` hits the exact same fatal "map has no entry for key"
+  failure as the `baseDomain` incident — one component's missing attribute
+  aborts reconciliation of every component on the host. Sequence: (1) land
+  `components/beszel-agent/` code without touching `[Roles.base]`; (2) hub
+  UI → create admin → add system → get TOKEN/KEY; (3) `sops edit
+  attributes/<server>.yml`, set both values (KEY is not secret — only
+  `beszelToken` is in the component's `Secrets` list); (4) wire
+  `[Roles.base] Components = ["restic-backup", "beszel-agent"]` in the same
+  commit/push as step 3, never before. `HUB_URL` (`https://beszel.<baseDomain>`)
+  is a global attribute (`beszelHubUrl`) since the agent reaches the hub
+  through Pangolin's public TLS endpoint, same as a browser — no inbound
+  port needed on agent hosts. `Network=host` + a read-only
+  `/run/podman/podman.sock` mount give the agent host network stats and
+  container stats; the podman socket is already enabled by every `.bu`
+  template's `enable-podman-socket.service`, so no extra provisioning is
+  needed for it.
 
 ## Provisioning (Butane/Ignition)
 

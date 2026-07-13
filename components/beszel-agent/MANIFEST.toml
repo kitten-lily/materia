@@ -1,0 +1,7 @@
+Secrets = ["beszelToken"]
+
+[Defaults]
+
+[[Services]]
+Service = "beszel-agent.service"
+RestartedBy = ["beszel-agent.container"]
