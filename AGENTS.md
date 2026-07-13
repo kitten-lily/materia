@@ -544,6 +544,26 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   the first implementation used a `closed-posture.conf` dropin redirecting
   to `/etc/nftables.d/closed.conf`, and `nftables.service` was skipped on
   every boot with no error — the closed-posture firewall never applied.
+- **LVM setup-script idempotency must be per-stage, not one big guard.**
+  The first `bare-metal.bu` LVM script guarded the entire body with `if
+  vgdisplay vg_data; then echo "nothing to do"; exit 0; fi`. A previous
+  partial run (VG created, then `lvcreate` failed or was interrupted)
+  left `vg_data` present with **0 LVs** — and every subsequent re-run
+  exited early at the guard, so `lv_data` was never created, no
+  filesystem, no mount, no fstab entry. The `lvm-data.service` marker
+  file (`/etc/lvm-data.applied`, touched by `ExecStartPost`) made it
+  worse: once touched, the `ConditionPathExists=!/etc/lvm-data.applied`
+  gate prevents the service from even *trying* to run again. Confirmed
+  on `bow` (bare-metal, issue #9): `lvm-data.service` showed `active
+  (exited)`, status=0/SUCCESS, log said "vg_data already present,
+  nothing to do" — but `sudo lvs vg_data` returned nothing and
+  `/var/lib/materia-data` didn't exist. Fix: the script now guards each
+  stage independently (VG → LV → mkfs → fstab), so a partial run
+  resumes from where it left off. To recover a box in this state without
+  a re-provision: remove the marker (`sudo rm /etc/lvm-data.applied`),
+  re-run the script (`sudo /opt/lvm/setup-data-vg.sh`), then `sudo
+  systemctl restart lvm-data.service` (or just reboot). The script is
+  safe to run repeatedly.
 
 ## Provisioning (Butane/Ignition)
 

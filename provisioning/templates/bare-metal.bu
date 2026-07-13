@@ -165,11 +165,17 @@ storage:
           [Install]
           WantedBy=timers.target
 
-    # --- LVM data VG setup script (idempotent) ---
+    # --- LVM data VG setup script (idempotent, stage-by-stage) ---
     # Generalized from server-provisioning's hosting.bu: single lv_data LV
     # (not 4 named k8s LVs), mounted at /var/lib/materia-data. DATA_DISKS is
     # a space-separated device list substituted from server.toml's
     # bare_metal.data_disks by the ign task.
+    #
+    # Idempotency is per-stage, not one big guard: a previous partial run
+    # (e.g. VG created, then lvcreate failed) must be able to resume from
+    # where it left off. Guarding the whole script on "vg_data exists" skips
+    # the LV/fs/mount steps when only the VG was created — leaving the VG
+    # present but empty, with no LV, no fs, and no mount, forever.
     - path: /opt/lvm/setup-data-vg.sh
       mode: 0755
       user:
@@ -178,35 +184,53 @@ storage:
         inline: |
           #!/usr/bin/env bash
           set -euo pipefail
-          if vgdisplay vg_data >/dev/null 2>&1; then
-            echo "lvm-data: vg_data already present, nothing to do."
-            exit 0
-          fi
           # Device list substituted from server.toml's bare_metal.data_disks.
           # Filled in after a discovery boot identifies the real device names.
           DEVS=(${DATA_DISKS})
           for d in "${DEVS[@]}"; do
             [ -b "$d" ] || { echo "lvm-data: missing block device: $d" >&2; exit 1; }
           done
-          # Wipe any existing partition table (sgdisk --zap-all) so pvcreate will
-          # accept the whole-disk PV. DO NOT create a new partition — pvcreate
-          # refuses partitioned disks. The whole disk becomes the PV.
-          for d in "${DEVS[@]}"; do
-            sgdisk --zap-all "$d"
-          done
-          pvcreate "${DEVS[@]}"
-          vgcreate vg_data "${DEVS[@]}"
-          # Single data LV using all remaining space.
-          lvcreate -n lv_data -l 100%FREE vg_data
-          # -F forces overwrite of any stale filesystem / LUKS / etc. signature
-          # left over from a previous install (mkfs.ext4 prompts otherwise and
-          # the script has no terminal to answer with).
-          mkfs.ext4 -F -L data "/dev/vg_data/lv_data"
-          uuid=$(blkid -s UUID -o value "/dev/vg_data/lv_data")
+          # Stage 1: create the VG (skip if already present).
+          if ! vgdisplay vg_data >/dev/null 2>&1; then
+            # Wipe any existing partition table (sgdisk --zap-all) so pvcreate
+            # will accept the whole-disk PV. DO NOT create a new partition —
+            # pvcreate refuses partitioned disks. The whole disk becomes the PV.
+            for d in "${DEVS[@]}"; do
+              sgdisk --zap-all "$d"
+            done
+            pvcreate "${DEVS[@]}"
+            vgcreate vg_data "${DEVS[@]}"
+            echo "lvm-data: created VG vg_data."
+          else
+            echo "lvm-data: VG vg_data already present."
+          fi
+          # Stage 2: create the LV (skip if already present).
+          if ! lvdisplay vg_data/lv_data >/dev/null 2>&1; then
+            lvcreate -n lv_data -l 100%FREE vg_data
+            echo "lvm-data: created lv_data."
+          else
+            echo "lvm-data: lv_data already present."
+          fi
+          # Stage 3: format the LV (skip if already ext4).
+          dev="/dev/vg_data/lv_data"
+          if ! blkid "$dev" | grep -q 'TYPE="ext4"'; then
+            # -F forces overwrite of any stale filesystem / LUKS / etc. signature
+            # left over from a previous install (mkfs.ext4 prompts otherwise and
+            # the script has no terminal to answer with).
+            mkfs.ext4 -F -L data "$dev"
+            echo "lvm-data: formatted lv_data as ext4."
+          else
+            echo "lvm-data: lv_data already formatted as ext4."
+          fi
+          # Stage 4: mount (skip if already in fstab).
+          uuid=$(blkid -s UUID -o value "$dev")
           mkdir -p /var/lib/materia-data
-          echo "UUID=$uuid /var/lib/materia-data ext4 defaults,nofail 0 2" >> /etc/fstab
+          if ! grep -q "/var/lib/materia-data" /etc/fstab; then
+            echo "UUID=$uuid /var/lib/materia-data ext4 defaults,nofail 0 2" >> /etc/fstab
+            echo "lvm-data: added fstab entry."
+          fi
           mount -a
-          echo "lvm-data: VG vg_data + lv_data created and mounted at /var/lib/materia-data."
+          echo "lvm-data: VG vg_data + lv_data ready at /var/lib/materia-data."
 
     # --- nftables: default-drop inbound, allow outbound (closed posture) ---
     # Ported near-verbatim from server-provisioning's hosting.bu (already
