@@ -7,3 +7,4 @@ Components = ["restic-backup", "beszel-agent"]
 
 [Hosts.bow]
 Components = []
+Roles = ["base"]
