@@ -1,0 +1,14 @@
+[Unit]
+Description=Beszel hub liveness healthcheck (healthchecks.io dead-man's-switch)
+Wants=network-online.target
+After=network-online.target beszel-hub.service
+
+[Service]
+Type=oneshot
+# Curl the hub's pocketbase /api/health endpoint (returns 200 when the hub is
+# serving). On success ping healthchecks.io (slug beszel-hub-<hostname>); on
+# failure ping /fail. Every ping line carries systemd's "-" failure-tolerance
+# prefix and curl gets -m 10 --retry 5 (the documented healthchecks.io
+# incantation) so a down monitoring endpoint never blocks the healthcheck.
+# Mirrors the ping pattern in provisioning/templates/hetzner.bu (materia-update).
+ExecStart=/usr/bin/bash -c 'hc={{ .hcPingURL }}/beszel-hub-{{ m_facts "hostname" }}; if /usr/bin/curl -fsS -m 10 -o /dev/null http://localhost:8090/api/health; then /usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null "$$hc"; else /usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null "$$hc/fail"; exit 1; fi'

@@ -120,6 +120,8 @@ images/
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
     beszel-hub.container.gotmpl  # standalone container, port 8090, routed via Pangolin local site
     beszel-data.volume           # named volume for /beszel_data (root-owned, no User=/Group=)
+    beszel-hub-healthcheck.service.gotmpl # oneshot: curl /api/health, ping healthchecks.io
+    beszel-hub-healthcheck.timer.gotmpl   # 5-min dead-man's-switch timer for the hub
 provisioning/
   templates/
     hetzner.bu                  # Butane template for any Hetzner Cloud server
@@ -426,6 +428,22 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   "install but don't start" complexity of conditional resource rendering —
   materia has no native conditional-rendering mechanism. See
   `specs/plans/issue-20-beszel-monitoring.md`.
+- **Monitoring the monitor: beszel hub has an external dead-man's-switch.**
+  Beszel is itself the alerting system, so a silently-dead hub would leave
+  the whole fleet blind with no alarm. The hub's liveness is checked by an
+  *external* systemd timer (`beszel-hub-healthcheck.timer`, every 5 min) that
+  curls the hub's pocketbase `/api/health` endpoint on `localhost:8090` and
+  pings healthchecks.io (`beszel-hub-<hostname>` slug, using the shared
+  `hcPingURL` vault attribute) on success / `/fail` on non-200 — same
+  `-`prefix + `curl -fsS -m 10 --retry 5` ping convention as `materia-update`
+  in `hetzner.bu`. The service is `Stopped=true` + `Oneshot=true` (timer-
+  activated, never auto-started, non-zero exit not a materia failure) — same
+  pattern as `restic-backup.service`. Agent-down alerts, by contrast, are
+  handled *inside* beszel via its native Shoutrrr webhook notifications
+  (configured in the hub UI, Settings > Notifications, not IaC — beszel
+  stores them in its DB). The split is deliberate: the external timer covers
+  hub-down (which beszel can't self-report), beszel's own webhooks cover
+  agent-down (which the external timer can't see). See #24.
 
 ## Provisioning (Butane/Ignition)
 

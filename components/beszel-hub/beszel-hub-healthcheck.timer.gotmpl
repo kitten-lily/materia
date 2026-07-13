@@ -1,0 +1,13 @@
+[Unit]
+Description=Beszel hub liveness healthcheck timer
+
+[Timer]
+# Every 5 minutes — a dead-man's-switch cadence independent of the hub's
+# own process lifecycle. healthchecks.io check period should match (5 min)
+# with a grace of ~2-3 periods.
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=beszel-hub-healthcheck.service
+
+[Install]
+WantedBy=timers.target
