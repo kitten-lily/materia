@@ -276,6 +276,13 @@ storage:
             }
             chain forward {
               type filter hook forward priority 0; policy drop;
+              # Allow podman container outbound traffic — containers route
+              # through the forward chain (not output), so policy drop here
+              # breaks all container networking (DNS, image pulls, tunnel
+              # connections). Allow established connections and traffic
+              # from podman bridge interfaces (cni-podman0, etc.).
+              ct state established,related accept
+              iifname { "cni-podman0", "podman0" } accept
             }
             chain output {
               type filter hook output priority 0; policy accept;
