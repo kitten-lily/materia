@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#MISE description="Verify components/restic-backup/known_hosts is in sync with provisioning/storageboxes/*/known_hosts"
+#USAGE flag "--fix" help="Copy the source-of-truth over the component file instead of just checking (writes to disk)"
+
+set -euo pipefail
+
+_component_file="components/restic-backup/known_hosts"
+_source_glob="provisioning/storageboxes/*/known_hosts"
+
+shopt -s nullglob
+_sources=( $_source_glob )
+shopt -u nullglob
+
+if [[ ${#_sources[@]} -eq 0 ]]; then
+  echo "check: no storagebox known_hosts sources found (${_source_glob}) — nothing to verify"
+  echo "       (if you expected some, run: mise hz:storagebox:keyscan --box-name <name>)"
+  exit 0
+fi
+
+# Build the union of every provisioning source-of-truth known_hosts.
+# restic-backup is role-assigned to every server, and different servers may
+# back up to different Storage Boxes — the component copy needs to cover all
+# of them, not just one box. `sort -u` dedups and normalizes ordering so the
+# comparison is order-independent.
+_temp="$(mktemp)"
+trap 'rm -f "$_temp"' EXIT
+cat "${_sources[@]}" | sort -u > "$_temp"
+
+if [[ ! -f "$_component_file" ]]; then
+  echo "check: $_component_file missing — the component has no known_hosts to verify"
+  if [[ "${usage_fix:-}" == "1" ]]; then
+    echo "fix: writing source union to $_component_file"
+    install -m 0644 "$_temp" "$_component_file"
+    exit 0
+  fi
+  exit 1
+fi
+
+if diff -q "$_temp" "$_component_file" >/dev/null; then
+  echo "check: $_component_file in sync with ${#_sources[@]} storagebox source(s)"
+  echo "       sources: ${_sources[*]}"
+  exit 0
+fi
+
+echo "check: DRIFT — $_component_file does not match the union of storagebox known_hosts"
+echo "       (this is the flagged-pairing gap from AGENTS.md — no tooling enforced it before)"
+echo
+echo "sources (${#_sources[@]}):"
+for s in "${_sources[@]}"; do echo "  - $s"; done
+echo
+echo "diff (source union → component):"
+diff -u "$_component_file" "$_temp" || true
+echo
+if [[ "${usage_fix:-}" == "1" ]]; then
+  echo "fix: copying source union over $_component_file"
+  install -m 0644 "$_temp" "$_component_file"
+  exit 0
+fi
+echo "to fix: mise check:known-hosts --fix   (or run manually, then commit)"
+exit 1

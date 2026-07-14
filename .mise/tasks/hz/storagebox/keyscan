@@ -47,3 +47,4 @@ fi
 
 gum style --foreground 2 "==> wrote $(wc -l < "$_out") host key entries to $_out"
 gum style --foreground 3 "==> commit this file — #2's restic-backup component installs it for StrictHostKeyChecking=yes"
+gum style --foreground 3 "==> then sync the component copy: mise check:known-hosts --fix   (CI gates this)"

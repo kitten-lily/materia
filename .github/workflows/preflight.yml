@@ -1,0 +1,64 @@
+# .github/workflows/preflight.yml
+name: preflight
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  known-hosts-drift:
+    name: known_hosts drift check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Verify components/restic-backup/known_hosts is in sync with
+      # provisioning/storageboxes/*/known_hosts — the flagged-pairing gap
+      # from AGENTS.md. A stale copy caused restic-backup host-key failures
+      # on bow (issue #34). Same logic as `mise check:known-hosts`, inline
+      # so CI doesn't need the full mise toolchain.
+      - name: known_hosts drift check
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sources=( provisioning/storageboxes/*/known_hosts )
+          shopt -u nullglob
+
+          if [[ ${#sources[@]} -eq 0 ]]; then
+            echo "no storagebox known_hosts sources found — nothing to verify"
+            exit 0
+          fi
+
+          component_file="components/restic-backup/known_hosts"
+          if [[ ! -f "$component_file" ]]; then
+            echo "::error::$component_file missing — the component has no known_hosts"
+            echo "fix locally: mise check:known-hosts --fix"
+            exit 1
+          fi
+
+          # Union + sort -u for order-independent comparison.
+          union="$(mktemp)"
+          cat "${sources[@]}" | sort -u > "$union"
+          trap 'rm -f "$union"' EXIT
+
+          if diff -q "$union" "$component_file" >/dev/null; then
+            echo "OK — $component_file in sync with ${#sources[@]} storagebox source(s)"
+            exit 0
+          fi
+
+          echo "::error::$component_file does not match the union of storagebox known_hosts"
+          echo "this is the flagged-pairing drift from AGENTS.md — a stale copy"
+          echo "caused restic-backup host-key failures on bow (issue #34)"
+          echo
+          echo "diff (component → source union):"
+          diff -u "$component_file" "$union" || true
+          echo
+          echo "fix locally: mise check:known-hosts --fix   (then commit)"
+          exit 1

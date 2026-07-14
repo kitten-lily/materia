@@ -513,7 +513,19 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   time) and `known_hosts` (`components/restic-backup/known_hosts`, mirrors
   `provisioning/storageboxes/<box>/known_hosts` refreshed by `mise
   hz:storagebox:keyscan`). If either upstream value rotates, update both
-  copies manually.
+  copies manually. **`known_hosts` drift is now CI-gated**
+  (`.github/workflows/preflight.yml`'s `known-hosts-drift` job, equivalent
+  to `mise check:known-hosts`): a PR that updates a storagebox source
+  without refreshing the component copy fails preflight. Run
+  `mise check:known-hosts --fix` after `hz:storagebox:keyscan` to copy the
+  union of all box sources into the component file (the keyscan task now
+  prints this reminder). `hcPingURL` has no such check — it mirrors an
+  external Proton Pass field this repo can't read at CI time — so it stays
+  a true manual pairing. The `known_hosts` drift bug bit `bow` once
+  (issue #34's follow-on): the sub2 subaccount was added to the source
+  (`622ee5e`) but the component copy (committed `aa8688a`) was never
+  refreshed, so restic-backup failed host-key verification on every run
+  until #34's nftables fix unblocked the egress path and surfaced it.
 - **Beszel hub is a standalone container, not in `pangolin.pod`.** The hub
   runs outside the pod's shared network namespace and is routed to the public
   internet via Newt tunnel (on flutterina: Newt + beszel-hub share the
