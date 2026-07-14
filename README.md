@@ -1,6 +1,6 @@
 # Materia Podman Orchestration Repository
 
-![Materia Update: Flutterina](https://healthchecks.io/b/2/932329f0-9fb1-4db3-8de5-b4373e977d68.svg)
+![materia](https://healthchecks.io/badge/275e26c5-7cfd-482b-ad60-1c459f/wAZlLEmn/materia.svg) ![backup](https://healthchecks.io/badge/275e26c5-7cfd-482b-ad60-1c459f/oGzwBG-c/backup.svg)
 
 GitOps source of truth for Podman-hosted services, managed by
 [Materia](https://primamateria.systems/). See `AGENTS.md` for the full design,
