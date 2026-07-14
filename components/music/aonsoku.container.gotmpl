@@ -1,0 +1,32 @@
+[Unit]
+Description=Aonsoku (Navidrome/Subsonic web client)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=aonsoku
+Image=ghcr.io/victoralvesf/aonsoku:latest@sha256:9bdfc8f1d7f462c7f4da90e70598696057ab765972f4b6a7f09f6f85ef1a2460
+
+# Join newt-net — reachable by Newt as "aonsoku:8080" for the
+# music.<baseDomain> resource. Standalone container (no pod).
+Network=newt-net
+
+# Aonsoku config per user spec:
+# - HIDE_SERVER=true: hide the server URL field on login (server is fixed)
+# - SERVER_URL: navidrome's PUBLIC URL (https://navidrome.<baseDomain>).
+#   Aonsoku is a browser SPA — its JS runs in the user's browser, so it
+#   must reach navidrome's public endpoint, not a container-internal
+#   address. Composed from baseDomain (public URL, not a secret).
+# - SERVER_TYPE=navidrome: navidrome-specific behavior
+# APP_USER/APP_PASSWORD intentionally NOT set — .env.example warns the
+# password is compromised on publicly-exposed instances; users log in
+# via the form with their navidrome credentials.
+Environment=HIDE_SERVER=true
+Environment=SERVER_URL=https://navidrome.{{ .baseDomain }}
+Environment=SERVER_TYPE=navidrome
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

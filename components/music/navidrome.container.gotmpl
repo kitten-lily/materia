@@ -1,0 +1,36 @@
+[Unit]
+Description=Navidrome music server
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=navidrome
+Image=docker.io/deluan/navidrome:0.63.2@sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40
+
+# Join newt-net so Newt (on bow via [Roles.tunneled]) reaches navidrome
+# by container name "navidrome:4533" for the navidrome.<baseDomain> resource.
+# Container name resolution only works on named networks, not the default
+# bridge — same reason beszel-hub and newt itself use Network=newt-net.
+# Standalone container (no pod) — aonsoku is a browser SPA that reaches
+# navidrome by its public URL, not via a shared localhost namespace.
+Network=newt-net
+
+# Music library — read-only bind mount from bow's LVM data disk.
+# /var/lib/materia-data is created by bare-metal.bu's lvm-data.service.
+# :ro,z — read-only + SELinux shared relabel (matches old compose + restic).
+Volume=/var/lib/materia-data/Music:/music:ro,z
+
+# Navidrome persistent data (DB, cache) — named volume, root-owned image.
+Volume=navidrome-data.volume:/data:z
+
+# Explicit music folder path — the default --musicfolder=music resolves
+# relative to the data dir, but we bind to /music, so set it explicitly.
+Environment=ND_MUSICFOLDER=/music
+Environment=ND_ENABLEINSIGHTSCOLLECTOR=false
+Environment=ND_LOGLEVEL=info
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

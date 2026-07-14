@@ -1,0 +1,9 @@
+[Defaults]
+
+[[Services]]
+Service = "navidrome.service"
+RestartedBy = ["navidrome.container"]
+
+[[Services]]
+Service = "aonsoku.service"
+RestartedBy = ["aonsoku.container"]

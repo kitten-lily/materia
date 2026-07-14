@@ -154,6 +154,11 @@ components/
     newt.network                 # named podman network for tunnel-reachable services
     newt-config.volume           # named volume for Newt's provisioned id/secret
     blueprint.gotmpl             # provisioning blueprint (imperative, applied once at first boot)
+  music/                        # Navidrome music server + Aonsoku web client (standalone, bow-only)
+    MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
+    navidrome.container.gotmpl    # Navidrome server, joins newt-net, read-only /music bind, navidrome.<baseDomain>
+    aonsoku.container.gotmpl      # Aonsoku web client, joins newt-net, SERVER_URL=navidrome public URL, music.<baseDomain>
+    navidrome-data.volume         # named volume for /data (DB, cache; root-owned, no User=/Group=)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper

@@ -1,0 +1,5 @@
+# Named volume for navidrome application data (/data — DB, cache).
+# The deluan/navidrome image runs as root (alpine-based), so no
+# User=/Group= here — unlike letsencrypt.volume which sets them for the
+# minimus traefik. See beszel-data.volume for the same root-image pattern.
+[Volume]
