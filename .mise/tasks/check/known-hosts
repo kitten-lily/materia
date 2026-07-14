@@ -21,7 +21,11 @@ fi
 # restic-backup is role-assigned to every server, and different servers may
 # back up to different Storage Boxes — the component copy needs to cover all
 # of them, not just one box. `sort -u` dedups and normalizes ordering so the
-# comparison is order-independent.
+# comparison is order-independent. LC_ALL=C forces byte ordering so the
+# normalized form is stable across sort implementations and locales (GNU vs
+# uutils coreutils disagree on where '#' sorts vs '[' under UTF-8 locales —
+# this bit CI on the first run, issue #34's follow-on).
+export LC_ALL=C
 _temp="$(mktemp)"
 trap 'rm -f "$_temp"' EXIT
 cat "${_sources[@]}" | sort -u > "$_temp"
