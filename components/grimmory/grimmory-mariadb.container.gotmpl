@@ -1,0 +1,32 @@
+[Unit]
+Description=Grimmory MariaDB
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=grimmory-mariadb
+Image=reg.mini.dev/mariadb:12.3.2@sha256:93bfc249cf987c7fb62fc99900d3e20e3697c23fa562a419559d07df73bf1c9d
+# Join newt-net so the grimmory app reaches it by container name
+# "grimmory-mariadb:3306" (DATABASE_URL in grimmory.container.gotmpl).
+# Same named-network requirement as the app. No PublishPort — 3306 is
+# reachable only by name on newt-net, never published to the host.
+Network=newt-net
+Environment=TZ=Etc/UTC
+# Minimus mariadb uses the official MARIADB_* env convention, NOT the
+# linuxserver MYSQL_* names upstream's compose used (which are silently
+# ignored on this image, leaving the DB uninitialized). Translation
+# required by the image switch from lscr.io/linuxserver/mariadb.
+Environment=MARIADB_DATABASE=grimmory
+Environment=MARIADB_USER=grimmory
+{{ secretEnv "mariadbRootPassword" "MARIADB_ROOT_PASSWORD" }}
+{{ secretEnv "grimmoryDbPassword" "MARIADB_PASSWORD" }}
+# /var/lib/mysql is the official MariaDB data dir (NOT /config, the
+# linuxserver convention upstream's compose used — second translation
+# required by the minimus switch).
+Volume=grimmory-mariadb-config.volume:/var/lib/mysql:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

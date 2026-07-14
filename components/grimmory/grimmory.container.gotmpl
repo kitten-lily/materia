@@ -1,0 +1,54 @@
+[Unit]
+Description=Grimmory app
+Wants=network-online.target
+After=network-online.target
+# Start ordering only — quadlet Requires=/After= order unit starts, not
+# container readiness. The app relies on its own DB-connection retry
+# (Spring Boot/HikariCP backoff) to tolerate mariadb still initializing
+# after the unit starts but before it accepts connections. If it
+# crash-loops on cold start instead of retrying, add Restart=on-failure
+# + RestartSec to [Service] (manifest-only tweak, no redesign). See
+# specs/plans/issue-30-grimmory.md.
+Requires=grimmory-mariadb.service
+After=grimmory-mariadb.service
+
+[Container]
+ContainerName=grimmory
+Image=ghcr.io/grimmory-tools/grimmory:v3.2.4@sha256:dfa7afdfcf25d649fd664497a62385dd00cd9678c37546e182c172e41c8e80cb
+# Join newt-net so Newt (on bow via [Roles.tunneled]) reaches grimmory
+# by container name "grimmory:6060" for the grimmory.<baseDomain>
+# resource, AND so the app can reach the mariadb sidecar by container
+# name "grimmory-mariadb:3306" (DATABASE_URL below). Container name
+# resolution only works on named networks, not the default bridge — same
+# reason beszel-hub, navidrome, aonsoku, and newt itself use
+# Network=newt-net. Standalone container (no pod) — the music component
+# pattern, not the pangolin.pod pattern (no Gerbil CGNAT reachability
+# requirement, so the shared-namespace pod is unnecessary).
+Network=newt-net
+Environment=USER_ID=1000
+Environment=GROUP_ID=1000
+Environment=TZ=Etc/UTC
+Environment=DATABASE_URL=jdbc:mariadb://grimmory-mariadb:3306/grimmory
+Environment=DATABASE_USERNAME=grimmory
+{{ secretEnv "grimmoryDbPassword" "DATABASE_PASSWORD" }}
+# App settings, cache, logs — named volume (data-dir-drift gotcha:
+# the materia data dir is fully managed, runtime state needs a named
+# volume so it isn't deleted as drift on the next run).
+Volume=grimmory-data.volume:/app/data:z
+# Books library — writable bind mount from bow's LVM data disk (same
+# pattern as navidrome's /music bind). Large durable media belongs on
+# /var/lib/materia-data (created by bare-metal.bu's lvm-data.service),
+# not a podman named volume on root storage. :z (writable, SELinux
+# shared) — grimmory writes metadata/covers into the library.
+# Pre-create on bow before first materia update:
+#   sudo mkdir -p /var/lib/materia-data/Books
+#   sudo chown 1000:1000 /var/lib/materia-data/Books
+Volume=/var/lib/materia-data/Books:/books:z
+# Auto-import folder — named volume (small runtime state).
+Volume=grimmory-bookdrop.volume:/bookdrop:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

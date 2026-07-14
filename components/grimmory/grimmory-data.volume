@@ -1,0 +1,7 @@
+# Named volume for grimmory app data (/app/data — settings, cache, logs).
+# The grimmory image drops to UID 1000 via su-exec (USER_ID/GROUP_ID env),
+# so the volume is created with matching ownership — per the minimus
+# UID-1000 gotcha (podman named volumes are root-owned by default).
+[Volume]
+User=1000
+Group=1000

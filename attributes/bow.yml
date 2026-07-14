@@ -8,6 +8,9 @@ components:
         beszelKey: ENC[AES256_GCM,data:lQ92Xcv9NmMXv2euvrI5sbx0c26nlCEYzT7Zq4CkL4YoLVk9NhIrChl8Kr7S36xDkl/LDFLEaRqUjw1Hw0FZ4qNAMgw94y9NPcJXt0CsYHY=,iv:I5en2dP5yGI8KqHTSXTUaMFPApegMVEfEUxDcJItFGU=,tag:ceTjCCOomLYtUkyD9o1ObQ==,type:str]
     newt:
         newtProvisioningKey: ENC[AES256_GCM,data:+bid458r0XXloDeD8GCuMAAuL5164rF9SqA+zob+J47o3tMIX2qe9a19iWS7mmXrWBCbtWgjhhbvWbX9,iv:5mgeTQm9TJAe/hF/HlcZRzeRhQ3C2qbGJrP1KKeo4KM=,tag:DvYUZIasr94JHR6CQWDXyw==,type:str]
+    grimmory:
+        grimmoryDbPassword: ENC[AES256_GCM,data:8yhICb0Gm/62nIsC20eFd4kC5CaRnttqSscU/IlQcOc=,iv:l7n+1ghWBfqIAg/UdUJ+ZzZMx4iykgztN3B/PGKvFAQ=,tag:XU5w+QbZL1Q3MySxoeUDwA==,type:str]
+        mariadbRootPassword: ENC[AES256_GCM,data:KTdgWK8oyzn1bWlmA7H5blaRyR73SZrQk7G6dHPzJYM=,iv:g1UMCMKWDIBel8RlGGIgbMjjHhdIEWLZeQcnNMvU8E8=,tag:hRL2sLhDY5nHvFEzk+hS4g==,type:str]
 sops:
     age:
         - enc: |
@@ -19,7 +22,7 @@ sops:
             TjkDZIzUsCpO9n4JHkqZB24KMiRsVJcVLrr3sxUVyU1vlcFgtE3yzA==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
-    lastmodified: "2026-07-13T19:06:38Z"
-    mac: ENC[AES256_GCM,data:lHjYIcx+IHZXqWi93t7wUsAtbWtx3WX1cX9DrQORLkguCQEzFErf/+dnfSmg/lOCJBPQTHNBuiykZtjDrJKaAppLfgltioEgW0+BxPDzKrtllbilVmoy96DC8FEMkNlacIn6BWUKp1Td6YhTn1jRXGzhxWIdMFLUE5x7Dp2DFyQ=,iv:+ecbf+HsJLFh+cI/vtAzxEVAgYOfkP5AC1ymHI8otqU=,tag:Vkn9BtFCHeHUJJIvOsN9HA==,type:str]
+    lastmodified: "2026-07-14T20:12:17Z"
+    mac: ENC[AES256_GCM,data:T1IdEjDKBXOVsmu1OAkaK1WPLMKMwz9N6LJMNdpNd2NyovjI4uSCXPxV182X3NSLzeIfXihT+1JEPq7LkU17TmGwwWe6qT/5IPjQX1SnQwQyFsDUmF9k1AgkDbcf96bFSwApXO61NkP9A8b08+5U4pbQtLR2pcTxuqWqbK7/VCM=,iv:dk6YJ+JjKlQ2p+lHowkfciEQ4kuBRo+QxIcBabRAZdY=,tag:MH3tA8p+PhLS/j0HI3jlpQ==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.2

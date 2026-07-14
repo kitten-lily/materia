@@ -9,5 +9,5 @@ Components = ["restic-backup", "beszel-agent"]
 Components = ["newt"]
 
 [Hosts.bow]
-Components = ["music"]
+Components = ["music", "grimmory"]
 Roles = ["base", "tunneled"]

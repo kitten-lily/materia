@@ -2,119 +2,161 @@
 
 **issue:** https://github.com/kitten-lily/materia/issues/30
 **risk:** P2 (adds a new self-contained component; no changes to existing
-services; exposed via Pangolin's own resource system, same pattern as
-beszel-hub)
+services; exposed via Newt tunnel on `newt-net`, same pattern as the music
+component — no host port exposure at all)
 **epic:** standalone
+**host:** bow (bare-metal, `[Roles.tunneled]` — newt-net
+already present; same host as the music component)
 
 ## Summary
 
 Add [Grimmory](https://grimmory.org) — a self-hosted library manager for
 ebooks, comics, and audiobooks — as a materia component on flutterina.
 Grimmory ships upstream as a two-service Docker Compose stack (app +
-MariaDB); this plan translates that to Materia's pod + quadlet + SOPS
-secrets model.
+MariaDB); this plan translates that to Materia's quadlet + SOPS secrets
+model using **two standalone containers on `newt-net`** (the music/beszel-hub
+pattern), not a pod.
 
-## Architecture decisions
+## Architecture decisions (locked)
 
-### Component structure: one component, two containers, one pod
+### No pod — two standalone containers on `newt-net`
 
-Unlike beszel (split into `beszel-hub` + `beszel-agent` because they run
-on different hosts/roles), Grimmory's app and database both belong on the
-same host and need to talk to each other constantly — a single
+The original draft proposed a dedicated `grimmory.pod` (app + mariadb
+sharing localhost) + `PublishPort=6060` + a Pangolin local-site resource.
+**Revised**: use the established `newt-net` pattern instead — two
+standalone containers, both joining `newt-net`, no pod, no `PublishPort`.
+This is strictly better on every axis the pod approach traded on:
+
+- **No host port exposure.** `PublishPort=6060` is gone entirely —
+  eliminates the "unauthenticated 6060 exposure window" risk class the
+  original draft flagged (same class as beszel-hub #22's port 8090).
+  Newt reaches grimmory by container name `grimmory:6060` for the
+  `grimmory.<baseDomain>` resource, same as `navidrome:4533`,
+  `aonsoku:8080`, `beszel-hub:8090`.
+- **app↔mariadb uses container-name DNS**, not localhost:
+  `DATABASE_URL=jdbc:mariadb://grimmory-mariadb:3306/grimmory`. This is
+  actually **closer to upstream's compose** (`mariadb:3306`) than the
+  localhost translation the pod would have required — a named podman
+  network is the compose-DNS equivalent (confirmed in AGENTS.md:
+  "Container name resolution only works on named networks").
+- **Precedent**: `components/music/` (navidrome + aonsoku, both standalone
+  on `newt-net`, no pod). This is the established pattern for any non-edge
+  service on a `[Roles.tunneled]` host. The pod was only ever needed for
+  `pangolin.pod` (Gerbil's CGNAT tunnel IP reachability) — a constraint
+  that doesn't apply here.
+- **No local-site resource, no podman bridge gateway target.** The
+  original draft's Pangolin UI step (local-site + resource pointing at the
+  host IP / bridge gateway) is replaced by a Newt-tunnel resource
+  (`grimmory.<baseDomain>` → `grimmory:6060`), configured in the Pangolin
+  dashboard — same flow as the music resources on bow.
+
+flutterina is already in `[Roles.tunneled]` (runs newt), so `newt-net`
+already exists on the host.
+
+### Component structure: one component, two containers
+
+Unlike beszel (split into `beszel-hub` + `beszel-agent` because they run on
+different hosts/roles), Grimmory's app and database both belong on the same
+host and need to talk to each other constantly — a single
 `components/grimmory/` component containing both quadlets, mirroring how
-`pangolin` bundles three containers in one component.
+`pangolin` bundles three containers and `music` bundles two.
 
-### Pod: dedicated `grimmory.pod`, not `pangolin.pod`
+### Image provenance (resolved)
 
-Upstream's `docker-compose.yml` connects the app to the database via
-Docker's compose-network DNS (`DATABASE_URL=jdbc:mariadb://mariadb:3306/grimmory`).
-Materia/podman quadlets have no equivalent — this repo's pattern for
-inter-container communication is a shared pod network namespace, where
-containers reach each other over `localhost` (documented in AGENTS.md:
-"Containers reach each other over localhost. In a pod, all containers
-share one network namespace.").
+All three open image questions from the original draft are resolved:
 
-**Chosen approach:** a dedicated `grimmory.pod`, not a join to
-`pangolin.pod`. Two independent concerns:
-- `pangolin.pod` membership is locked to the three containers that need
-  Gerbil's CGNAT tunnel-endpoint routing (Traefik→Gerbil IP reachability).
-  Grimmory has no such requirement.
-- Putting an unrelated app in the edge pod's shared namespace would be
-  the same isolation mistake explicitly avoided for beszel-hub ("a
-  misbehaving hub could affect the gateway" — same reasoning applies to
-  any non-edge service).
+- **App**: `ghcr.io/grimmory-tools/grimmory:v3.2.4@sha256:dfa7afdfcf25d649fd664497a62385dd00cd9678c37546e182c172e41c8e80cb`
+  — GHCR over Docker Hub for pull reliability (no anonymous rate limits
+  from flutterina's Hetzner IP). Both registries serve the identical index
+  digest; GHCR chosen. v3.2.4 is the latest stable (2026-07-01). Renovate's
+  existing `quadlet` manager (extended to `.gotmpl`) will track it.
+- **MariaDB**: `reg.mini.dev/mariadb:12.3.2@sha256:93bfc249cf987c7fb62fc99900d3e20e3697c23fa562a419559d07df73bf1c9d`
+  — minimus image (user's choice), non-root UID 1000. Same registry host
+  as the existing traefik pin (`reg.mini.dev/traefik:3.7.7`). The minimus
+  registry uses auth realm `auth.mini.dev` (not Docker Hub / GHCR) —
+  podman pulls it fine (anonymous token from `auth.mini.dev`), but note
+  the auth path if a pull ever fails to authenticate.
 
-`DATABASE_URL` becomes `jdbc:mariadb://localhost:3306/grimmory` (was
-`mariadb:3306` upstream) — the single required translation from the
-compose file. Only port 6060 (the app) is published at the pod level;
-3306 (mariadb) stays internal to the pod's namespace, never published.
+### UID/GID: 1000 for both (resolved)
 
-### Exposure: Pangolin local site + resource, same pattern as beszel-hub
+- **App**: grimmory's entrypoint (`packaging/docker/entrypoint.sh`) reads
+  `USER_ID`/`GROUP_ID` (default 1000) and drops privs via
+  `su-exec "$USER_ID:$GROUP_ID"` — the linuxserver PUID/PGID convention,
+  not a baked-in non-root `USER`. Set `USER_ID=1000`/`GROUP_ID=1000` env.
+- **MariaDB**: minimus runs as non-root UID 1000 by default (per minimus
+  docs + the AGENTS.md minimus gotcha). No `PUID`/`PGID` env needed — that
+  was a linuxserver-image convention; minimus is already non-root.
+- → All three named volumes (plus the books bind-mount dir on the
+  host) get `User=1000`/`Group=1000` — per the minimus UID-1000 gotcha
+  (podman named volumes are root-owned by default, and the data-disk
+  subdirectory must be owned by UID 1000 so the `su-exec`-dropped app
+  can write). No `User=`/`Group=` on the container definitions.
 
-Grimmory's web UI needs to be reachable from outside the LAN (personal
-library access). Following the beszel-hub precedent (#20/#22): the
-`grimmory.pod` publishes port 6060 on the host, and a Pangolin **local
-site + resource** (`grimmory.<baseDomain>`) is configured manually in the
-Pangolin UI, pointing at the host's address (or podman bridge gateway
-IP) on port 6060. This gets TLS + auth automatically via Pangolin's own
-Traefik — no `dynamic_config.yml.gotmpl` changes.
+### MariaDB env: `MARIADB_*`, not `MYSQL_*` (translation from upstream)
 
-**Same known risk as beszel-hub #22:** publishing 6060 with
-`PublishPort=6060:6060` binds `0.0.0.0` on the host, because Pangolin
-(running inside `pangolin.pod`'s own network namespace) cannot reach a
-`127.0.0.1`-bound host port — it needs the host IP or the podman bridge
-gateway. This exposes 6060 without TLS until the Pangolin resource is
-configured. Mitigation options carried over from #22's resolution:
-either accept the exposure window during setup (short-lived, manual
-step), or add a Hetzner Cloud Firewall rule scoped to the setup period.
-Resolved at deploy time, not in IaC — flag in `AGENTS.md`.
-
-### Named volumes for all app-writable state
-
-Per the data-dir-drift gotcha (`AGENTS.md`), the materia data dir
-(`{{ m_dataDir "grimmory" }}`) is fully managed — anything not installed
-by materia is drift and gets deleted on the next run. All four of
-upstream's bind-mount directories are runtime-writable, so all four
-become named volumes instead of data-dir bind mounts:
-
-- `grimmory-data.volume` → `/app/data` (app settings, cache, logs)
-- `grimmory-books.volume` → `/books` (library storage)
-- `grimmory-bookdrop.volume` → `/bookdrop` (auto-import folder)
-- `mariadb-config.volume` → `/config` (MariaDB data files)
+Upstream's compose uses `MYSQL_ROOT_PASSWORD`/`MYSQL_DATABASE`/`MYSQL_USER`/
+`MYSQL_PASSWORD` because it used the linuxserver mariadb image (which
+accepts `MYSQL_*`). **Minimus mariadb uses the official MariaDB
+convention** — `MARIADB_ROOT_PASSWORD`, `MARIADB_USER`, `MARIADB_PASSWORD`,
+`MARIADB_DATABASE`. This is a required translation; `MYSQL_*` env vars are
+silently ignored on the minimus image, leaving the DB uninitialized.
 
 ### Secrets: DB password + MariaDB root password via `secretEnv`
 
 - `grimmoryDbPassword` — shared between the app (`DATABASE_PASSWORD` env)
-  and mariadb (`MYSQL_PASSWORD` env) — same value, two `secretEnv` calls
+  and mariadb (`MARIADB_PASSWORD` env) — same value, two `secretEnv` calls
   referencing the same declared secret name.
-- `mariadbRootPassword` — mariadb `MYSQL_ROOT_PASSWORD` only.
+- `mariadbRootPassword` — mariadb `MARIADB_ROOT_PASSWORD` only.
 - Both declared in the component manifest's top-level `Secrets = [...]`
-  (must appear before any `[Table]` header — see the TOML-ordering
-  gotcha in `AGENTS.md`).
-- Non-secret: `DB_USER`/`MYSQL_USER` (e.g. `grimmory`), `MYSQL_DATABASE`
-  (`grimmory`), `USER_ID`/`GROUP_ID`/`PUID`/`PGID` (`1000`), `TZ`,
-  `BOOKLORE_PORT` (`6060` — upstream's env var name; artifact of
-  Grimmory being a Booklore-derived fork, not a naming choice we control).
+  (must appear before any `[Table]` header — see the TOML-ordering gotcha).
+- Stored in `attributes/bow.yml` (host-specific vault — grimmory is
+  bow-only, single component, so no global hoisting needed per the
+  attribute-scoping gotcha). The age key lives in Proton Pass
+  (`fnox.toml` `SOPS_AGE_KEY`), resolved via `fnox exec` — not available
+  locally without a Proton Pass session.
 
-### Startup ordering: compose `depends_on: condition: service_healthy` → quadlet HealthCmd + Requires/After
+### Startup ordering: `Requires=`/`After=` + app retry (decided)
 
-Docker Compose blocks the app container from starting until mariadb's
-healthcheck passes. Quadlets have no direct equivalent — `Requires=`/
-`After=` order unit *starts*, not container *readiness*. This repo
-already solved an analogous problem for pangolin's `app`→`gerbil`/
-`traefik` ordering: `Notify=healthy` + `HealthCmd` so systemd dependents
-wait until the upstream service actually serves.
+Docker Compose blocks the app until mariadb's healthcheck passes; quadlets
+have no direct equivalent (`Requires=`/`After=` order unit *starts*, not
+container *readiness*). **Decision**: `Requires=mariadb.service` +
+`After=mariadb.service` on the app for start ordering, rely on the app's
+own DB-connection retry (Spring Boot/HikariCP retries with backoff; the
+container's `Restart=always` restarts it if it does crash on cold start).
+Simplest option; matches the plan's recommendation.
 
-**Plan:** give the mariadb container `HealthCmd=mariadb-admin ping -h
-localhost` (matches upstream's own healthcheck). Give the grimmory app
-container `Requires=mariadb.service` + `After=mariadb.service` for start
-ordering, and rely on the app's own connection-retry behavior (most JVM
-apps like this retry DB connections with backoff rather than crash-loop
-on first failure) to tolerate mariadb still initializing after the unit
-starts but before the DB is actually accepting connections. **Needs
-verification during implementation** — if the app crash-loops instead of
-retrying, add `Restart=on-failure` with a short `RestartSec` on the app
-service as a fallback.
+**Flag for implementation**: verify at first `materia update` that the app
+doesn't crash-loop before mariadb accepts connections. If it does, the fix
+is `Restart=on-failure` + `RestartSec` on the app service — a manifest-only
+tweak, no architecture change. Not pre-emptively added (don't fix what
+isn't broken yet).
+
+### MariaDB healthcheck: omitted (decided)
+
+The minimus mariadb image runs as non-root UID 1000. Upstream's compose
+healthcheck (`mariadb-admin ping -h localhost`) worked on the linuxserver
+image because it ran as root and could auth via the local unix socket. On
+minimus, UID 1000 can't do that without credentials
+(`mariadb-admin ping -u grimmory -p$MARIADB_PASSWORD`). **Decision**: omit
+the mariadb `HealthCmd` entirely for now — the grimmory app already ships a
+built-in `HEALTHCHECK` (`wget /api/v1/healthcheck`), beszel-agent already
+monitors container health on bow (beszel-agent is role-assigned to
+  `[Roles.base]`, and bow has `Roles = ["base", "tunneled"]`), and the
+  app's retry handles transient DB unavailability. Can add an adapted
+  healthcheck (`mariadb-admin ping ... -u grimmory -p$$MARIADB_PASSWORD`)
+  later if beszel/alerting needs DB-level health visibility.
+
+### Exposure + auth: Newt tunnel + Pangolin SSO
+
+- `grimmory.<baseDomain>` resource via Newt tunnel (target `grimmory:6060`
+  by container name on `newt-net`), configured in the Pangolin dashboard.
+  Same flow as the music resources on bow.
+- **Pangolin's default Platform SSO auth on public resources is desirable
+  here** (unlike beszel-agent #23's WebSocket, which the 302 redirect
+  broke). Grimmory is a human-facing web UI accessed in a browser —
+  authenticating through Pangolin SSO before reaching the app adds a
+  layer, then the user hits Grimmory's own setup wizard / login. **Do not
+  disable auth** on the `grimmory.<baseDomain>` resource.
 
 ## Files to create / modify
 
@@ -131,48 +173,45 @@ Service = "grimmory.service"
 RestartedBy = ["grimmory.container"]
 
 [[Services]]
-Service = "mariadb.service"
-RestartedBy = ["mariadb.container"]
-```
-
-**`grimmory.pod`:**
-```ini
-[Unit]
-Description=Grimmory library pod
-Wants=network-online.target
-After=network-online.target
-
-[Pod]
-PodName=grimmory
-PublishPort=6060:6060
-
-[Service]
-Restart=always
-
-[Install]
-WantedBy=multi-user.target default.target
+Service = "grimmory-mariadb.service"
+RestartedBy = ["grimmory-mariadb.container"]
 ```
 
 **`grimmory.container.gotmpl`:**
 ```ini
 [Unit]
 Description=Grimmory app
-Requires=mariadb.service
-After=mariadb.service
+Wants=network-online.target
+After=network-online.target
+Requires=grimmory-mariadb.service
+After=grimmory-mariadb.service
 
 [Container]
 ContainerName=grimmory
-Pod=grimmory.pod
-Image=<registry>/grimmory/grimmory:<pinned-tag>@sha256:<digest>
+Image=ghcr.io/grimmory-tools/grimmory:v3.2.4@sha256:dfa7afdfcf25d649fd664497a62385dd00cd9678c37546e182c172e41c8e80cb
+# Join newt-net so Newt (on bow via [Roles.tunneled]) reaches
+# grimmory by container name "grimmory:6060" for the
+# grimmory.<baseDomain> resource, AND so the app can reach the mariadb
+# sidecar by container name "grimmory-mariadb:3306". Container name
+# resolution only works on named networks, not the default bridge — same
+# reason beszel-hub, navidrome, aonsoku, and newt itself use
+# Network=newt-net. Standalone container (no pod) — the music component
+# pattern, not the pangolin.pod pattern.
+Network=newt-net
 Environment=USER_ID=1000
 Environment=GROUP_ID=1000
 Environment=TZ=Etc/UTC
-Environment=DATABASE_URL=jdbc:mariadb://localhost:3306/grimmory
+Environment=DATABASE_URL=jdbc:mariadb://grimmory-mariadb:3306/grimmory
 Environment=DATABASE_USERNAME=grimmory
-Environment=BOOKLORE_PORT=6060
 {{ secretEnv "grimmoryDbPassword" "DATABASE_PASSWORD" }}
 Volume=grimmory-data.volume:/app/data:z
-Volume=grimmory-books.volume:/books:z
+# Books library — writable bind mount from bow's LVM data disk (same
+# pattern as navidrome's /music bind). Large durable media belongs on
+# /var/lib/materia-data, not a podman named volume on root storage.
+# :z (writable, SELinux shared) — grimmory writes metadata/covers into
+# the library. Pre-create on bow: sudo mkdir -p /var/lib/materia-data/Books
+# && sudo chown 1000:1000 /var/lib/materia-data/Books
+Volume=/var/lib/materia-data/Books:/books:z
 Volume=grimmory-bookdrop.volume:/bookdrop:z
 
 [Service]
@@ -182,27 +221,27 @@ Restart=always
 WantedBy=multi-user.target default.target
 ```
 
-**`mariadb.container.gotmpl`:**
+**`grimmory-mariadb.container.gotmpl`:**
 ```ini
 [Unit]
 Description=Grimmory MariaDB
+Wants=network-online.target
+After=network-online.target
 
 [Container]
 ContainerName=grimmory-mariadb
-Pod=grimmory.pod
-Image=lscr.io/linuxserver/mariadb:<pinned-tag>@sha256:<digest>
-Environment=PUID=1000
-Environment=PGID=1000
+Image=reg.mini.dev/mariadb:12.3.2@sha256:93bfc249cf987c7fb62fc99900d3e20e3697c23fa562a419559d07df73bf1c9d
+# Join newt-net so the grimmory app reaches it by container name
+# "grimmory-mariadb:3306" (DATABASE_URL above). Same named-network
+# requirement. No PublishPort — 3306 is reachable only by name on
+# newt-net, never published to the host.
+Network=newt-net
 Environment=TZ=Etc/UTC
-Environment=MYSQL_DATABASE=grimmory
-Environment=MYSQL_USER=grimmory
-{{ secretEnv "mariadbRootPassword" "MYSQL_ROOT_PASSWORD" }}
-{{ secretEnv "grimmoryDbPassword" "MYSQL_PASSWORD" }}
-Volume=mariadb-config.volume:/config:z
-HealthCmd=mariadb-admin ping -h localhost
-HealthInterval=5s
-HealthTimeout=5s
-HealthRetries=10
+Environment=MARIADB_DATABASE=grimmory
+Environment=MARIADB_USER=grimmory
+{{ secretEnv "mariadbRootPassword" "MARIADB_ROOT_PASSWORD" }}
+{{ secretEnv "grimmoryDbPassword" "MARIADB_PASSWORD" }}
+Volume=grimmory-mariadb-config.volume:/var/lib/mysql:z
 
 [Service]
 Restart=always
@@ -211,23 +250,27 @@ Restart=always
 WantedBy=multi-user.target default.target
 ```
 
-Note: no `[Install]` conflict between pod and containers — same pattern
-as pangolin (pod carries `PublishPort`, member containers reference
-`Pod=grimmory.pod` and carry no `PublishPort` of their own).
+Note: minimus mariadb's data dir is `/var/lib/mysql` (official MariaDB
+convention), **not** `/config` (the linuxserver convention the upstream
+compose used). This is the second translation required by switching to
+minimus.
 
-**`grimmory-data.volume`, `grimmory-books.volume`, `grimmory-bookdrop.volume`, `mariadb-config.volume`:**
+**`grimmory-data.volume`, `grimmory-bookdrop.volume`,
+`grimmory-mariadb-config.volume`:**
 ```ini
 [Volume]
 User=1000
 Group=1000
 ```
-(Both images run as non-root via `USER_ID`/`GROUP_ID`/`PUID`/`PGID` env
-mapping rather than a baked-in non-root `USER`, but the volumes still
-need matching ownership so the mapped UID can write — verify against the
-actual image's runtime UID during implementation, same caution as the
-minimus UID-1000 gotcha.)
+(The minimus UID-1000 gotcha: podman named volumes are root-owned by
+default; `User=`/`Group=` on the `.volume` quadlet creates them with the
+right ownership so the non-root containers can write. Verify the actual
+runtime UID against the images during implementation — the entrypoint's
+`USER_ID`/`GROUP_ID` default is 1000, and minimus is UID 1000, so this
+should match, but confirm with `podman inspect` after first pull if any
+volume permission errors appear.)
 
-### 2. `attributes/flutterina.yml` — DB secrets
+### 2. `attributes/bow.yml` — DB secrets
 
 ```yaml
 components:
@@ -235,102 +278,106 @@ components:
         grimmoryDbPassword: <encrypted>
         mariadbRootPassword: <encrypted>
 ```
+Set via `fnox exec -- sops --set ...` (age key resolved from Proton Pass)
+or `fnox exec -- sops edit attributes/bow.yml` — the age key is not
+available locally without a Proton Pass session. Generate strong
+passwords (e.g. `openssl rand -base64 24`) and inject programmatically
+with `jq -Rs` to avoid any copy-paste corruption (per the BUG-003
+convention, though these are simple strings, not multi-line keys).
 
 ### 3. `MANIFEST.toml` — wire the component
 
 ```toml
-[Hosts.flutterina]
-Components = ["pangolin", "beszel-hub", "grimmory"]
-Roles = ["base"]
+[Hosts.bow]
+Components = ["music", "grimmory"]
+Roles = ["base", "tunneled"]
 ```
+(bow already has `Roles = ["base", "tunneled"]` — newt-net and the newt
+client are already present; music is already assigned there.)
 
-### 4. Pangolin UI configuration (manual, one-time)
+### 4. Pangolin UI configuration (manual, one-time, deploy-time)
 
-Same flow as beszel-hub (#20's step 6):
-1. Create/reuse the existing **Local Site**.
-2. Add a **public resource** `grimmory.<baseDomain>` with target
-   `<flutterina-ip>:6060` (or the podman bridge gateway IP).
-3. Add a DNS record for `grimmory.<domain>`.
-4. Visit `https://grimmory.<domain>` → run Grimmory's own setup wizard
-   (admin account creation) → create a library pointing at `/books`.
+Same flow as the music resources on bow:
+1. Add a **public resource** `grimmory.<baseDomain>` with target
+   `grimmory:6060` (container name on `newt-net` — Newt resolves it).
+2. Add a DNS record for `grimmory.<domain>`.
+3. **Keep Pangolin's default Platform SSO auth enabled** on the resource
+   (do NOT disable it — unlike beszel-agent #23's WebSocket, this is a
+   human-facing web UI; SSO before reaching the app is desirable).
+4. Visit `https://grimmory.<domain>` → authenticate via Pangolin SSO →
+   run Grimmory's setup wizard (admin account creation) → create a
+   library pointing at `/books`.
 
 ### 5. `AGENTS.md` — document the component
 
-Add to the repo layout, plus gotchas covering:
-- `grimmory.pod` and the `mariadb:3306` → `localhost:3306` translation
-  (compose-network DNS has no pod equivalent)
-- The `HealthCmd` + `Requires=`/`After=` startup-ordering approach and
-  its "needs verification" caveat
-- Named volumes for all four app-writable directories (data-dir-drift
-  gotcha applies to any component with runtime-writable state, not just
-  pangolin)
+Add to the repo layout (the `components/grimmory/` entry), plus gotchas
+covering:
+- **`newt-net` for both app↔mariadb AND Newt↔app routing** — the named
+  network gives container-name DNS for both paths, eliminating the need
+  for a pod's shared localhost. `DATABASE_URL` uses the mariadb container
+  name (`grimmory-mariadb:3306`), closer to upstream compose than a
+  localhost translation would be.
+- **`MARIADB_*` env, not `MYSQL_*`** — minimus mariadb uses the official
+  MariaDB env convention; the linuxserver image's `MYSQL_*` names are
+  silently ignored. Required translation when switching from the upstream
+  compose's linuxserver image to minimus.
+- **minimus mariadb data dir is `/var/lib/mysql`, not `/config`** — the
+  second translation required by the image switch (linuxserver used
+  `/config`).
+- **No `PublishPort`, no local-site resource** — the newt-net pattern
+  eliminates the port-exposure risk class entirely. No `mise
+  hz:podman-gateway` target needed.
+- **Pangolin SSO auth kept on** — contrast with beszel-agent #23 (which
+  needed auth disabled for the WebSocket handshake). Grimmory is
+  human-facing; the SSO layer is desirable.
 
 ### 6. `renovate.json5` — verify (likely no change)
 
-The existing `quadlet` manager already matches all `.container.gotmpl`
-files via `managerFilePatterns`. Both new images need versioned tags
-(not `latest`) before Renovate can track them — resolve the image-pinning
-open question first (see below), then verify Renovate picks up both on
-the first scheduled run via the Dependency Dashboard.
+The existing `quadlet` manager (extended to match `.gotmpl` files) should
+pick up both new pinned images. Verify on the next scheduled Renovate run
+via the Dependency Dashboard:
+- `ghcr.io/grimmory-tools/grimmory:v3.2.4@sha256:...`
+- `reg.mini.dev/mariadb:12.3.2@sha256:...`
 
-## Open questions (must resolve before implementation)
-
-- **Image registry + pinned tag for `grimmory/grimmory`.** The marketing
-  site's compose example uses `grimmory/grimmory:latest` with no visible
-  versioned-tag documentation. Repo convention is pinned digests, no
-  `AutoUpdate=registry` (see "Pinned image digests" in AGENTS.md's locked
-  architecture decisions). Check the upstream GitHub repo
-  (`grimmory-tools/grimmory`) releases/tags and registry (Docker Hub vs
-  GHCR) before writing the `.container.gotmpl`.
-- **MariaDB image tag.** Upstream's example pins `lscr.io/linuxserver/mariadb:11.4.5`
-  — confirm this is still current and grab its digest at implementation
-  time (`docker:pinDigests` in `renovate.json5` will keep the digest
-  fresh once pinned; the tag itself needs a human bump via Renovate PR
-  when a new MariaDB minor/major is desired).
-- **Runtime UID for the app image.** Need to confirm at implementation
-  time whether `grimmory/grimmory` actually maps `USER_ID`/`GROUP_ID` to
-  file ownership the way linuxserver.io's `PUID`/`PGID` convention does,
-  or whether it needs `User=`/`Group=` at the container level instead of
-  (or in addition to) the `.volume` files.
-- **Health-gating verification.** Confirm the app tolerates mariadb not
-  yet accepting connections at `Requires=`/`After=` unit-start time
-  (retry-with-backoff vs crash-loop). If it crash-loops, add
-  `Restart=on-failure` + `RestartSec` to the app service as a fallback —
-  no IaC redesign needed, just a manifest tweak.
+If the minimus registry (`reg.mini.dev`) isn't recognized by Renovate's
+default registry list, add a `registryAliases` entry — but the existing
+traefik pin on `reg.mini.dev` suggests it's already handled (verify it's
+actually being tracked, not just present).
 
 ## Implementation steps
 
-1. Resolve the open questions above (registry, tags, digests, UID
-   mapping) — likely requires pulling both images locally and inspecting.
-2. Create `components/grimmory/` (MANIFEST.toml, pod, two containers,
-   four volumes) with pinned digests.
-3. Add `grimmoryDbPassword` + `mariadbRootPassword` to
-   `attributes/flutterina.yml` (`sops edit`).
-4. Wire `MANIFEST.toml`: add `grimmory` to `Hosts.flutterina Components`.
-5. `materia update` on flutterina → pod + both containers start; verify
-   mariadb health passes before the app container is considered up.
-6. In Pangolin UI: add `grimmory.<domain>` local-site resource, target
-   `<flutterina-ip>:6060`.
-7. Add DNS record for `grimmory.<domain>`.
-8. Visit the URL, run Grimmory's setup wizard, create the admin account
-   and first library.
-9. Update `AGENTS.md`.
-10. Verify Renovate picks up both new images on the next scheduled run.
+1. Create `components/grimmory/` (MANIFEST.toml, two containers, four
+   volumes) with the pinned digests above.
+2. Generate DB passwords + add `grimmoryDbPassword` +
+   `mariadbRootPassword` to `attributes/bow.yml` (`fnox exec -- sops
+   --set` with generated values, or `fnox exec -- sops edit` for manual).
+3. Wire `MANIFEST.toml`: add `grimmory` to `Hosts.bow Components`.
+4. `materia update` on bow → both containers start on `newt-net`;
+   verify the app connects to mariadb by container name and doesn't
+   crash-loop (the startup-ordering flag above).
+5. In Pangolin UI: add `grimmory.<domain>` resource, target
+   `grimmory:6060`, keep SSO auth enabled.
+6. Add DNS record for `grimmory.<domain>`.
+7. Visit the URL, authenticate via Pangolin SSO, run Grimmory's setup
+   wizard, create the admin account and first library pointing at
+   `/books`.
+8. Update `AGENTS.md`.
+9. Verify Renovate picks up both new images on the next scheduled run.
 
 ## Risks
 
-- **Port 6060 exposed on the host** (same class of risk as beszel-hub
-  #22's port 8090 exposure) — unauthenticated access to Grimmory's setup
-  wizard / login page until the Pangolin resource + any firewall rule are
-  in place. Time-box the exposure window; consider a Hetzner Cloud
-  Firewall rule scoped to 6060 during initial setup only.
 - **Startup ordering may need a fallback.** If `Requires=`/`After=`
-  ordering alone isn't sufficient (app crash-loops before mariadb is
-  ready to accept connections), the fix is a manifest-only change
-  (`Restart=on-failure`), not an architecture change — low risk, flagged
-  above.
-- **Image provenance unconfirmed.** Unlike beszel (upstream on Docker Hub
-  with clear semver tags, confirmed via GitHub source), Grimmory's exact
-  registry/tag/digest needs to be resolved from the actual upstream repo
-  before any `.container.gotmpl` can be written — this plan intentionally
-  leaves those as placeholders rather than guessing.
+  ordering alone isn't sufficient (app crash-loops before mariadb is ready
+  to accept connections), the fix is a manifest-only change
+  (`Restart=on-failure` + `RestartSec`), not an architecture change —
+  low risk, flagged above.
+- **minimus mariadb data dir.** If `/var/lib/mysql` is wrong for this
+  image version, the DB won't persist — verify with `podman inspect` +
+  a write test after first `materia update`. The official MariaDB
+  convention is `/var/lib/mysql`; minimus follows it, but confirm.
+- **Pangolon SSO intercepting setup wizard.** If the first-time setup
+  wizard can't be reached through Pangolon's SSO redirect (e.g. the
+  wizard makes unauthenticated API calls that the SSO layer blocks),
+  temporarily disable auth on the resource, complete setup, re-enable.
+  Low likelihood — the wizard is browser-driven, same as the rest of
+  the UI.

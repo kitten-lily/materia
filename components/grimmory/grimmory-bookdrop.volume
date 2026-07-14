@@ -1,0 +1,5 @@
+# Named volume for grimmory bookdrop folder (/bookdrop — auto-import).
+# Same UID-1000 ownership rationale as grimmory-data.volume.
+[Volume]
+User=1000
+Group=1000

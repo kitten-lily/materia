@@ -1,0 +1,11 @@
+Secrets = ["grimmoryDbPassword", "mariadbRootPassword"]
+
+[Defaults]
+
+[[Services]]
+Service = "grimmory.service"
+RestartedBy = ["grimmory.container"]
+
+[[Services]]
+Service = "grimmory-mariadb.service"
+RestartedBy = ["grimmory-mariadb.container"]

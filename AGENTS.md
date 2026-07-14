@@ -159,6 +159,13 @@ components/
     navidrome.container.gotmpl    # Navidrome server, joins newt-net, read-only /music bind, navidrome.<baseDomain>
     aonsoku.container.gotmpl      # Aonsoku web client, joins newt-net, SERVER_URL=navidrome public URL, music.<baseDomain>
     navidrome-data.volume         # named volume for /data (DB, cache; root-owned, no User=/Group=)
+  grimmory/                     # Grimmory ebook/comic/audiobook library + MariaDB sidecar (standalone, bow-only)
+    MANIFEST.toml                # component manifest — Secrets (grimmoryDbPassword, mariadbRootPassword), Services
+    grimmory.container.gotmpl     # Grimmory app, joins newt-net, /books bind from LVM data disk, grimmory.<baseDomain>
+    grimmory-mariadb.container.gotmpl # Minimus MariaDB sidecar, joins newt-net, no PublishPort, MARIADB_* env
+    grimmory-data.volume          # named volume for /app/data (UID 1000)
+    grimmory-bookdrop.volume      # named volume for /bookdrop (UID 1000)
+    grimmory-mariadb-config.volume # named volume for /var/lib/mysql (UID 1000)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
@@ -889,6 +896,48 @@ are printed once — store them in Proton Pass (both are resettable via
 `<server>-password` field per subaccount. Subaccounts have no
 API-side SSH keys; `install-ssh-key` writes `<home>/.ssh/authorized_keys`
 in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
+
+- **Grimmory: two standalone containers on `newt-net`, not a pod.** Unlike
+  `pangolin.pod` (which exists so Traefik can reach Gerbil's CGNAT tunnel
+  IPs), the grimmory app + MariaDB sidecar have no shared-namespace
+  requirement — they reach each other by **container name**
+  (`grimmory-mariadb:3306`) on the named `newt-net` network, and Newt
+  reaches the app by container name (`grimmory:6060`) for the
+  `grimmory.<baseDomain>` resource. This is the same pattern as the
+  `music` component (navidrome + aonsoku, both standalone on `newt-net`,
+  no pod). No `PublishPort` at all — port 6060 is never bound on the
+  host, eliminating the port-exposure risk class that beszel-hub #22
+  and the original grimmory draft (a dedicated `grimmory.pod` with
+  `PublishPort=6060`) carried. A named podman network is the
+  compose-DNS equivalent — `DATABASE_URL=jdbc:mariadb://grimmory-mariadb:3306/grimmory`
+  is closer to upstream's compose (`mariadb:3306`) than a localhost
+  translation would be. Container name resolution only works on named
+  networks, not the default bridge — the same reason every
+  tunnel-reachable service in this repo uses `Network=newt-net`.
+- **Minimus MariaDB uses `MARIADB_*` env, not `MYSQL_*`; data dir is
+  `/var/lib/mysql`, not `/config`.** Upstream's grimmory compose used
+  the linuxserver mariadb image (`lscr.io/linuxserver/mariadb`), which
+  accepts `MYSQL_ROOT_PASSWORD`/`MYSQL_DATABASE`/`MYSQL_USER`/
+  `MYSQL_PASSWORD` and stores data in `/config`. The minimus mariadb
+  image (`reg.mini.dev/mariadb`) follows the **official** MariaDB
+  convention: `MARIADB_ROOT_PASSWORD`/`MARIADB_USER`/`MARIADB_PASSWORD`/
+  `MARIADB_DATABASE` env, data in `/var/lib/mysql`. The `MYSQL_*` env
+  vars are **silently ignored** on minimus, leaving the DB
+  uninitialized with no error (the app then fails with a connection
+  refusal). Both are required translations when switching from the
+  linuxserver image to minimus — flagged here so a future contributor
+  copying from upstream's compose doesn't carry over the wrong names.
+  The minimus registry is `reg.mini.dev` (auth realm `auth.mini.dev`,
+  not Docker Hub / GHCR) — same host as the pinned traefik image.
+- **Pangolin SSO auth is kept ON for grimmory (unlike beszel-agent
+  #23).** Grimmory is a human-facing web UI accessed in a browser —
+  authenticating through Pangolin's default Platform SSO before
+  reaching the app adds a layer, then the user hits Grimmory's own
+  setup wizard / login. Do NOT disable auth on the
+  `grimmory.<baseDomain>` resource. This is the opposite of
+  beszel-agent, where Pangolon's SSO redirect (302 to the login page)
+  broke the headless WebSocket handshake — Grimmory's browser-driven
+  UI completes that flow fine.
 
 ## Development conventions
 
