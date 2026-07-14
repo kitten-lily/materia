@@ -622,17 +622,47 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   the `output` chain — so `forward policy drop` with no accept rules
   breaks all container networking (image pulls, tunnel connections,
   DNS). Additionally, container DNS queries to the podman bridge gateway
-  (e.g. `10.89.0.1:53`) arrive on the host's bridge interface → `input`
-  chain, not `forward` — so `input policy drop` without a DNS exception
-  causes `lookup: i/o timeout` on every hostname resolution from a
-  container. Fix: in `forward`, accept `ct state established,related` +
-  `ip saddr 10.89.0.0/24` (podman default bridge subnet); in `input`,
-  accept `ip saddr 10.89.0.0/24 udp/tcp dport 53`. **Match by subnet, not
-  interface name** — the podman bridge interface name varies by version
-  (`cni-podman0`, `podman0`, `podman1`, etc.); the subnet (`10.89.0.0/24`)
-  is stable. Confirmed on `bow`: the bridge was named `podman1`, so
-  `iifname { "cni-podman0", "podman0" }` rules silently didn't match.
-  Flutterina (Hetzner) has no nftables, so this only affects bare-metal.
+  arrive on the host's bridge interface → `input` chain, not `forward`
+  — so `input policy drop` without a DNS exception causes `lookup: i/o
+  timeout` on every hostname resolution from a container. **Match by
+  subnet, not interface name** — the podman bridge interface name varies
+  by version (`cni-podman0`, `podman0`, `podman1`, etc.); subnets are
+  stable. Flutterina (Hetzner) has no nftables, so this only affects
+  bare-metal.
+- **"The" podman bridge subnet is not one subnet — the default bridge
+  and every named network each get their own, from different pools.**
+  The nftables fix above originally hardcoded a single subnet
+  (`10.89.0.0/24`), discovered by inspecting `bow`'s routing table and
+  assumed to be "the podman default bridge subnet." It wasn't: confirmed
+  via `podman network inspect podman` that the actual **default** bridge
+  (network name `podman`, interface `podman0`, used by any container with
+  no explicit `Network=`) is hardcoded to **`10.88.0.0/16`**.
+  `10.89.0.0/24` (interface `podman1`) belonged to `newt-net` — a *named*
+  network, which draws from a separate default pool that starts at
+  `10.89.0.0/24` and increments per network created
+  (containers-common's `default_subnet_pools`). Because `newt` happened
+  to be the network under test, the fix looked complete (newt's traffic
+  passed) while silently leaving the default bridge uncovered. Confirmed
+  broken on `bow` (issue #34, found while investigating #31):
+  `restic-backup` runs on the default bridge with no `Network=` override,
+  so every DNS query, SSH connection, and healthchecks.io ping from that
+  container was dropped by the `input`/`forward` chains' default-drop
+  policy on every single run, while `newt` worked fine the whole time.
+  Fix: match a set covering both allocation ranges —
+  `ip saddr { 10.88.0.0/16, 10.89.0.0/16 } udp dport 53 accept` (and the
+  `forward` chain's `ip saddr { 10.88.0.0/16, 10.89.0.0/16 } accept`) —
+  `10.88.0.0/16` for the default bridge, `10.89.0.0/16` (not just the one
+  `/24` in use today) for every named network's auto-allocated block, so
+  adding another named network later doesn't need another nftables edit.
+  Any new component that creates its own named podman network on
+  bare-metal should double check its subnet falls inside `10.89.0.0/16`
+  (podman's default pool) before assuming this nftables rule already
+  covers it — an explicit `subnet=` on a `.network` quadlet could still
+  fall outside it.
+  **Butane changes don't reach a running host** (see below) — this fix
+  needs a hand-edit of `/etc/nftables/rules/main.nft` +
+  `systemctl restart nftables` on any bare-metal box provisioned before
+  this fix landed, not just a repo commit.
 - **LVM setup-script idempotency must be per-stage, not one big guard.**
   The first `bare-metal.bu` LVM script guarded the entire body with `if
   vgdisplay vg_data; then echo "nothing to do"; exit 0; fi`. A previous

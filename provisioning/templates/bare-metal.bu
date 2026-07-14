@@ -275,28 +275,44 @@ storage:
               tcp dport 22 accept
               # DNS from podman containers — the podman bridge's built-in
               # DNS resolver (dnsname plugin) listens on the bridge gateway
-              # IP (e.g. 10.89.0.1:53). Container DNS queries arrive on the
-              # host's podman bridge interface → INPUT chain, not FORWARD.
-              # Without this, containers can't resolve any hostname.
-              # The interface name varies by podman version: cni-podman0,
-              # podman0, podman1, etc. Match the podman bridge subnet
-              # (10.89.0.0/24 is the default) instead of hardcoding the
-              # interface name — more robust across versions.
-              ip saddr 10.89.0.0/24 udp dport 53 accept
-              ip saddr 10.89.0.0/24 tcp dport 53 accept
+              # IP. Container DNS queries arrive on the host's podman
+              # bridge interface → INPUT chain, not FORWARD. Without this,
+              # containers can't resolve any hostname.
+              #
+              # Two distinct subnets, not one: podman's built-in "podman"
+              # default bridge network is hardcoded to 10.88.0.0/16
+              # (confirmed via `podman network inspect podman` — used by
+              # any container with no explicit Network=, e.g.
+              # restic-backup). Additional named networks (e.g. newt-net)
+              # draw from a separate default pool starting at 10.89.0.0/24
+              # and incrementing per network created (containers-common's
+              # default_subnet_pools). A single hardcoded /24 here only
+              # ever covers one named network and silently excludes the
+              # default bridge — confirmed broken on bow (#31 follow-up):
+              # restic-backup uses the default bridge (10.88.0.0/16), so
+              # every DNS/SSH/HTTPS call from that container was dropped
+              # even though newt (10.89.0.0/24) worked fine. Match the
+              # whole allocation space instead of a single subnet — the
+              # default bridge plus headroom for every named network podman
+              # might create — not the interface name, which varies by
+              # podman version (cni-podman0, podman0, podman1, etc.).
+              ip saddr { 10.88.0.0/16, 10.89.0.0/16 } udp dport 53 accept
+              ip saddr { 10.88.0.0/16, 10.89.0.0/16 } tcp dport 53 accept
             }
             chain forward {
               type filter hook forward priority 0; policy drop;
               # Allow podman container outbound traffic — containers route
               # through the forward chain (not output), so policy drop here
               # breaks all container networking (DNS, image pulls, tunnel
-              # connections). Allow established connections and traffic
-              # from the podman bridge subnet (10.89.0.0/24 is the default).
+              # connections). Same two-subnet reasoning as the input DNS
+              # rule above: 10.88.0.0/16 is the default bridge, 10.89.0.0/16
+              # covers every named network's auto-allocated /24 (currently
+              # just newt-net, but not hardcoded to that one network).
               # Match by subnet instead of interface name — the bridge
               # interface name varies by podman version (podman0, podman1,
               # cni-podman0, etc.).
               ct state established,related accept
-              ip saddr 10.89.0.0/24 accept
+              ip saddr { 10.88.0.0/16, 10.89.0.0/16 } accept
             }
             chain output {
               type filter hook output priority 0; policy accept;
