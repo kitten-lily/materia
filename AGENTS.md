@@ -433,6 +433,35 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   update`) ever starts it. Pair with `Oneshot = true` ("prevents materia
   from checking if this service started successfully") for jobs that don't
   stay running.
+- **Materia's oneshot final-state wait is currently broken upstream —
+  don't pair `Oneshot = true` with `RestartedBy`.** Confirmed against
+  `stryan/materia` source (`pkg/services/service_state.go`): the
+  internal sentinel used to mean "oneshot service, skip the final-state
+  wait" (`services.StateInternalWildcard`, string value `"wildcard"`) is
+  deliberately excluded from `serviceStateMap` ("Note we don't put this
+  in the map since its internal"). Every place that reconstructs the
+  sentinel from its stored string — `executor/execute.go`'s final health
+  check and `executor/service_helpers.go`'s `waitService`, both via
+  `services.NewServiceState(string)` — gets `StateUnknown` back instead,
+  since the lookup silently falls through. `WaitUntilState`'s short
+  circuit (`if state == StateInternalWildcard { return nil }`) can then
+  never trigger, so it always polls for `ActiveState == "unknown"` (a
+  state that never legitimately occurs) until materia's own default
+  timeout elapses, then reports `FATA operation timeout: service ...
+  did not reach state unknown` — even though the underlying job finished
+  and exited 0. This is deterministic, not a race: any `Oneshot = true`
+  service with a `RestartedBy` trigger will fail this way every time its
+  watched resources change, regardless of job duration. Confirmed on
+  flutterina (#31): `restic-backup.service` looked fine for months
+  because `RestartedBy` only fires on a resource change, and the first
+  real trigger (the `BACKUP_PATHS` quoting fix, commit `d6b4fbd`) hit it
+  immediately. Workaround until this is fixed upstream: don't set
+  `RestartedBy` on an `Oneshot` service — let its `.timer` pick up
+  resource changes on its next natural fire instead of forcing an
+  immediate synchronous restart. `restic-backup.service` had its
+  `RestartedBy` removed for this reason; resource changes to it now take
+  up to 24h (next timer fire) to apply instead of immediately. See
+  `specs/plans/issue-31-oneshot-wait-timeout.md`.
 - **Minimus images run as non-root (UID 1000), not root like most upstream
   images.** Three things break when switching from an upstream image to a
   minimus equivalent: (1) **privileged port binding** — UID 1000 can't bind

@@ -8,7 +8,6 @@ resticOnCalendar = "daily"
 
 [[Services]]
 Service = "restic-backup.service"
-RestartedBy = ["restic-backup.container", "ssh_config", "known_hosts"]
 Stopped = true
 Oneshot = true
 
