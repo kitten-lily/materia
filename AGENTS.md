@@ -505,8 +505,22 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   the backup ran AND `NextElapseUSecRealtime` correctly repopulated with
   the next day's midnight) but is a same-day workaround only — the next
   `OnCalendar` fire hits the identical no-op once that run also settles
-  into `active (exited)`. Root-cause fix not yet decided/implemented —
-  see `specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md`.
+  into `active (exited)`. **Do not just drop `RemainAfterExit=yes` to
+  fix this** — tried on 2026-07-15 (commit `0b2bb11`, reverted as
+  `0620018`) and it broke `materia-update` entirely, on every future
+  run: materia's default "quadlet `.container` file changed → always
+  restart" health check unconditionally expects the restarted service
+  to end up `active`, and that check is NOT covered by `Oneshot = true`
+  (that flag only skips a *different* code path — the one issue #31
+  patched around). Confirmed live on flutterina: `FATA Execute in
+  unhealthy state: Expected map[restic-backup.service:active], Actual
+  map[restic-backup.service:inactive]`, which blocks reconciliation of
+  every component on the host, not just restic-backup — and recurs on
+  every future `restic-backup.container.gotmpl` change (i.e. every
+  Renovate digest bump), so it's strictly worse than the original bug.
+  Root-cause fix not yet decided/implemented — see
+  `specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md` for
+  the full postmortem and candidate approaches that avoid this trap.
 - **Minimus images run as non-root (UID 1000), not root like most upstream
   images.** Three things break when switching from an upstream image to a
   minimus equivalent: (1) **privileged port binding** — UID 1000 can't bind

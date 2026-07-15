@@ -1,7 +1,7 @@
 # BUG-004 — restic-backup.timer can't re-trigger restic-backup.service (RemainAfterExit=yes no-op)
 
-**status:** open (workaround applied: manual restart on both hosts,
-2026-07-15)
+**status:** open — attempted fix reverted, see "Fix attempt #1 (reverted)"
+below; root cause confirmed but no safe fix found yet
 **found:** 2026-07-15, investigating healthchecks.io showing
 `restic-backup-bow` and `restic-backup-flutterina` both down
 **severity:** P1 (daily backups silently stopped running on both
@@ -58,12 +58,11 @@ manual `restart`, or materia auto-restarting the service because its
 `.container.gotmpl` changed — quadlet `.container` resource changes
 always trigger a restart, independent of any `RestartedBy` config)
 happens to cycle it through `inactive`. `Trigger: n/a` in `systemctl
-status` is a symptom of this: the timer's next-elapse calculation
-appears to get stuck when its target unit's job silently no-ops instead
-of completing a normal start transition. Confirmed empirically: a manual
-`systemctl restart restic-backup.service` on bow immediately fixed both
-symptoms at once — the backup ran, and `NextElapseUSecRealtime`
-correctly populated with the next day's midnight.
+status` is a symptom of this. Confirmed empirically: a manual
+`systemctl restart restic-backup.service` on both hosts immediately
+fixed both symptoms at once — the backup ran, and
+`NextElapseUSecRealtime` correctly populated with the next day's
+midnight.
 
 Recent run history on both hosts confirms actual backups have only been
 happening when a `.container.gotmpl` image-digest bump forced an
@@ -72,63 +71,119 @@ change) — not from the timer's own daily fire, which has been a no-op
 since the first successful run after each host's last restart-triggering
 change.
 
-## Relationship to issue #31 / BUG's workaround
+## Fix attempt #1 (reverted 2026-07-15) — do not retry without a real plan
 
-This is a **different bug** from the already-documented issue #31
-(materia's own `WaitUntilState` polling for oneshot services during a
-materia-triggered restart — see `specs/plans/issue-31-oneshot-wait-timeout.md`).
-That fix removed `RestartedBy` from `restic-backup.service` specifically
-so materia-managed resource changes (like `known_hosts`) wouldn't force
-a restart materia then hangs waiting on.
+**Change tried:** drop `RemainAfterExit=yes` from the `[Service]`
+section (commit `0b2bb11`), reasoning: the unit would then return to
+`inactive` after each run, letting the timer's `start` job behave
+normally. See `specs/plans/bug-004-remainaftereexit-timer-fix.md`
+(deleted by the revert, `git show 0b2bb11^:specs/plans/bug-004-remainaftereexit-timer-fix.md`
+to recover it) for the full (incorrect) reasoning.
 
-Issue #31's plan explicitly assumed removing `RestartedBy` was safe
-because *"`restic-backup.timer` fires daily regardless, and when it
-does, systemd starts `restic-backup.service` fresh from whatever files
-are on disk at that moment ... organically."* **That assumption is
-false** — this bug shows the timer's own daily fire has been silently
-inert since the first successful run. The two bugs compound: with
-`RestartedBy` removed (issue #31's fix) *and* the timer unable to
-re-trigger (this bug), the only remaining path that actually re-runs
-`restic-backup.service` is an incidental `.container.gotmpl` image
-change — i.e., backups now only happen when Renovate bumps the pinned
-digest, not on any predictable schedule.
+**Result: broke materia-update entirely, on both hosts, for every
+future run — not just restic-backup.** Deployed via push + manual
+`systemctl restart materia-update.service`:
 
-## Workaround applied (not a fix)
+- **flutterina:** the 3-step plan (`Update Container
+  restic-backup.container` → `Reload Host` → `Restart Container
+  restic-backup.container`) ran for ~95 seconds then failed:
+  ```
+  FATA Execute in unhealthy state: Expected map[restic-backup.service:active], Actual map[restic-backup.service:inactive]
+  ```
+  Materia's own post-restart health check unconditionally expects the
+  service it just restarted to end up `active` — **regardless of the
+  `Oneshot = true` manifest flag**, which per the manifest reference
+  only "prevents materia from checking if this service started
+  successfully" for a *different* code path (the one issue #31 patched
+  around, `WaitUntilState`'s wildcard-sentinel handling for
+  `RestartedBy`-triggered restarts). This is a *separate* health-check
+  codepath — the one materia runs for its own default "quadlet
+  `.container` file changed → always restart" behavior — that isn't
+  covered by the `Oneshot` flag at all. Since `restic-backup.container`
+  changes on every Renovate digest bump (routine, frequent), this isn't
+  a one-off: it would fail identically on every future image update,
+  permanently blocking reconciliation of every component on the host
+  (same "one component's fatal error aborts the entire host" behavior
+  documented elsewhere in this file for the `baseDomain`/beszel-hub
+  incident).
+- **bow:** never actually reached the restic-backup restart step — a
+  separate, pre-existing, unrelated failure (`audiobookshelf.service`
+  failing to become healthy on its first install on bow) aborted the
+  plan earlier (step 8 of 9). Confirmed via direct file inspection that
+  bow's on-disk `restic-backup.container` was never actually updated to
+  the broken version — no regression risk from this attempt on bow, but
+  bow's `materia-update` is independently broken by the audiobookshelf
+  issue (see "Related, unrelated finding" below).
 
-`sudo systemctl restart restic-backup.service` run manually on both bow
-and flutterina (2026-07-15) to unblock the current day's backup and
-clear the healthchecks.io alerts. This does **not** prevent tomorrow's
-`OnCalendar` fire from hitting the identical no-op once today's run
-settles back into `active (exited)`.
+**Reverted:** `git revert 0b2bb11` (commit `0620018`), pushed, and
+`materia-update.service` re-triggered manually on flutterina — confirmed
+green (`Finished materia-update.service`, no FATA). `restic-backup.service`
+is back to `RemainAfterExit=yes`, ran successfully as part of the revert's
+restart, and today's healthcheck ping should have fired again.
 
-## Fix not yet decided
+**This means BUG-004's underlying no-op is still present on both hosts
+as of this writing** — we're back to the pre-fix state, just no longer
+actively broken by a bad fix attempt. Tomorrow's `OnCalendar` fire will
+again be a no-op on both hosts, same as before this bug was first
+found.
 
-Options considered, none implemented yet — needs a plan before any repo
-change per the workflow mandate:
+## Related, unrelated finding: bow's audiobookshelf install is broken
 
-1. Drop `RemainAfterExit=yes` so the unit returns to `inactive` after
-   each run, letting the timer's plain `start` job behave normally.
-   Trade-off: loses `systemctl status`'s post-hoc `Result=`/`ActiveState`
-   introspection for the service between runs (Result may still be
-   visible transiently — needs verification). Healthchecks.io pings
-   already report external status per-run, so this may be an acceptable
-   trade.
-2. Add some other resource/mechanism that forces a `stop` (not `start`)
-   between the container's exit and the next timer fire, so the unit is
-   back in `inactive` by the time `OnCalendar` fires. Unclear if quadlet
-   supports this cleanly.
-3. Investigate whether materia's `Oneshot = true` service flag (which
-   likely drives the `RemainAfterExit=yes` generation) can be changed
-   without losing whatever materia-side behavior depends on it — needs
-   checking materia's manifest reference / source before assuming
-   option 1 is side-effect-free.
+Discovered as a side effect of testing fix attempt #1, **not caused by
+it** — `materia-update.service` on bow fails independently at:
+```
+FATA service audiobookshelf.service unhealthy: error applying service change for audiobookshelf.service: service state change failed
+```
+This blocks `materia-update` on bow entirely (any future repo change —
+not just restic-backup — will fail to apply on bow until this is
+fixed), same "one component blocks the whole host" pattern as other
+documented incidents. Needs its own investigation; flagged here only
+because it was discovered during this investigation, not because it's
+related to the timer bug. Not yet filed as its own BUG-00X entry —
+do that before starting work on it.
+
+## Fix not yet decided — constraints now understood
+
+Whatever the real fix is, it must NOT rely on `restic-backup.service`
+ending up `inactive` after a materia-triggered restart, because
+materia's default "quadlet file changed → restart" health check hard-
+requires `active` afterward, and that path can't be skipped via any
+currently-known manifest flag (`Oneshot = true` doesn't cover it). This
+rules out fix attempt #1's approach as written. Candidates not yet
+evaluated:
+
+1. A separate, materia-unmanaged systemd timer/oneshot pair (not a
+   quadlet resource materia restarts) whose only job is `systemctl
+   restart restic-backup.service` on a schedule — sidesteps materia's
+   restart-health-check entirely since materia never touches this new
+   unit after initial install. Adds a second timer to reason about;
+   needs the interaction with `restic-backup.timer` (`Static = true`)
+   thought through (probably replaces it, doesn't coexist with it).
+2. Confirm whether materia has any lower-level setting (undocumented or
+   otherwise) that skips the post-quadlet-restart health check
+   entirely, separate from `Oneshot`. Needs reading materia's actual
+   source (`stryan/materia`) rather than assuming from the manifest
+   reference docs, same as issue #31's investigation did.
+3. Accept the daily no-op as a known limitation and rely on Renovate's
+   routine digest bumps (which DO successfully restart the service, as
+   observed) as the de facto backup cadence, formally documenting that
+   `resticOnCalendar` is aspirational, not actual, until a real fix
+   lands. Not recommended — too fragile/opaque for something as
+   important as backup cadence.
 
 ## Follow-up
 
-- Needs a `specs/plans/` writeup before implementing any of the above.
-- Once fixed, re-verify on both hosts across at least two real midnight
-  `OnCalendar` fires (not just a manual restart) to confirm the timer
-  actually re-triggers on its own.
+- Needs a `specs/plans/` writeup for whichever candidate above is chosen
+  — do not implement directly against `components/restic-backup/`
+  again without one, per this attempt's outcome.
+- File bow's audiobookshelf failure as its own bug entry before
+  investigating it.
+- Once a real fix lands, re-verify on both hosts across at least two
+  real midnight `OnCalendar` fires (not just a manual restart) to
+  confirm the timer actually re-triggers on its own, AND re-verify a
+  `.container.gotmpl` change (e.g. next Renovate digest bump) still
+  applies cleanly via `materia-update` without tripping the restart
+  health check.
 - Consider whether `specs/plans/issue-31-oneshot-wait-timeout.md` needs
-  a corrective addendum noting its "fires daily regardless" assumption
-  was wrong.
+  a corrective addendum noting its "fires daily regardless... starts
+  fresh... organically" assumption was wrong.
