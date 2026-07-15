@@ -479,6 +479,34 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `RestartedBy` removed for this reason; resource changes to it now take
   up to 24h (next timer fire) to apply instead of immediately. See
   `specs/plans/issue-31-oneshot-wait-timeout.md`.
+- **That plan's "next timer fire" assumption was wrong — `RemainAfterExit=
+  yes` makes a `.timer`'s daily fire a permanent no-op after the first
+  successful run (BUG-004).** `restic-backup.container.gotmpl`'s generated
+  unit has `Type=oneshot` + `RemainAfterExit=yes`, so once the service
+  completes successfully it settles into `active (exited)` and stays
+  there. `OnCalendar` timers fire by issuing a plain `systemctl start`,
+  and `start` on an already-`active` unit is a no-op in systemd — it does
+  NOT re-run `ExecStart`. So the *first* successful run permanently
+  blocks the timer from ever triggering the service again, until
+  something else cycles the unit through `inactive` (a manual `restart`,
+  or materia auto-restarting because the `.container.gotmpl` itself
+  changed — quadlet `.container` changes always restart their service,
+  independent of `RestartedBy`). Symptom: `systemctl status
+  restic-backup.timer` shows `Trigger: n/a` forever after the first run,
+  even though `list-timers`/`LastTriggerUSec` shows it firing correctly
+  on schedule — the fire happens, but silently does nothing. Caught
+  2026-07-15 when healthchecks.io flagged both `restic-backup-bow` and
+  `restic-backup-flutterina` down: bow's last real run was stuck at
+  2026-07-14 17:48 (~22h stale), flutterina's at 2026-07-14 05:00 (~35h
+  stale) — in both cases the *only* thing that had been producing real
+  runs recently was an incidental `.container.gotmpl` image-digest bump,
+  not the timer's own daily schedule. `sudo systemctl restart
+  restic-backup.service` immediately fixes a stuck instance (confirmed:
+  the backup ran AND `NextElapseUSecRealtime` correctly repopulated with
+  the next day's midnight) but is a same-day workaround only — the next
+  `OnCalendar` fire hits the identical no-op once that run also settles
+  into `active (exited)`. Root-cause fix not yet decided/implemented —
+  see `specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md`.
 - **Minimus images run as non-root (UID 1000), not root like most upstream
   images.** Three things break when switching from an upstream image to a
   minimus equivalent: (1) **privileged port binding** — UID 1000 can't bind
