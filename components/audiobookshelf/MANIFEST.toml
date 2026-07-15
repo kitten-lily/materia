@@ -1,0 +1,5 @@
+[Defaults]
+
+[[Services]]
+Service = "audiobookshelf.service"
+RestartedBy = ["audiobookshelf.container"]

@@ -166,6 +166,11 @@ components/
     grimmory-data.volume          # named volume for /app/data (UID 1000)
     grimmory-bookdrop.volume      # named volume for /bookdrop (UID 1000)
     grimmory-mariadb-config.volume # named volume for /var/lib/mysql (UID 1000)
+  audiobookshelf/                # Audiobookshelf audiobook + podcast server (standalone, bow-only)
+    MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
+    audiobookshelf.container.gotmpl # joins newt-net, ro AudioBooks + rw Podcasts binds from LVM data disk, audiobookshelf.<baseDomain>
+    audiobookshelf-config.volume  # named volume for /config (root-owned, no User=/Group=)
+    audiobookshelf-metadata.volume # named volume for /metadata (root-owned, no User=/Group=)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
@@ -938,6 +943,26 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   beszel-agent, where Pangolon's SSO redirect (302 to the login page)
   broke the headless WebSocket handshake — Grimmory's browser-driven
   UI completes that flow fine.
+- **Audiobookshelf: standalone on `newt-net`, only audiobooks +
+  podcasts, no ebook library.** Same standalone-container-on-`newt-net`
+  pattern as `music`/`grimmory` (no pod — single container, no
+  shared-namespace requirement). Deliberately omits upstream's `/books`
+  volume from its [podman quadlet example](https://audiobookshelf.org/docs/documentation/install/podman)
+  — `grimmory` already owns ebook/comic hosting on `bow`, so wiring a
+  second ebook-scanning path would duplicate that content type across
+  two components. `AudioBooks` is mounted **read-only** (`:ro,z`) since
+  audiobookshelf shouldn't modify source audiobook files; `Podcasts` is
+  mounted **read-write** (`:z`) since audiobookshelf downloads new
+  episodes directly into that library — the same read-only/read-write
+  split exists between navidrome's read-only `Music` mount and
+  audiobookshelf's write-needing `Podcasts` mount, so don't copy one
+  library's mount mode onto the other without checking whether the app
+  writes back into it. `/config` and `/metadata` are named volumes (not
+  bind mounts) for the same data-dir-drift reason as every other
+  app-writable state directory in this repo (see the data-dir-drift
+  gotcha above). Pangolin SSO is kept ON (same reasoning as grimmory,
+  not beszel-agent — it's a browser-driven UI, not a headless
+  WebSocket client).
 
 ## Development conventions
 

@@ -1,0 +1,3 @@
+# Named volume for audiobookshelf metadata cache (covers, downloaded
+# podcast episode staging). Root-owned, same as audiobookshelf-config.volume.
+[Volume]

@@ -1,0 +1,39 @@
+[Unit]
+Description=Audiobookshelf (audiobooks + podcasts)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=audiobookshelf
+Image=ghcr.io/advplyr/audiobookshelf:2.35.1@sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d
+
+# Join newt-net so Newt (on bow via [Roles.tunneled]) reaches
+# audiobookshelf by container name "audiobookshelf:80" for the
+# audiobookshelf.<baseDomain> resource. Container name resolution only
+# works on named networks, not the default bridge — same reason
+# music/grimmory/newt itself use Network=newt-net.
+Network=newt-net
+
+# Audiobook + podcast libraries — bind mounts from bow's LVM data disk
+# (/var/lib/materia-data, created by bare-metal.bu's lvm-data.service).
+# AudioBooks is read-only (:ro,z) — audiobookshelf shouldn't modify
+# source files. Podcasts is read-write (:z) — audiobookshelf downloads
+# new episodes directly into that library.
+# No /books volume: ebook/comic hosting is grimmory's job on this host.
+Volume=/var/lib/materia-data/AudioBooks:/audiobooks:ro,z
+Volume=/var/lib/materia-data/Podcasts:/podcasts:z
+
+# App config (users, sessions, settings) and metadata cache (covers,
+# podcast download staging) — named volumes, not bind mounts. Materia
+# treats the data dir as fully managed; app-writable runtime state
+# needs a named volume so it isn't scheduled for removal as drift.
+Volume=audiobookshelf-config.volume:/config:z
+Volume=audiobookshelf-metadata.volume:/metadata:z
+
+Environment=TZ=Etc/UTC
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

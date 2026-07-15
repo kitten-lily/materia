@@ -1,0 +1,4 @@
+# Named volume for audiobookshelf app config (users, sessions, settings).
+# Image runs as root — no User=/Group= (see beszel-data.volume/
+# navidrome-data.volume for the same root-image pattern).
+[Volume]
