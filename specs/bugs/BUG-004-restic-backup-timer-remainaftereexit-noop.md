@@ -1,7 +1,10 @@
 # BUG-004 — restic-backup.timer can't re-trigger restic-backup.service (RemainAfterExit=yes no-op)
 
+**issue:** https://github.com/kitten-lily/materia/issues/38
 **status:** open — attempted fix reverted, see "Fix attempt #1 (reverted)"
-below; root cause confirmed but no safe fix found yet
+below; root cause confirmed but no safe fix found yet. Blocked on bow's
+unrelated audiobookshelf failure being resolved first (need a healthy
+`materia-update` on bow to verify any real fix).
 **found:** 2026-07-15, investigating healthchecks.io showing
 `restic-backup-bow` and `restic-backup-flutterina` both down
 **severity:** P1 (daily backups silently stopped running on both
