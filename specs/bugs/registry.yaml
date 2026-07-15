@@ -27,3 +27,10 @@ bugs:
     found: 2026-07-15
     epic: e01-restic-backup
     file: specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md
+  - id: BUG-005
+    title: "audiobookshelf.service crash-looped on bow: Podcasts bind-mount source missing"
+    status: fixed
+    severity: P1
+    found: 2026-07-15
+    epic: audiobookshelf
+    file: specs/bugs/BUG-005-audiobookshelf-podcasts-dir-missing-on-bow.md
