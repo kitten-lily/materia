@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart restic-backup.service (RemainAfterExit=yes timer workaround, see BUG-004)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart restic-backup.service

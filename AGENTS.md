@@ -138,7 +138,8 @@ components/
   restic-backup/                 # restic-backup component (role-assigned, see below)
     MANIFEST.toml                # component manifest — Secrets, Defaults, Services
     restic-backup.container.gotmpl # oneshot backup job, pulls the GHCR image by digest
-    restic-backup.timer.gotmpl   # attribute-driven schedule (resticOnCalendar)
+    restic-backup.timer.gotmpl   # attribute-driven schedule (resticOnCalendar), targets the trigger below
+    restic-backup-trigger.service # untracked-restart wrapper (systemctl restart), see BUG-004
     ssh_config                   # static /usr/local/etc/ssh_config (sftp SSH options, see BUG-001)
     known_hosts                  # copy of provisioning/storageboxes/<box>/known_hosts
   beszel-hub/                    # beszel monitoring hub (standalone, flutterina-only)
@@ -518,9 +519,34 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   every component on the host, not just restic-backup — and recurs on
   every future `restic-backup.container.gotmpl` change (i.e. every
   Renovate digest bump), so it's strictly worse than the original bug.
-  Root-cause fix not yet decided/implemented — see
-  `specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md` for
-  the full postmortem and candidate approaches that avoid this trap.
+  **Fix (implemented 2026-07-16):** neither known materia restart
+  trigger can correctly restart a `Type=oneshot` service without
+  materia either timing out (issue #31's wildcard-sentinel bug, for
+  `RestartedBy`-triggered restarts) or asserting a wrong expected state
+  (this bug's default-trigger path, confirmed in
+  `pkg/planner/planner.go`'s `resourceActionWithMetadata` — it never
+  consults `Oneshot` at all for a plain-image container, unlike the
+  adjacent `.build`/`.image` branch). Both are materia Go source bugs,
+  not fixable in this repo. Workaround: `Settings.NoRestart = true` on
+  `components/restic-backup/MANIFEST.toml` disables materia's default
+  `.container`/`.pod`-change auto-restart entirely for the component,
+  and a new `restic-backup-trigger.service` (`[[Services]]` entry,
+  `Stopped = true` — installed but never auto-started; safe because
+  materia classifies it as `ResourceTypeService`, which the buggy
+  Container/Pod-only auto-restart loop never touches) whose only job is
+  `systemctl restart restic-backup.service` is what `restic-backup.timer`
+  now targets, instead of the service directly. `systemctl restart`
+  (unlike `start`) always re-executes `ExecStart` regardless of the
+  target's current state, fixing the original no-op unconditionally.
+  Trade-off: ALL `restic-backup` resource changes (not just the
+  `RestartedBy`-covered ones #31 already accepted this for) now take up
+  to 24h to apply instead of immediately — a real behavior change, since
+  quadlet-file changes previously applied immediately (the only thing
+  that had been keeping backups running pre-fix). Pending live
+  verification across 2+ real unattended timer fires before considered
+  fully closed — see
+  `specs/plans/issue-38-restic-backup-timer-noop.md` and
+  `specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md`.
 - **Minimus images run as non-root (UID 1000), not root like most upstream
   images.** Three things break when switching from an upstream image to a
   minimus equivalent: (1) **privileged port binding** — UID 1000 can't bind

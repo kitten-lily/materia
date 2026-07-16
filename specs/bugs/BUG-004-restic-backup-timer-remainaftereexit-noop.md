@@ -1,10 +1,12 @@
 # BUG-004 — restic-backup.timer can't re-trigger restic-backup.service (RemainAfterExit=yes no-op)
 
 **issue:** https://github.com/kitten-lily/materia/issues/38
-**status:** open — attempted fix reverted, see "Fix attempt #1 (reverted)"
-below; root cause confirmed but no safe fix found yet. Blocked on bow's
-unrelated audiobookshelf failure being resolved first (need a healthy
-`materia-update` on bow to verify any real fix).
+**status:** implemented, pending live verification — see "Fix
+(implemented, 2026-07-16)" below. Not yet marked `fixed`: needs 2+ real
+unattended `OnCalendar` fires on both hosts confirmed before closing, per
+`specs/plans/issue-38-restic-backup-timer-noop.md` step 7-8. Fix attempt
+#1 (reverted) is preserved below for context; root cause confirmed
+against materia source before this fix was designed.
 **found:** 2026-07-15, investigating healthchecks.io showing
 `restic-backup-bow` and `restic-backup-flutterina` both down
 **severity:** P1 (daily backups silently stopped running on both
@@ -174,19 +176,57 @@ evaluated:
    lands. Not recommended — too fragile/opaque for something as
    important as backup cadence.
 
+## Fix (implemented, 2026-07-16)
+
+Full design and root-cause confirmation against `stryan/materia` source
+(two distinct bugs, not one — see plan doc) in
+`specs/plans/issue-38-restic-backup-timer-noop.md`. Summary:
+
+- `[Settings] NoRestart = true` added to
+  `components/restic-backup/MANIFEST.toml` — disables materia's default
+  `.container`/`.pod`-change auto-restart for the whole component,
+  closing the gap that made fix attempt #1 fail (that auto-restart path
+  never checks `Oneshot` at all, confirmed in `pkg/planner/planner.go`'s
+  `resourceActionWithMetadata`).
+- New `components/restic-backup/restic-backup-trigger.service` — a
+  plain `Type=oneshot` unit whose only job is `systemctl restart
+  restic-backup.service`. Declared in `[[Services]]` with `Stopped =
+  true` (materia installs it but never auto-starts it) — safe to track
+  because materia classifies it as `ResourceTypeService`, which the
+  buggy Container/Pod-only auto-restart trigger never touches, so
+  neither this bug nor #31's wildcard-sentinel bug can reach it.
+- `restic-backup.timer.gotmpl`'s `Unit=` retargeted from
+  `restic-backup.service` to `restic-backup-trigger.service`.
+  `systemctl restart` (unlike `start`) always re-executes `ExecStart`
+  regardless of the target's current `ActiveState`, fixing the original
+  no-op unconditionally — `RemainAfterExit=yes` stays on
+  `restic-backup.container.gotmpl` (still useful for post-hoc
+  inspection, no longer load-bearing for the timer).
+
+**Trade-off (deliberate, same shape as #31):** all
+`restic-backup.container`/`ssh_config`/`known_hosts` resource changes —
+not just the `RestartedBy`-covered ones #31 already accepted this for —
+now take up to 24h to apply (next timer fire) instead of immediately.
+This is a real behavior change: quadlet-file changes previously applied
+immediately (the only thing keeping backups running at all pre-fix).
+
 ## Follow-up
 
-- Needs a `specs/plans/` writeup for whichever candidate above is chosen
-  — do not implement directly against `components/restic-backup/`
-  again without one, per this attempt's outcome.
-- File bow's audiobookshelf failure as its own bug entry before
-  investigating it.
-- Once a real fix lands, re-verify on both hosts across at least two
-  real midnight `OnCalendar` fires (not just a manual restart) to
-  confirm the timer actually re-triggers on its own, AND re-verify a
-  `.container.gotmpl` change (e.g. next Renovate digest bump) still
-  applies cleanly via `materia-update` without tripping the restart
-  health check.
+- **Not closed yet.** Needs 2+ real unattended `OnCalendar` fires
+  confirmed on both flutterina and bow (`ExecMainStartTimestamp`
+  advancing on its own, `NextElapseUSecRealtime` staying populated)
+  before marking `status: fixed` in the registry.
+- Needs a real `materia-update` run on both hosts to confirm `NoRestart`
+  actually suppresses the problematic auto-restart trigger, and that a
+  `.container.gotmpl` change (e.g. next Renovate digest bump) installs
+  cleanly without an immediate restart attempt.
 - Consider whether `specs/plans/issue-31-oneshot-wait-timeout.md` needs
   a corrective addendum noting its "fires daily regardless... starts
-  fresh... organically" assumption was wrong.
+  fresh... organically" assumption was wrong (this bug already
+  documents the correction; a cross-link may be enough).
+- File bow's audiobookshelf failure (BUG-005) as its own bug entry —
+  already done, see `specs/bugs/BUG-005-audiobookshelf-podcasts-dir-missing-on-bow.md`.
+- Once upstream permission is granted, hand off the two confirmed
+  materia bugs (issue #31's wildcard-sentinel bug, and this bug's
+  Bug B — the default auto-restart trigger's missing `Oneshot` check)
+  to `stryan/materia`.

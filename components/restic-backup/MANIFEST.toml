@@ -1,5 +1,8 @@
 Secrets = ["resticPassword", "storageBoxSshKey"]
 
+[Settings]
+NoRestart = true
+
 [Defaults]
 resticKeepDaily = "7"
 resticKeepWeekly = "4"
@@ -10,6 +13,10 @@ resticOnCalendar = "daily"
 Service = "restic-backup.service"
 Stopped = true
 Oneshot = true
+
+[[Services]]
+Service = "restic-backup-trigger.service"
+Stopped = true
 
 [[Services]]
 Service = "restic-backup.timer"

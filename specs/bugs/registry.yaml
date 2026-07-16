@@ -22,7 +22,7 @@ bugs:
     file: specs/bugs/BUG-003-storagebox-key-manual-paste-corruption.md
   - id: BUG-004
     title: "restic-backup.timer can't re-trigger restic-backup.service (RemainAfterExit=yes no-op)"
-    status: open
+    status: implemented-pending-verification
     severity: P1
     found: 2026-07-15
     epic: e01-restic-backup

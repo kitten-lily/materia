@@ -4,7 +4,7 @@ Description=Restic backup timer
 [Timer]
 OnCalendar={{ m_default "resticOnCalendar" "daily" }}
 Persistent=true
-Unit=restic-backup.service
+Unit=restic-backup-trigger.service
 
 [Install]
 WantedBy=timers.target
