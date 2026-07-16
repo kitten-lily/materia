@@ -1,0 +1,49 @@
+[Unit]
+Description=Jellyfin (movies + TV)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=jellyfin
+Image=docker.io/jellyfin/jellyfin:10.11.0@sha256:59417f441213e236a9f907d4e71a13472042409d85f9e9310dbdd87ee33d7bd4
+
+# Join newt-net so Newt (on bow via [Roles.tunneled]) reaches jellyfin
+# by container name "jellyfin:8096" for the jellyfin.<baseDomain>
+# resource. Container name resolution only works on named networks, not
+# the default bridge — same reason music/grimmory/audiobookshelf/newt
+# itself use Network=newt-net. No PublishPort — exposure is via the
+# tunnel only. 7359/udp (LAN auto-discovery) is deliberately not
+# published either: irrelevant behind a tunnel, unauthenticated
+# broadcast listener.
+Network=newt-net
+
+# Hardware-accelerated transcoding — passes bow's iGPU render device
+# into the container. Verify /dev/dri exists on bow and (if SELinux is
+# enforcing) that container_use_dri_devices is set before relying on
+# this — see plan notes.
+AddDevice=/dev/dri:/dev/dri
+
+# Movies + TV libraries — read-only bind mounts from bow's LVM data disk
+# (/var/lib/materia-data, created by bare-metal.bu's lvm-data.service).
+# Read-only: same reasoning as navidrome's/audiobookshelf's read-only
+# media mounts — jellyfin shouldn't modify source media files.
+# No music library: music's navidrome already owns that content type on
+# this host.
+Volume=/var/lib/materia-data/Movies:/media/Movies:ro,z
+Volume=/var/lib/materia-data/TVShows:/media/TVShows:ro,z
+
+# App config (library DB, users, metadata/artwork cache) and transcoding
+# cache — named volumes, not bind mounts. Materia treats the data dir as
+# fully managed; app-writable runtime state needs a named volume so it
+# isn't scheduled for removal as drift.
+Volume=jellyfin-config.volume:/config:z
+Volume=jellyfin-cache.volume:/cache:z
+
+Environment=TZ=Etc/UTC
+Environment=JELLYFIN_PublishedServerUrl=https://jellyfin.{{ .baseDomain }}
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

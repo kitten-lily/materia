@@ -1,0 +1,3 @@
+# Named volume for jellyfin transcoding scratch space + thumbnail cache.
+# Root-owned, same as jellyfin-config.volume.
+[Volume]

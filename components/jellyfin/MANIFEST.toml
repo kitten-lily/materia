@@ -1,0 +1,5 @@
+[Defaults]
+
+[[Services]]
+Service = "jellyfin.service"
+RestartedBy = ["jellyfin.container"]

@@ -172,6 +172,11 @@ components/
     audiobookshelf.container.gotmpl # joins newt-net, ro AudioBooks + rw Podcasts binds from LVM data disk, audiobookshelf.<baseDomain>
     audiobookshelf-config.volume  # named volume for /config (root-owned, no User=/Group=)
     audiobookshelf-metadata.volume # named volume for /metadata (root-owned, no User=/Group=)
+  jellyfin/                      # Jellyfin movies + TV media server (standalone, bow-only)
+    MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
+    jellyfin.container.gotmpl     # joins newt-net, /dev/dri passthrough, ro Movies + TVShows binds from LVM data disk, jellyfin.<baseDomain>
+    jellyfin-config.volume        # named volume for /config (root-owned, no User=/Group=)
+    jellyfin-cache.volume         # named volume for /cache (root-owned, no User=/Group=)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
@@ -1031,6 +1036,28 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   gotcha above). Pangolin SSO is kept ON (same reasoning as grimmory,
   not beszel-agent — it's a browser-driven UI, not a headless
   WebSocket client).
+- **Jellyfin: standalone on `newt-net`, movies + TV only, HW transcoding
+  needs on-host verification.** Same standalone-container-on-`newt-net`
+  pattern as `music`/`grimmory`/`audiobookshelf` (no pod). Movies and
+  TVShows are mounted **read-only** (`:ro,z`) — jellyfin only reads media
+  and writes metadata/artwork into `/config`, not the source files — same
+  reasoning as navidrome's/audiobookshelf's read-only media mounts. No
+  music library: `music`'s navidrome already owns that content type on
+  `bow` (same reasoning audiobookshelf used to exclude a `/books` mount,
+  owned by `grimmory`). `/config` and `/cache` are named volumes for the
+  same data-dir-drift reason as every other app-writable state directory
+  in this repo. **`AddDevice=/dev/dri:/dev/dri` for hardware-accelerated
+  transcoding is unverified against the live host** — confirm `/dev/dri`
+  actually exists on `bow` (`ls /dev/dri`) and check `getenforce` before
+  assuming the passthrough is effective; if SELinux is enforcing and
+  `container-selinux` ≥2.226, the container also needs `sudo setsebool -P
+  container_use_dri_devices 1` run once on the host (not managed by
+  Ignition/materia — a manual step, same category as the Pangolin-
+  dashboard-only steps elsewhere in this file). If the device isn't
+  present or the boolean isn't set, jellyfin silently falls back to CPU
+  transcoding rather than hard-failing, so this is easy to miss unless
+  explicitly checked. Pangolin SSO is kept ON (browser-driven UI, same
+  reasoning as grimmory/audiobookshelf, not beszel-agent).
 
 ## Development conventions
 
