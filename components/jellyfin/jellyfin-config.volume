@@ -1,0 +1,5 @@
+# Named volume for jellyfin app config (library DB, user accounts,
+# metadata/artwork cache, transcoding logs). Image runs as root — no
+# User=/Group= (see audiobookshelf-config.volume/navidrome-data.volume
+# for the same root-image pattern).
+[Volume]
