@@ -822,6 +822,31 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   isolation is the network itself — a container not on `newt-net` is
   invisible to Newt regardless of this flag. Keep both: the network for
   isolation, the flag for catching misconfigured resource targets.
+- **Buildbarn's JWT and x509 auth policies use *different* proto field
+  names for the same concept — don't copy one's field name onto the
+  other.** The x509/mTLS `AuthenticationPolicy`
+  (`TLSClientCertificateAuthenticationPolicy` in `grpc.proto`) calls its
+  boolean-validation field `validation_jmespath_expression` (camelCase
+  `validationJmespathExpression`). The JWT `AuthenticationPolicy`
+  (`AuthorizationHeaderParserConfiguration` in `jwt.proto`) calls the
+  *same concept* **`claims_validation_jmespath_expression`** (camelCase
+  **`claimsValidationJmespathExpression`**) — a `claims_` prefix the
+  x509 one lacks. `bb-storage` hard-fails on the wrong name at startup:
+  `proto: (line N:N): unknown field "validationJmespathExpression"` (a
+  protobuf unmarshal error, not a jsonnet parse error — the jsonnet
+  itself is valid). The buildbarn component's `common.libsonnet`
+  originally carried this exact bug (field name copied from krytis's
+  tested mTLS design, which uses the x509 policy), crashing on first bow
+  deploy. Confirmed against
+  `github.com/buildbarn/bb-storage/pkg/proto/configuration/jwt/jwt.proto`
+  + `grpc.proto`. The other JWT fields (`jwksFile` ← `jwks_file`,
+  `metadataExtractionJmespathExpression` ←
+  `metadata_extraction_jmespath_expression`) and the Authorizer field
+  (`jmespathExpression` ← `jmespath_expression` in `auth.proto`) are
+  identical across both policy types and safe to share. No CI catches
+  this — the buildbarn binary parses jsonnet at runtime, and this repo
+  has no jsonnet evaluator in its toolchain; the only verification path
+  is a real container start.
 
 ## Provisioning (Butane/Ignition)
 

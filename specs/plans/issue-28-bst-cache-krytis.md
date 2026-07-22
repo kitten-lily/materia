@@ -358,17 +358,29 @@ of which exposure mechanism ends up in front of it.
    named `entryPoints` (`tcp-7981`, `tcp-7982`).
 6. `AGENTS.md` — repo layout entry for `components/buildbarn/`.
 
-**Not independently verified**: the JWT `AuthenticationPolicy` block in
-`config/common.libsonnet` (`jwt: { jwksFile, validationJmespathExpression,
-metadataExtractionJmespathExpression }`) follows the exact same
-camelCase-of-snake_case field-naming pattern that was confirmed correct
-for the x509/mTLS policy during krytis's live testing, but hasn't itself
-been run against a live `bb-storage`/`bb-asset` binary the way the mTLS
-design was (braces/structure checked, field names derived from
-`jwt.proto`, not executed). Worth a real `mise buildbarn:secret-init` +
-a local container run before trusting this on bow — same spirit as
-krytis's own "first-deploy verification" process, not skipped here for a
-reason, just not yet done in this session.
+**Verified on first bow deploy (found one bug):** the JWT
+`AuthenticationPolicy` block in `config/common.libsonnet` originally used
+`validationJmespathExpression`, following the exact same
+`camelCase-of-snake_case` field-naming pattern confirmed correct for the
+x509/mTLS policy (`TLSClientCertificateAuthenticationPolicy`) during
+krytis's live testing. **That assumption was wrong** — `bb-storage`
+crashed on first start with `unknown field "validationJmespathExpression"`
+(line 144). The JWT policy type is a *different* proto message
+(`AuthorizationHeaderParserConfiguration` in `jwt.proto`, not
+`TLSClientCertificateAuthenticationPolicy` in `grpc.proto`), and the two
+use **different field names for the same concept**: the x509 policy's
+field is `validation_jmespath_expression`, but the JWT policy's field is
+**`claims_validation_jmespath_expression`** (camelCase
+`claimsValidationJmespathExpression`) — a `claims_` prefix the x509 one
+lacks. The field names were derived from `jwt.proto` but never executed,
+exactly as flagged. Fix: renamed to `claimsValidationJmespathExpression`.
+`jwksFile` (`jwks_file`, jwt.proto field 8) and
+`metadataExtractionJmespathExpression` (`metadata_extraction_jmespath_expression`,
+jwt.proto field 6) were both correct as-is and unchanged. All other
+field names in `storage.jsonnet`/`asset.jsonnet` (authorizers,
+`maximumMessageSizeBytes`, TLS `serverKeyPair`/`refreshInterval`, etc.)
+were confirmed against `bb_storage.proto`/`auth.proto`/`grpc.proto` and
+match — the JWT validation field was the only mismatch.
 
 ### Deployment steps (out of IaC scope, deploy-time)
 

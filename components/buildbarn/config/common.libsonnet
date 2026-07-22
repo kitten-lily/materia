@@ -26,7 +26,17 @@
   jwtAuthenticationPolicy: {
     jwt: {
       jwksFile: '/secrets/jwt-jwks.json',
-      validationJmespathExpression: { expression: '`true`' },
+      // NOTE: the JWT policy's validation field is
+      // `claims_validation_jmespath_expression` (camelCase
+      // `claimsValidationJmespathExpression`) — NOT `validationJmespathExpression`
+      // like the x509/mTLS policy (TLSClientCertificateAuthenticationPolicy)
+      // uses. The two policies use different field names for the same concept;
+      // the JWT one has a `claims_` prefix the x509 one doesn't. Confirmed
+      // against buildbarn/bb-storage/pkg/proto/configuration/jwt/jwt.proto —
+      // the live bb-storage crash ("unknown field validationJmespathExpression"
+      // at line 144) was exactly this mismatch, predicted as a risk in
+      // specs/plans/issue-28-bst-cache-krytis.md.
+      claimsValidationJmespathExpression: { expression: '`true`' },
       // Extracts the token payload's "role" claim into
       // AuthenticationMetadata.public so the Authorizer below can read it
       // back as authenticationMetadata.public.role — same mechanism
