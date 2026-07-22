@@ -847,6 +847,30 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   this — the buildbarn binary parses jsonnet at runtime, and this repo
   has no jsonnet evaluator in its toolchain; the only verification path
   is a real container start.
+- **Buildbarn's JWT validator only accepts asymmetric keys (Ed25519 /
+  ECDSA / RSA) — not HS256/symmetric `oct` JWKS keys.**
+  `bb-storage/pkg/jwt/configuration.go`'s
+  `NewSignatureValidatorFromJSONWebKeySet` type switch handles only
+  `*ecdsa.PublicKey`, `ed25519.PublicKey`, `*rsa.PublicKey` — there is
+  no `[]byte`/symmetric case. The gate before that switch,
+  go-jose v3's `JSONWebKey.Valid()`, has the same gap: it has
+  `case ed25519.PublicKey:` (checks `len(key) == 32`) but no
+  `case []byte:` — so `oct` JWKS keys fall to `default: return false`
+  (go-jose issue #314). An HS256 JWKS (`kty: "oct"`) crashes
+  `bb-storage` on startup with `Invalid JSON Web Key at index 0` —
+  a *different* crash from the field-name one above (this one is at
+  JWKS parsing, past config unmarshal). Confirmed against
+  `github.com/buildbarn/bb-storage` (go-jose v3.0.5) + go-jose v3.0.5
+  source. The buildbarn component originally used HS256 ("one shared
+  secret, matches `beszel-agent`'s `beszelToken` pattern") — that
+  design is fundamentally incompatible with the software and was
+  switched to EdDSA (Ed25519) after live deployment proved it. The
+  JWKS for Ed25519 is one `{kty: "OKP", crv: "Ed25519", x:
+  <base64url of 32 raw pubkey bytes>, alg: "EdDSA"}` entry (RFC 8037);
+  the private key is stored separately (`jwtPrivateKeyPem` in the
+  vault) and `mise buildbarn:mint-token` signs with
+  `openssl pkeyutl -sign -rawin` (Ed25519 is one-shot, not
+  hash-then-sign).
 
 ## Provisioning (Butane/Ignition)
 

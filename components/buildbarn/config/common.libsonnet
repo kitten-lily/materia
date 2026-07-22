@@ -1,6 +1,6 @@
 // Shared config fragments for storage.jsonnet / asset.jsonnet.
 //
-// Auth: JWT bearer token (HS256, one shared secret), not mTLS — see
+// Auth: JWT bearer token (EdDSA / Ed25519), not mTLS — see
 // specs/plans/issue-28-bst-cache-krytis.md for the full "why" (mTLS was
 // krytis's original local-test design; switched here because it drops the
 // CA/client-cert distribution entirely, at the cost of not unlocking
@@ -8,14 +8,18 @@
 // resource is still what's in front of this, blocked upstream on h2c
 // support, fosrl/pangolin#115).
 //
+// Originally HS256 (symmetric, one shared secret), but buildbarn's JWT
+// validator only accepts asymmetric keys — go-jose v3's Valid() returns
+// false for `oct` keys (no `case []byte:`, go-jose #314) AND
+// bb-storage's type switch has no symmetric case. An HS256 JWKS crashes
+// bb-storage with "Invalid JSON Web Key at index 0". Switched to Ed25519
+// after live deployment proved this. The JWKS is one OKP/Ed25519 public
+// key (RFC 8037); the private key lives in the vault (jwtPrivateKeyPem)
+// and mise buildbarn:mint-token signs with `openssl pkeyutl -sign -rawin`.
+//
 // Buildbarn still terminates its own TLS (server-only — no client cert
 // required) for confidentiality through the Newt/Pangolin tunnel; the
-// JWKS below is what verifies the bearer token's signature. Note that for
-// HS256 (symmetric), the JWKS "k" field IS effectively the shared secret
-// in a different encoding — there is no actual public/private key split
-// here, same as the underlying secret used to mint tokens
-// (mise buildbarn:mint-token). This is an accepted tradeoff of the
-// single-shared-secret design, not an oversight.
+// JWKS below is what verifies the bearer token's signature.
 //
 // jwt-jwks.json / server.key are materia Secrets (see MANIFEST.toml),
 // mounted at deploy time — nothing sensitive is committed to this repo.

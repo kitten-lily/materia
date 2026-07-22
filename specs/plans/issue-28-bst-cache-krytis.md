@@ -124,14 +124,27 @@ every bug found getting there.
     gone entirely. Simpler ops for the one artifact (`ci-push` credential)
     that has to leave this repo's control into krytis's GitHub Actions
     secrets — a token string is easier to rotate/revoke than a cert.
-  - **Algorithm: HS256, one shared secret** (user decision) — no keypair,
-    matches this repo's existing single-secret pattern
-    (`beszel-agent`'s `beszelToken`). The secret becomes a JWKS with one
-    `kty: "oct"` entry (`k: base64url(secret)`) fed to Buildbarn's
-    `jwks_inline`/`jwks_file` config.
+  - **Algorithm: EdDSA (Ed25519), one keypair** — switched from the
+    original HS256/symmetric design after live deployment proved HS256
+    is fundamentally incompatible with Buildbarn's JWT validator (see
+    "What broke" below). Buildbarn's
+    `NewSignatureValidatorFromJSONWebKeySet` (bb-storage/pkg/jwt/
+    configuration.go) only accepts asymmetric public keys — its type
+    switch handles `*ecdsa.PublicKey`/`ed25519.PublicKey`/`*rsa.PublicKey`,
+    no `[]byte`/symmetric case. go-jose v3's `JSONWebKey.Valid()` (the
+    gate before that switch) has the same gap: it has a `case
+    ed25519.PublicKey:` that checks `len(key) == 32`, but no `case
+    []byte:` — so `oct` JWKS keys fall to `default: return false`
+    (go-jose issue #314). An HS256 JWKS (`kty: "oct"`) crashes
+    bb-storage on startup with `Invalid JSON Web Key at index 0`.
+    Ed25519 passes both layers and keeps the single-keypair spirit (no
+    CA, no per-role client certs — one private key for minting, one
+    public key in the JWKS). The JWKS is one `kty: "OKP", crv:
+    "Ed25519"` entry with `x: base64url(32 raw pubkey bytes)`
+    (RFC 8037), `alg: "EdDSA"`.
   - **Push/pull role split via a JWT claim, not a cert SAN** (user
     decision: two long-lived tokens, not one shared token). Mint two JWTs
-    from the same HS256 secret — one with `role: "push"`, one with
+    from the same Ed25519 private key — one with `role: "push"`, one with
     `role: "pull"` in the payload — and reuse the *exact same*
     `metadata_extraction_jmespath_expression` → `Authorizer` pattern
     already written for krytis's mTLS design
@@ -141,15 +154,20 @@ every bug found getting there.
     `pushOnlyAuthorizer`'s shape (`contains(...)` →
     `authenticationMetadata.public.role == 'push'`).
 
-- **Secrets:** one HS256 shared secret in `attributes/bow.yml`
-  (SOPS-encrypted), following the same pattern as `restic-backup`'s
-  `resticPassword` or `beszel-agent`'s `beszelToken`. The two minted JWTs
+- **Secrets:** one Ed25519 private key in `attributes/bow.yml`
+  (SOPS-encrypted, `components.buildbarn.jwtPrivateKeyPem`) plus the
+  derived public-key JWKS (`components.buildbarn.jwtJwks`, also in the
+  vault — Buildbarn mounts it as a secret). Originally HS256 with a
+  single shared secret (matching `restic-backup`'s `resticPassword` /
+  `beszel-agent`'s `beszelToken` pattern), but HS256 is incompatible with
+  Buildbarn — see the auth decision above. The two minted JWTs
   (`push`/`pull`) are derived artifacts, not independently-managed
-  secrets — regenerable from the shared secret at any time, so only the
-  secret itself needs vault storage; the `push` token is what actually
-  leaves this repo's control (goes into krytis's GitHub Actions secrets,
-  same as the original mTLS plan's `ci-push` client key — just a token
-  string now instead of a cert+key pair).
+  secrets — regenerable from the private key at any time via
+  `mise buildbarn:mint-token`, so only the keypair needs vault storage;
+  the `push` token is what actually leaves this repo's control (goes
+  into krytis's GitHub Actions secrets, same as the original mTLS plan's
+  `ci-push` client key — just a token string now instead of a cert+key
+  pair).
 
 - **krytis-side follow-up (not this repo):** once bow is live, krytis's
   `project.conf`/CI-side `buildstream.conf` need to switch from the
@@ -321,7 +339,7 @@ every bug found getting there.
    rather than piping directly.
 
 All seven open questions are now resolved: exposure mechanism (raw TCP
-resource, blueprint-declared), auth (JWT/HS256, tooling written —
+resource, blueprint-declared), auth (JWT/EdDSA, tooling written —
 `.mise/tasks/buildbarn/{secret-init,mint-token}`), image (pinned by
 digest, no build step), and disk sizing (100G CAS quota, grounded in a
 real measurement + bow's actual free space). Nothing left blocks writing
@@ -358,29 +376,45 @@ of which exposure mechanism ends up in front of it.
    named `entryPoints` (`tcp-7981`, `tcp-7982`).
 6. `AGENTS.md` — repo layout entry for `components/buildbarn/`.
 
-**Verified on first bow deploy (found one bug):** the JWT
-`AuthenticationPolicy` block in `config/common.libsonnet` originally used
-`validationJmespathExpression`, following the exact same
-`camelCase-of-snake_case` field-naming pattern confirmed correct for the
-x509/mTLS policy (`TLSClientCertificateAuthenticationPolicy`) during
-krytis's live testing. **That assumption was wrong** — `bb-storage`
-crashed on first start with `unknown field "validationJmespathExpression"`
-(line 144). The JWT policy type is a *different* proto message
-(`AuthorizationHeaderParserConfiguration` in `jwt.proto`, not
-`TLSClientCertificateAuthenticationPolicy` in `grpc.proto`), and the two
-use **different field names for the same concept**: the x509 policy's
-field is `validation_jmespath_expression`, but the JWT policy's field is
-**`claims_validation_jmespath_expression`** (camelCase
-`claimsValidationJmespathExpression`) — a `claims_` prefix the x509 one
-lacks. The field names were derived from `jwt.proto` but never executed,
-exactly as flagged. Fix: renamed to `claimsValidationJmespathExpression`.
-`jwksFile` (`jwks_file`, jwt.proto field 8) and
-`metadataExtractionJmespathExpression` (`metadata_extraction_jmespath_expression`,
-jwt.proto field 6) were both correct as-is and unchanged. All other
-field names in `storage.jsonnet`/`asset.jsonnet` (authorizers,
+**Verified on first bow deploy (found two bugs):**
+
+1. **Proto field name.** The JWT `AuthenticationPolicy` block in
+   `config/common.libsonnet` originally used `validationJmespathExpression`,
+   following the exact same `camelCase-of-snake_case` field-naming pattern
+   confirmed correct for the x509/mTLS policy
+   (`TLSClientCertificateAuthenticationPolicy`) during krytis's live
+   testing. **That assumption was wrong** — `bb-storage` crashed on first
+   start with `unknown field "validationJmespathExpression"` (line 144).
+   The JWT policy type is a *different* proto message
+   (`AuthorizationHeaderParserConfiguration` in `jwt.proto`, not
+   `TLSClientCertificateAuthenticationPolicy` in `grpc.proto`), and the two
+   use **different field names for the same concept**: the x509 policy's
+   field is `validation_jmespath_expression`, but the JWT policy's field
+   is **`claims_validation_jmespath_expression`** (camelCase
+   `claimsValidationJmespathExpression`) — a `claims_` prefix the x509 one
+   lacks. Fix: renamed. `jwksFile` and `metadataExtractionJmespathExpression`
+   were both correct as-is.
+2. **HS256 is incompatible with Buildbarn's JWT validator.** After the
+   field-name fix, `bb-storage` crashed again with `Invalid JSON Web Key
+   at index 0` — the JWKS's `kty: "oct"` (HS256/symmetric) key is rejected
+   at two layers: go-jose v3's `JSONWebKey.Valid()` has no `case []byte:`
+   (returns false for symmetric keys, go-jose issue #314), and
+   bb-storage's `NewSignatureValidatorFromJSONWebKeySet` type switch only
+   handles asymmetric public keys (`*ecdsa.PublicKey` /
+   `ed25519.PublicKey` / `*rsa.PublicKey`). The original "HS256, one shared
+   secret" design decision cannot work with this software. Fix: switched
+   to EdDSA (Ed25519) — one keypair, JWKS `kty: "OKP"`, `crv: "Ed25519"`,
+   `x: <32 raw pubkey bytes base64url>`. Both the `secret-init` and
+   `mint-token` mise tasks were rewritten (HS256 HMAC → Ed25519
+   `openssl pkeyutl -sign -rawin`); the old `jwtSecretHex` vault entry was
+   removed and replaced with `jwtPrivateKeyPem`. Verified end-to-end:
+   minted a token, reconstructed the public key from the JWKS `x` field,
+   and confirmed `openssl pkeyutl -verify` succeeds.
+
+All other field names in `storage.jsonnet`/`asset.jsonnet` (authorizers,
 `maximumMessageSizeBytes`, TLS `serverKeyPair`/`refreshInterval`, etc.)
 were confirmed against `bb_storage.proto`/`auth.proto`/`grpc.proto` and
-match — the JWT validation field was the only mismatch.
+match.
 
 ### Deployment steps (out of IaC scope, deploy-time)
 
@@ -397,8 +431,8 @@ match — the JWT validation field was the only mismatch.
    (`persistent_state` pre-creation specifically: neither `bb_storage` nor
    `bb_remote_asset` create it themselves — confirmed the hard way during
    krytis's own local testing, see `docs/skills/ci-runner.md` there.)
-2. `mise buildbarn:secret-init` — generates the HS256 secret + JWKS,
-   writes to `attributes/bow.yml`.
+2. `mise buildbarn:secret-init` — generates the Ed25519 keypair + JWKS,
+   writes both to `attributes/bow.yml` (`jwtPrivateKeyPem` + `jwtJwks`).
 3. `mise buildbarn:server-cert-init --hostname bst-cache.<baseDomain>` —
    generates the server cert, writes the key to `attributes/bow.yml`,
    commits `components/buildbarn/certs/server.crt`. No separate DNS step
