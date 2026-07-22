@@ -1,6 +1,6 @@
 # Issue #28: BuildStream cache server for krytis
 
-## Status: unblocked — resuming from paused spike
+## Status: planning complete, ready to write the component
 
 ## Problem
 
@@ -278,17 +278,59 @@ every bug found getting there.
    - FileSystemAccessCache blocks: 100M (was 20M locally — tiny either way).
    - `bb-asset`'s own `assetCache.blobAccess` local backend: 1G (URI→digest
      mapping metadata only, was 512M locally).
-7. **JWT minting tooling** — does generating the `push`/`pull` tokens from
-   the HS256 secret get a `mise` task (like `hz:storagebox:install-key`,
-   which already writes secrets straight into a host's vault via `sops
-   --set`), or a documented one-time manual step (e.g. `step` CLI or a
-   short script) here. Simpler than the CA tooling question the mTLS
-   design had — no SAN/hostname parameter needed, since the token doesn't
-   encode where it's used, only who's allowed to use it.
+7. **Resolved: two `mise` tasks, hand-rolled JWT via `openssl`/`jq`/`xxd`
+   — no new tool dependency.** Mirrors `hz:storagebox:install-key`'s exact
+   pattern (`sops --set` with `jq -Rn --arg v ... '$v'` JSON-encoding, not
+   manual `sops edit` paste — same corruption risk `BUG-003` already
+   documents for multi-line secrets, avoided the same way here even though
+   these are single-line).
 
-Next step: #1–6 are now resolved. Only #7 remains (JWT minting tooling —
-needs a decision on `mise` task vs. documented manual step, low-stakes
-either way). Nothing left blocks writing the component. The JWT switch
-was still worth making even though it didn't unlock HTTP-resource exposure
-as hoped — it drops the CA/client-cert machinery regardless of which
-exposure mechanism ends up in front of it.
+   - **`.mise/tasks/buildbarn/secret-init`** (`--server-name`, defaults
+     `bow`) — idempotent (checks `components.buildbarn.jwtSecretHex`
+     before regenerating, same guard shape as krytis's own
+     `buildbarn:certs-init`). Generates `openssl rand -hex 32`, writes it
+     to the vault as `components.buildbarn.jwtSecretHex`. Also derives and
+     writes `components.buildbarn.jwtJwks` — the JWKS JSON Buildbarn's
+     `jwt` policy needs (`{keys: [{kty: "oct", k: <base64url of the RAW
+     key bytes>, alg: "HS256"}]}`). Stored as **hex**, not base64, in the
+     vault — unambiguous re-read for signing (`openssl dgst -macopt
+     hexkey:...`), converted to base64url only for the JWKS `k` field
+     (RFC 7518 requires base64url of raw bytes there, not the hex string).
+   - **`.mise/tasks/buildbarn/mint-token`** (`--server-name`, `--role
+     push|pull`) — reads the hex secret back via `sops -d | yq`, builds a
+     JWT by hand: base64url the header/payload, sign with `openssl dgst
+     -sha256 -mac hmac -macopt hexkey:$secret`, base64url the signature,
+     join with `.`. Prints to stdout, **does not write the token back to
+     the vault** — matches the earlier decision that tokens are
+     regenerable derived artifacts, not independently-managed secrets.
+     No `exp` claim (long-lived by design); `role: "push"|"pull"` is the
+     only claim, read server-side via the same
+     `metadata_extraction_jmespath_expression` → `Authorizer` pattern
+     already used for the mTLS design (just `payload.role` instead of a
+     cert SAN).
+
+   Verified independently: minted a token with this exact construction and
+   confirmed the HMAC-SHA256 signature byte-for-byte against Python's
+   `hmac` module using the same hex-decoded key — not just "looks like a
+   JWT," the signature itself is provably correct. One real bug caught
+   doing this: `jq -cn ... | _b64url` piped directly baked jq's trailing
+   newline into the payload segment (still valid JSON when decoded, since
+   parsers ignore trailing whitespace, but not a canonical/clean token) —
+   fixed by capturing jq's output through a `$(...)` command substitution
+   first (which strips the trailing newline) before base64url-encoding it,
+   rather than piping directly.
+
+All seven open questions are now resolved: exposure mechanism (raw TCP
+resource, blueprint-declared), auth (JWT/HS256, tooling written —
+`.mise/tasks/buildbarn/{secret-init,mint-token}`), image (pinned by
+digest, no build step), and disk sizing (100G CAS quota, grounded in a
+real measurement + bow's actual free space). Nothing left blocks writing
+the `buildbarn` component itself: the quadlet units
+(`quadlet/buildbarn/*.container`), `MANIFEST.toml`, the `pangolin.pod` /
+`traefik_config.yml.gotmpl` additions, and the blueprint's
+`public-resources` entries.
+
+The JWT switch was still worth making even though it didn't unlock
+HTTP-resource exposure as hoped (blocked upstream by
+`fosrl/pangolin#115`) — it drops the CA/client-cert machinery regardless
+of which exposure mechanism ends up in front of it.

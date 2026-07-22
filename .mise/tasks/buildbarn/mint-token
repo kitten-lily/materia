@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#MISE description="Mint a Buildbarn push/pull JWT from the vault-stored HS256 secret (prints to stdout, not stored)"
+
+#USAGE flag "--server-name <name>" help="Server whose vault holds the secret" default="bow"
+#USAGE flag "--role <role>" help="Token role claim: push or pull"
+
+set -euo pipefail
+
+_server_name="${usage_server_name:-bow}"
+_role="${usage_role:?role required, use --role push|pull}"
+_vault="attributes/${_server_name}.yml"
+
+case "$_role" in
+push | pull) ;;
+*)
+  gum style --foreground 1 "error: --role must be 'push' or 'pull', got '$_role'"
+  exit 1
+  ;;
+esac
+
+_secret_hex=$(sops -d "$_vault" 2>/dev/null | yq -r '.components.buildbarn.jwtSecretHex // ""')
+if [[ -z "$_secret_hex" ]]; then
+  gum style --foreground 1 "error: components.buildbarn.jwtSecretHex not found in $_vault"
+  gum style --foreground 1 "       run: mise buildbarn:secret-init --server-name $_server_name"
+  exit 1
+fi
+
+_b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+# No "exp" claim — these are long-lived tokens by design (see
+# specs/plans/issue-28-bst-cache-krytis.md). Role differentiation only,
+# read server-side via Buildbarn's metadata_extraction_jmespath_expression
+# (payload.role) into the putAuthorizer/pushAuthorizer jmespath check.
+_header=$(printf '%s' '{"alg":"HS256","typ":"JWT"}' | _b64url)
+_payload_json=$(jq -cn --arg role "$_role" --argjson iat "$(date +%s)" '{role: $role, iat: $iat}')
+_payload=$(printf '%s' "$_payload_json" | _b64url)
+_signing_input="${_header}.${_payload}"
+_signature=$(printf '%s' "$_signing_input" | openssl dgst -sha256 -mac hmac -macopt "hexkey:${_secret_hex}" -binary | _b64url)
+_token="${_signing_input}.${_signature}"
+
+gum style --foreground 2 "==> ${_role} token (not stored anywhere — copy it now):"
+echo "$_token"
+gum style --foreground 3 ""
+if [[ "$_role" == "push" ]]; then
+  gum style --foreground 3 "Paste into krytis's GitHub Actions secrets (e.g. BUILDBARN_PUSH_TOKEN)."
+else
+  gum style --foreground 3 "Distribute out-of-band to any dev machine that needs to fetch (e.g. Proton Pass)."
+fi
+gum style --foreground 3 "Re-run this task any time to mint another copy — it's derived from the vault secret, not independently stored."
