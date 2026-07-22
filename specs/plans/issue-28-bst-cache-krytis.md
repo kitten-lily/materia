@@ -389,23 +389,25 @@ reason, just not yet done in this session.
    writes to `attributes/bow.yml`.
 3. `mise buildbarn:server-cert-init --hostname bst-cache.<baseDomain>` —
    generates the server cert, writes the key to `attributes/bow.yml`,
-   commits `components/buildbarn/certs/server.crt`.
-4. Create a Cloudflare A/AAAA record: `bst-cache.<baseDomain>` →
-   flutterina's public IP.
-5. `materia update` on `flutterina` — installs the `pangolin.pod`/
+   commits `components/buildbarn/certs/server.crt`. No separate DNS step
+   needed — wildcard DNS to flutterina already covers
+   `bst-cache.<baseDomain>` (confirmed: this repo's existing wildcard
+   record, same one every other `<name>.<baseDomain>` resource already
+   relies on).
+4. `materia update` on `flutterina` — installs the `pangolin.pod`/
    `traefik_config.yml.gotmpl` changes (requires a Traefik restart,
    already handled by materia's normal restart-on-change behavior).
-6. `materia update` on `bow` — installs the `buildbarn` component.
-7. Paste `components/buildbarn/blueprint-resources.yaml`'s contents into
+5. `materia update` on `bow` — installs the `buildbarn` component.
+6. Paste `components/buildbarn/blueprint-resources.yaml`'s contents into
    the Pangolin dashboard at **Settings > Blueprints** on `flutterina`
    (one-time — Newt's own blueprint bootstrap already fired at first
    boot and won't reapply automatically, see the file's own header
    comment).
-8. `mise buildbarn:mint-token --role push` — paste into krytis's GitHub
+7. `mise buildbarn:mint-token --role push` — paste into krytis's GitHub
    Actions secrets (e.g. `BUILDBARN_PUSH_TOKEN`).
-9. `mise buildbarn:mint-token --role pull` — distribute out-of-band
+8. `mise buildbarn:mint-token --role pull` — distribute out-of-band
    (e.g. Proton Pass) to any dev machine that needs to fetch.
-10. **krytis-side follow-up** (not this repo, see "Decisions" above):
+9. **krytis-side follow-up** (not this repo, see "Decisions" above):
     update `project.conf`'s `source-caches:`/`artifacts:` entries to
     point at `bst-cache.<baseDomain>:7981`/`:7982`, `auth.server-cert`
     at a copy of `components/buildbarn/certs/server.crt`, and switch
