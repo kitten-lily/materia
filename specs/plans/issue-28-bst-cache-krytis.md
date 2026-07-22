@@ -246,9 +246,38 @@ every bug found getting there.
    `bst-artifact-server` spike which would have required a custom
    `images/bst-cache/Dockerfile`). Renovate's `quadlet` manager should
    track these once the component exists, same as every other pinned image.
-6. **Disk sizing on bow** — still open from the original spike. Server
-   needs to hold every architecture's built artifacts krytis cares about;
-   larger than a client-side `cache: quota: 50G` setting.
+6. **Resolved: CAS quota = 100G.** Grounded in one real data point: a
+   partial local test push (~30 freedesktop-sdk bootstrap elements,
+   stopped well before completion) already used 1.5G in `bb-storage`'s
+   CAS. Combined with the full dependency graph being ~150+ elements
+   (`mise validate` on `oci/krytis/image.bst`) and krytis targeting a
+   single architecture (`x86_64`, with an `x86_64_v3` on/off variant — at
+   most ~2x, not a multi-arch multiplier), a full single-variant
+   population is plausibly 10–30G, with much smaller growth per
+   subsequent build since CAS dedupes shared blobs (toolchain, base
+   runtime) across builds. **bow has 401G free on `/var/lib/materia-data`
+   right now** (user-confirmed) — 100G leaves ~300G for the media
+   libraries (jellyfin/grimmory/audiobookshelf) that already live on the
+   same disk, while giving 3–10x headroom over the estimated working set
+   for growth and multiple historical build generations before Buildbarn's
+   own LRU eviction kicks in.
+
+   Only the CAS "blocks" backend needs this size — confirmed from the
+   krytis quadlet's own config (`bb-asset`'s `assetCache` backend only
+   holds URI→digest mapping metadata; the actual tarball/blob bytes for
+   *both* artifacts and sources are forwarded to and stored in
+   `bb-storage`'s CAS via `contentAddressableStorage: { grpc: { client:
+   { address: 'localhost:7982' } } }`). Concrete sizes for
+   `config/storage.jsonnet` on bow (scaled up from krytis's local-test
+   values, which were picked without real headroom data):
+   - CAS `blocksOnBlockDevice.sizeBytes`: `100 * 1024^3` (100G) — was 64G
+     locally.
+   - ActionCache blocks: 2G (headroom over the local test's 512M in case
+     action-cache entries proliferate with build variation — these are
+     small metadata records, not raw content, so this is generous already).
+   - FileSystemAccessCache blocks: 100M (was 20M locally — tiny either way).
+   - `bb-asset`'s own `assetCache.blobAccess` local backend: 1G (URI→digest
+     mapping metadata only, was 512M locally).
 7. **JWT minting tooling** — does generating the `push`/`pull` tokens from
    the HS256 secret get a `mise` task (like `hz:storagebox:install-key`,
    which already writes secrets straight into a host's vault via `sops
@@ -257,15 +286,9 @@ every bug found getting there.
    design had — no SAN/hostname parameter needed, since the token doesn't
    encode where it's used, only who's allowed to use it.
 
-Next step: #2 and #3 are now resolved — exposure mechanism, blueprint
-shape, and the exact `pangolin.pod`/`traefik_config.yml.gotmpl` changes
-needed are all known, and `allow_raw_resources` is already enabled. What's
-left is #5 (image — already effectively resolved too, krytis pins by
-digest, no build step), #6 (disk sizing — needs a real number from
-whoever's picking bow's LVM allocation), and #7 (JWT minting tooling —
+Next step: #1–6 are now resolved. Only #7 remains (JWT minting tooling —
 needs a decision on `mise` task vs. documented manual step, low-stakes
-either way). Nothing left blocks writing the component; remaining
-questions are sizing/tooling details, not design unknowns. The JWT switch
+either way). Nothing left blocks writing the component. The JWT switch
 was still worth making even though it didn't unlock HTTP-resource exposure
 as hoped — it drops the CA/client-cert machinery regardless of which
 exposure mechanism ends up in front of it.
