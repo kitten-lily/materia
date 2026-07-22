@@ -9,5 +9,5 @@ Components = ["restic-backup", "beszel-agent"]
 Components = ["newt"]
 
 [Hosts.bow]
-Components = ["music", "grimmory", "audiobookshelf", "jellyfin"]
+Components = ["music", "grimmory", "audiobookshelf", "jellyfin", "buildbarn"]
 Roles = ["base", "tunneled"]

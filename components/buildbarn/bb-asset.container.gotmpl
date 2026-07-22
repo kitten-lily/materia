@@ -1,0 +1,26 @@
+[Unit]
+Description=krytis Buildbarn remote-asset (source cache index)
+Wants=network-online.target
+After=network-online.target bb-storage.service
+Requires=bb-storage.service
+
+[Container]
+Image=ghcr.io/buildbarn/bb-remote-asset@sha256:55566d19f722ac78a4a67c431de0efd5a834137033468af0848b964ac1aafefe
+ContainerName=bb-asset
+# See bb-storage.container.gotmpl for why this is newt-net, not
+# Network=host like krytis's own rootless local test.
+Network=newt-net
+Exec=/config/asset.jsonnet
+
+Volume={{ m_dataDir "buildbarn" }}/config:/config:ro,Z
+Volume={{ m_dataDir "buildbarn" }}/certs:/certs:ro,Z
+Secret=materia-serverKeyPem,type=mount,target=/secrets/server.key,mode=0400
+Secret=materia-jwtJwks,type=mount,target=/secrets/jwt-jwks.json,mode=0400
+
+Volume=/var/lib/materia-data/buildbarn/asset-cache:/data/asset-cache:Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

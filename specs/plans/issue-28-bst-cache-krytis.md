@@ -334,3 +334,88 @@ The JWT switch was still worth making even though it didn't unlock
 HTTP-resource exposure as hoped (blocked upstream by
 `fosrl/pangolin#115`) — it drops the CA/client-cert machinery regardless
 of which exposure mechanism ends up in front of it.
+
+## Implementation
+
+### Files created / modified (this repo)
+
+1. `components/buildbarn/` (new) — `MANIFEST.toml`, `bb-storage.container.gotmpl`,
+   `bb-asset.container.gotmpl`, `config/{common.libsonnet,storage.jsonnet,asset.jsonnet}`,
+   `certs/{README.md,server.crt}`, `blueprint-resources.yaml`. Ported from
+   krytis's tested design (PRs #341–#343): `Network=newt-net` instead of
+   `Network=host` (bow is rootful bare-metal, not krytis's rootless dev
+   test box), JWT auth instead of mTLS, LVM bind mounts under
+   `/var/lib/materia-data/buildbarn/` instead of podman named volumes,
+   100G CAS quota.
+2. `.mise/tasks/buildbarn/{secret-init,mint-token,server-cert-init}` (new)
+   — JWT secret/token minting (already committed, see git history) and
+   server cert generation.
+3. `MANIFEST.toml` (root) — added `"buildbarn"` to `Hosts.bow.Components`.
+4. `components/pangolin/pangolin.pod` — two new `PublishPort` lines
+   (`7981:7981/tcp`, `7982:7982/tcp`) for the raw TCP resources' Gerbil
+   port mapping.
+5. `components/pangolin/traefik/traefik_config.yml.gotmpl` — two new
+   named `entryPoints` (`tcp-7981`, `tcp-7982`).
+6. `AGENTS.md` — repo layout entry for `components/buildbarn/`.
+
+**Not independently verified**: the JWT `AuthenticationPolicy` block in
+`config/common.libsonnet` (`jwt: { jwksFile, validationJmespathExpression,
+metadataExtractionJmespathExpression }`) follows the exact same
+camelCase-of-snake_case field-naming pattern that was confirmed correct
+for the x509/mTLS policy during krytis's live testing, but hasn't itself
+been run against a live `bb-storage`/`bb-asset` binary the way the mTLS
+design was (braces/structure checked, field names derived from
+`jwt.proto`, not executed). Worth a real `mise buildbarn:secret-init` +
+a local container run before trusting this on bow — same spirit as
+krytis's own "first-deploy verification" process, not skipped here for a
+reason, just not yet done in this session.
+
+### Deployment steps (out of IaC scope, deploy-time)
+
+1. On `bow`, pre-create the bind-mount directories (materia treats the
+   data dir as fully managed — these must exist before the first
+   `materia update`, same prerequisite as grimmory's `/Books` or
+   jellyfin's `/Movies`+`/TVShows`):
+   ```
+   sudo mkdir -p /var/lib/materia-data/buildbarn/storage-cas/persistent_state \
+                 /var/lib/materia-data/buildbarn/storage-ac/persistent_state \
+                 /var/lib/materia-data/buildbarn/storage-fsac/persistent_state \
+                 /var/lib/materia-data/buildbarn/asset-cache/persistent_state
+   ```
+   (`persistent_state` pre-creation specifically: neither `bb_storage` nor
+   `bb_remote_asset` create it themselves — confirmed the hard way during
+   krytis's own local testing, see `docs/skills/ci-runner.md` there.)
+2. `mise buildbarn:secret-init` — generates the HS256 secret + JWKS,
+   writes to `attributes/bow.yml`.
+3. `mise buildbarn:server-cert-init --hostname bst-cache.<baseDomain>` —
+   generates the server cert, writes the key to `attributes/bow.yml`,
+   commits `components/buildbarn/certs/server.crt`.
+4. Create a Cloudflare A/AAAA record: `bst-cache.<baseDomain>` →
+   flutterina's public IP.
+5. `materia update` on `flutterina` — installs the `pangolin.pod`/
+   `traefik_config.yml.gotmpl` changes (requires a Traefik restart,
+   already handled by materia's normal restart-on-change behavior).
+6. `materia update` on `bow` — installs the `buildbarn` component.
+7. Paste `components/buildbarn/blueprint-resources.yaml`'s contents into
+   the Pangolin dashboard at **Settings > Blueprints** on `flutterina`
+   (one-time — Newt's own blueprint bootstrap already fired at first
+   boot and won't reapply automatically, see the file's own header
+   comment).
+8. `mise buildbarn:mint-token --role push` — paste into krytis's GitHub
+   Actions secrets (e.g. `BUILDBARN_PUSH_TOKEN`).
+9. `mise buildbarn:mint-token --role pull` — distribute out-of-band
+   (e.g. Proton Pass) to any dev machine that needs to fetch.
+10. **krytis-side follow-up** (not this repo, see "Decisions" above):
+    update `project.conf`'s `source-caches:`/`artifacts:` entries to
+    point at `bst-cache.<baseDomain>:7981`/`:7982`, `auth.server-cert`
+    at a copy of `components/buildbarn/certs/server.crt`, and switch
+    CI/local `buildstream.conf` from the `client-cert`/`client-key` shape
+    to `auth.access-token` pointing at the minted push/pull token file.
+
+### Out of scope
+
+- Migrating to a dedicated server once real usage/load is known (see
+  "Host" decision above — bow is explicitly temporary).
+- The separate, uncommitted `investigation-github-runner-bow.md` /
+  `issue-github-runner-bow.md` work (moving krytis's self-hosted runner
+  onto bow) — unrelated decision, not touched by this component.

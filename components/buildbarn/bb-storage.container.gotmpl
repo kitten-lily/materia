@@ -1,0 +1,45 @@
+[Unit]
+Description=krytis Buildbarn storage (CAS + AC + FSAC)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=ghcr.io/buildbarn/bb-storage@sha256:155fa806de0933e6222681353e2e9fe2f51bd2a78f88dd254ae0b5989fb8e585
+ContainerName=bb-storage
+# Join newt-net so Newt reaches it by container name for the raw TCP
+# resource target (same pattern as every other tunneled component here) —
+# unlike krytis's own rootless local test, which used Network=host to
+# sidestep rootless bridge networking needing nft/iptables NAT that wasn't
+# guaranteed available on that dev box. bow is a rootful bare-metal
+# Flatcar host; the standard newt-net bridge applies here.
+Network=newt-net
+# The binary takes the config path as a bare positional argument, not
+# "-config <path>" — passing "-config" makes it print a usage error.
+Exec=/config/storage.jsonnet
+
+Volume={{ m_dataDir "buildbarn" }}/config:/config:ro,Z
+Volume={{ m_dataDir "buildbarn" }}/certs:/certs:ro,Z
+# secretMount can't set mode= (confirmed against materia's source — see
+# this repo's AGENTS.md gotchas) — hand-write the Secret= line for the
+# private key so it lands at 0400, not the type=mount default 0444.
+Secret=materia-serverKeyPem,type=mount,target=/secrets/server.key,mode=0400
+Secret=materia-jwtJwks,type=mount,target=/secrets/jwt-jwks.json,mode=0400
+
+# CAS/AC/FSAC data — bind mount from bow's LVM data disk
+# (/var/lib/materia-data, created by bare-metal.bu's lvm-data.service),
+# not a podman named volume on root storage. Buildbarn's CAS does
+# high-volume small-blob random-access I/O under CI load; same reasoning
+# that put grimmory's Books and jellyfin's media there instead of a named
+# volume. Directories (including each backend's "persistent_state"
+# subdirectory — neither bb_storage nor bb_remote_asset create it
+# themselves) must be pre-created on bow before the first `materia
+# update`, same as grimmory/jellyfin's bind-mount prerequisites.
+Volume=/var/lib/materia-data/buildbarn/storage-cas:/data/storage-cas:Z
+Volume=/var/lib/materia-data/buildbarn/storage-ac:/data/storage-ac:Z
+Volume=/var/lib/materia-data/buildbarn/storage-fsac:/data/storage-fsac:Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

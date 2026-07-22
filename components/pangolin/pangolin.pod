@@ -16,6 +16,13 @@ PublishPort=443:443/tcp
 PublishPort=443:443/udp
 PublishPort=51820:51820/udp
 PublishPort=21820:21820/udp
+# Buildbarn raw TCP resources (bst-cache-index / bst-cache-storage on bow)
+# — see components/buildbarn/blueprint-resources.yaml and
+# specs/plans/issue-28-bst-cache-krytis.md. Raw TCP/UDP resources need a
+# manual Gerbil port mapping per Pangolin's own "Proxied Resources" docs;
+# there's no dynamic-resource mechanism for these like HTTP resources get.
+PublishPort=7981:7981/tcp
+PublishPort=7982:7982/tcp
 
 [Service]
 Restart=always

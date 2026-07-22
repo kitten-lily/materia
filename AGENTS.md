@@ -177,6 +177,15 @@ components/
     jellyfin.container.gotmpl     # joins newt-net, /dev/dri passthrough, ro Movies + TVShows binds from LVM data disk, jellyfin.<baseDomain>
     jellyfin-config.volume        # named volume for /config (root-owned, no User=/Group=)
     jellyfin-cache.volume         # named volume for /cache (root-owned, no User=/Group=)
+  buildbarn/                     # BuildStream cache server for krytis (standalone, bow-only, issue #28)
+    MANIFEST.toml                # component manifest — Secrets (jwtJwks, serverKeyPem), Services
+    bb-storage.container.gotmpl   # CAS + ActionCache + FSAC, joins newt-net, bind mounts from LVM data disk
+    bb-asset.container.gotmpl     # remote-asset index, joins newt-net, reaches bb-storage by container name
+    config/common.libsonnet       # shared JWT auth policy + authorizers (push/pull role claim)
+    config/storage.jsonnet        # bb-storage config — 100G CAS quota, see specs/plans/issue-28-bst-cache-krytis.md
+    config/asset.jsonnet          # bb-asset config — 'error' fetcher (pure cache, never fetches on its own)
+    certs/server.crt              # self-signed server TLS cert (public; key is a materia Secret)
+    blueprint-resources.yaml      # raw TCP resource declarations — pasted into Pangolin dashboard manually, see file header
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper

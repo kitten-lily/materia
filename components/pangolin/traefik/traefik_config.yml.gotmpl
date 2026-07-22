@@ -19,6 +19,14 @@ entryPoints:
     transport:
       respondingTimeouts:
         readTimeout: "30m"
+  # Buildbarn raw TCP resources (bst-cache-index / bst-cache-storage on
+  # bow) — see components/buildbarn/blueprint-resources.yaml. Raw TCP
+  # resources need their own named entryPoint per Pangolin's "Proxied
+  # Resources" docs; there's no dynamic HTTP-resource equivalent for these.
+  tcp-7981:
+    address: ":7981/tcp"
+  tcp-7982:
+    address: ":7982/tcp"
 
 serversTransport:
   insecureSkipVerify: true

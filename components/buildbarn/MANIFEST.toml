@@ -1,0 +1,11 @@
+Secrets = ["jwtJwks", "serverKeyPem"]
+
+[Defaults]
+
+[[Services]]
+Service = "bb-storage.service"
+RestartedBy = ["bb-storage.container", "config/storage.jsonnet", "config/common.libsonnet"]
+
+[[Services]]
+Service = "bb-asset.service"
+RestartedBy = ["bb-asset.container", "config/asset.jsonnet", "config/common.libsonnet"]

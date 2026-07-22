@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="Generate Buildbarn's self-signed server TLS cert (server-only — see mint-token for actual access control) and write the private key to a server's vault"
+
+#USAGE flag "--server-name <name>" help="Server whose vault gets the private key" default="bow"
+#USAGE flag "--hostname <hostname>" help="Cert SAN — must resolve via DNS to wherever the raw TCP resource is actually reachable, e.g. bst-cache.<baseDomain>"
+
+set -euo pipefail
+
+_server_name="${usage_server_name:-bow}"
+_hostname="${usage_hostname:?hostname required, use --hostname (e.g. bst-cache.example.com)}"
+_vault="attributes/${_server_name}.yml"
+_cert_dir="components/buildbarn/certs"
+
+if [[ ! -f "$_vault" ]]; then
+  gum style --foreground 1 "error: $_vault not found — create it first: sops $_vault"
+  exit 1
+fi
+
+if sops -d "$_vault" 2>/dev/null | yq -e '.components.buildbarn.serverKeyPem' >/dev/null 2>&1; then
+  gum style --foreground 3 "==> components.buildbarn.serverKeyPem already exists in $_vault — skipping."
+  gum style --foreground 3 "    Remove it first to regenerate (every existing project.conf server-cert reference goes stale)."
+  exit 0
+fi
+
+mkdir -p "$_cert_dir"
+_tmpdir=$(mktemp -d)
+trap 'rm -rf "$_tmpdir"' EXIT
+
+# Self-signed — no CA needed. Unlike krytis's own local mTLS design, there
+# is no second (client) cert to sign here: the JWT bearer token is the
+# actual authorization mechanism (see mint-token). This cert exists purely
+# for transport confidentiality through the tunnel — "server-only TLS" in
+# specs/plans/issue-28-bst-cache-krytis.md.
+openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+  -keyout "$_tmpdir/server.key" \
+  -out "$_tmpdir/server.crt" \
+  -subj "/CN=${_hostname}" \
+  -addext "subjectAltName=DNS:${_hostname}"
+
+_key_json=$(jq -Rs . <"$_tmpdir/server.key")
+sops --set "[\"components\"][\"buildbarn\"][\"serverKeyPem\"] ${_key_json}" "$_vault"
+
+cp "$_tmpdir/server.crt" "$_cert_dir/server.crt"
+
+gum style --foreground 2 "==> private key written to $_vault: components.buildbarn.serverKeyPem"
+gum style --foreground 2 "==> public cert written to $_cert_dir/server.crt (commit this — it's public, non-secret)"
+gum style --foreground 3 ""
+gum style --foreground 3 "Before this cert is useful to any client:"
+gum style --foreground 3 "1. Create a Cloudflare A/AAAA record: ${_hostname} -> flutterina's public IP."
+gum style --foreground 3 "2. Point krytis's project.conf auth.server-cert at a copy of $_cert_dir/server.crt."

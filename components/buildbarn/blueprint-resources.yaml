@@ -1,0 +1,43 @@
+# Pangolin blueprint fragment declaring Buildbarn's two raw TCP resources.
+#
+# NOT applied automatically by materia. Newt on bow already ran its own
+# one-time PROVISIONING_BLUEPRINT_FILE bootstrap (see components/newt/) —
+# that mechanism only fires once, at first boot, and "the dashboard is the
+# source of truth after first boot" (see components/newt docs). Adding
+# this to newt's existing blueprint.yaml.gotmpl would not retroactively
+# apply it to an already-provisioned bow.
+#
+# Deploy-time step (same category as jellyfin's SELinux boolean and
+# grimmory's "Pangolin UI configuration" step — see their plans):
+# paste this file's contents into the Pangolin dashboard at
+# Settings > Blueprints, on flutterina, once.
+#
+# Requires bb-storage/bb-asset to be running on bow (Network=newt-net,
+# reachable by container name — see bb-storage.container.gotmpl /
+# bb-asset.container.gotmpl) and flags.allow_raw_resources: true in
+# Pangolin's own config (already set —
+# components/pangolin/config/config.yml.gotmpl:56).
+#
+# Also requires the two new Traefik entryPoints + pangolin.pod
+# PublishPort lines (see components/pangolin/traefik/traefik_config.yml.gotmpl
+# and components/pangolin/pangolin.pod) to already be deployed on
+# flutterina, and a server restart there — per Pangolin's own "Proxied
+# Resources" docs.
+
+public-resources:
+  bst-cache-index:
+    name: BST Cache Index
+    mode: tcp
+    proxy-port: 7981
+    targets:
+      - hostname: bb-asset
+        port: 7981
+        method: tcp
+  bst-cache-storage:
+    name: BST Cache Storage
+    mode: tcp
+    proxy-port: 7982
+    targets:
+      - hostname: bb-storage
+        port: 7982
+        method: tcp
