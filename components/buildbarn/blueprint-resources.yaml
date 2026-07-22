@@ -30,7 +30,8 @@ public-resources:
     mode: tcp
     proxy-port: 7981
     targets:
-      - hostname: bb-asset
+      - site: bow
+        hostname: bb-asset
         port: 7981
         # No 'method' field: Pangolin's blueprint schema requires it
         # omitted for tcp/udp resources (TargetSchema.method is enum
@@ -42,6 +43,7 @@ public-resources:
     mode: tcp
     proxy-port: 7982
     targets:
-      - hostname: bb-storage
+      - site: bow
+        hostname: bb-storage
         port: 7982
         # No 'method' field — see above.
