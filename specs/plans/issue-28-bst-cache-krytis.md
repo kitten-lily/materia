@@ -177,20 +177,63 @@ every bug found getting there.
    safe to hardcode in a static file. **Conclusion: raw TCP resource is
    the exposure mechanism**, full stop, until upstream Pangolin adds h2c
    support — not a design preference, a hard current constraint.
-2. **Two raw TCP resources, one per Buildbarn service.** Confirmed
-   Buildbarn needs two reachable ports (`bb-asset` index, `bb-storage`
-   storage) matching `project.conf`'s `type: index`/`type: storage` split
-   (krytis PRs #342/#343) — back to the original raw-TCP framing: no
-   friendly hostname per resource, clients connect to the Pangolin VPS's
-   IP and two assigned ports directly. Still need to confirm whether raw
-   TCP resources are strictly 1:1 with a backend port, and what port
-   numbers get assigned/exposed externally vs. the container-internal ones.
-3. **Raw TCP resource + Newt interaction** — confirm Newt (already running
-   on bow via `[Roles.tunneled]`) is what carries a raw TCP resource's
-   traffic to the `bb-storage`/`bb-asset` containers on `newt-net` (same
-   container-name reachability pattern as every other tunneled component
-   here), or whether raw TCP resources have a different
-   backend-reachability mechanism.
+2. **Resolved: two raw TCP resources, one per Buildbarn service, and both
+   can be declared in a blueprint (not manual dashboard clicking).**
+   Confirmed against Pangolin's blueprint schema — `public-resources`
+   supports `mode: tcp` with `proxy-port` (the public port on the Pangolin
+   VPS) and `targets: [{hostname, port, method}]`, same shape as HTTP
+   resources. Concretely:
+   ```yaml
+   public-resources:
+     bst-cache-index:
+       name: BST Cache Index
+       mode: tcp
+       proxy-port: 7981
+       targets:
+         - hostname: bb-asset
+           port: 7981
+           method: tcp
+     bst-cache-storage:
+       name: BST Cache Storage
+       mode: tcp
+       proxy-port: 7982
+       targets:
+         - hostname: bb-storage
+           port: 7982
+           method: tcp
+   ```
+   This slots into newt's existing `blueprint.yaml.gotmpl`
+   (currently only has a `sites:` section) or a second blueprint file —
+   either way it's the same `PROVISIONING_BLUEPRINT_FILE` one-time-bootstrap
+   mechanism newt already uses (**not** continuously reconciled; "dashboard
+   is the source of truth after first boot" per the existing newt component
+   docs — consistent with how sites already work here).
+
+   **What blueprints don't cover, confirmed from Pangolin's own raw-TCP
+   docs**: "Proxied Resources require extra configuration... firewall
+   rules, Docker port mappings, and Traefik entry points... require a
+   server restart." Concretely, on `flutterina` (the pangolin/edge host,
+   not bow):
+   - `components/pangolin/pangolin.pod` needs two new `PublishPort` lines
+     (one per `proxy-port`, matching the raw-TCP doc's `gerbil: ports:`
+     example — Gerbil is in the shared pod, so this is a `pangolin.pod`
+     change, not a new pod).
+   - `components/pangolin/traefik/traefik_config.yml.gotmpl` needs two new
+     named `entryPoints` (`tcp-7981: address: ":7981/tcp"`, same for 7982)
+     — this is the one place a new component genuinely has to touch an
+     existing component's static config, unlike every HTTP-resource
+     component so far which only needed a `newt-net` join.
+   - `flags: allow_raw_resources: true` (self-hosted-only feature) —
+     **already set**, confirmed at
+     `components/pangolin/config/config.yml.gotmpl:56`. Nothing to do here.
+3. **Resolved: raw TCP resources use the exact same Newt/`newt-net` target
+   mechanism as HTTP resources.** Confirmed directly in Pangolin's docs:
+   "TCP and UDP resources use targets like HTTP/HTTPS resources... Assign
+   targets to different sites." No different backend-reachability
+   mechanism — `bb-storage`/`bb-asset` just need `Network=newt-net` like
+   every other tunneled component here, and Newt (already running on bow
+   via `[Roles.tunneled]`) carries the traffic exactly as it does for
+   jellyfin/navidrome/etc.
 4. **Server cert SAN, again.** Since raw TCP resources genuinely have no
    hostname (client dials the Pangolin VPS IP + port directly), Buildbarn's
    server cert SAN needs that IP, not a domain name — same caveat the
@@ -214,11 +257,15 @@ every bug found getting there.
    design had — no SAN/hostname parameter needed, since the token doesn't
    encode where it's used, only who's allowed to use it.
 
-Next step: resolve #2 and #3 (raw TCP resource port assignment + Newt
-reachability) — the same pair of questions the very first version of this
-plan had, before the JWT/h2c detour. Everything else (storage, host, auth
-mechanism, secrets, image, disk sizing, JWT tooling) carries over cleanly
-from either the original spike or krytis's existing design. The JWT switch
+Next step: #2 and #3 are now resolved — exposure mechanism, blueprint
+shape, and the exact `pangolin.pod`/`traefik_config.yml.gotmpl` changes
+needed are all known, and `allow_raw_resources` is already enabled. What's
+left is #5 (image — already effectively resolved too, krytis pins by
+digest, no build step), #6 (disk sizing — needs a real number from
+whoever's picking bow's LVM allocation), and #7 (JWT minting tooling —
+needs a decision on `mise` task vs. documented manual step, low-stakes
+either way). Nothing left blocks writing the component; remaining
+questions are sizing/tooling details, not design unknowns. The JWT switch
 was still worth making even though it didn't unlock HTTP-resource exposure
 as hoped — it drops the CA/client-cert machinery regardless of which
 exposure mechanism ends up in front of it.
