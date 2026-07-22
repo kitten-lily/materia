@@ -41,6 +41,14 @@
       // at line 144) was exactly this mismatch, predicted as a risk in
       // specs/plans/issue-28-bst-cache-krytis.md.
       claimsValidationJmespathExpression: { expression: '`true`' },
+      // Required: the default (unset) is UNKNOWN (proto3 zero value),
+      // which NewSetFromConfiguration rejects with "Unknown cache
+      // replacement policy". jwt.proto's own doc says "It is advised
+      // that this is set to LEAST_RECENTLY_USED."
+      cacheReplacementPolicy: 'LEAST_RECENTLY_USED',
+      // Token-validation cache size (in-memory, per validated token).
+      // Small fleet, two long-lived tokens → a tiny cache is plenty.
+      maximumCacheSize: 8,
       // Extracts the token payload's "role" claim into
       // AuthenticationMetadata.public so the Authorizer below can read it
       // back as authenticationMetadata.public.role — same mechanism
