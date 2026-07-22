@@ -32,7 +32,11 @@ public-resources:
     targets:
       - hostname: bb-asset
         port: 7981
-        method: tcp
+        # No 'method' field: Pangolin's blueprint schema requires it
+        # omitted for tcp/udp resources (TargetSchema.method is enum
+        # http/https/h2c, and a refine() rejects any method on tcp/udp
+        # with "targets must not have a 'method' field"). Confirmed
+        # against server/lib/blueprints/types.ts.
   bst-cache-storage:
     name: BST Cache Storage
     mode: tcp
@@ -40,4 +44,4 @@ public-resources:
     targets:
       - hostname: bb-storage
         port: 7982
-        method: tcp
+        # No 'method' field — see above.

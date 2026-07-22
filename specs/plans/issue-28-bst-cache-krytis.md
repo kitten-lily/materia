@@ -199,8 +199,13 @@ every bug found getting there.
    can be declared in a blueprint (not manual dashboard clicking).**
    Confirmed against Pangolin's blueprint schema — `public-resources`
    supports `mode: tcp` with `proxy-port` (the public port on the Pangolin
-   VPS) and `targets: [{hostname, port, method}]`, same shape as HTTP
-   resources. Concretely:
+   VPS) and `targets: [{hostname, port}]`. **No `method` field on tcp/udp
+   targets** — Pangolin's blueprint schema (server/lib/blueprints/types.ts)
+   has a refine() that rejects any `method` on tcp/udp resources ("targets
+   must not have a 'method' field"); `method` (enum http/https/h2c) only
+   applies to HTTP resources. The original plan draft used `method: tcp`,
+   which the live dashboard rejects with "expected one of http|https|h2c".
+   Concretely:
    ```yaml
    public-resources:
      bst-cache-index:
@@ -210,7 +215,6 @@ every bug found getting there.
        targets:
          - hostname: bb-asset
            port: 7981
-           method: tcp
      bst-cache-storage:
        name: BST Cache Storage
        mode: tcp
@@ -218,7 +222,6 @@ every bug found getting there.
        targets:
          - hostname: bb-storage
            port: 7982
-           method: tcp
    ```
    This slots into newt's existing `blueprint.yaml.gotmpl`
    (currently only has a `sites:` section) or a second blueprint file —
