@@ -182,7 +182,7 @@ components/
     bb-storage.container.gotmpl   # CAS + ActionCache + FSAC, joins newt-net, bind mounts from LVM data disk
     bb-asset.container.gotmpl     # remote-asset index, joins newt-net, reaches bb-storage by container name
     config/common.libsonnet       # shared JWT auth policy + authorizers (push/pull role claim)
-    config/storage.jsonnet        # bb-storage config — 100G CAS quota, see specs/plans/issue-28-bst-cache-krytis.md
+    config/storage.jsonnet        # bb-storage config — 130G CAS quota / 8-block layout, see BUG-006
     config/asset.jsonnet          # bb-asset config — 'error' fetcher (pure cache, never fetches on its own)
     certs/server.crt              # self-signed server TLS cert (public; key is a materia Secret)
     blueprint-resources.yaml      # raw TCP resource declarations — pasted into Pangolin dashboard manually, see file header
@@ -871,6 +871,35 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   vault) and `mise buildbarn:mint-token` signs with
   `openssl pkeyutl -sign -rawin` (Ed25519 is one-shot, not
   hash-then-sign).
+- **Buildbarn's local CAS backend has a per-blob size ceiling completely
+  independent of `maximumMessageSizeBytes` — don't assume raising the
+  gRPC message-size limit alone fixes a large-blob push failure.**
+  `contentAddressableStorage.backend.local` in `storage.jsonnet` divides
+  `blocksOnBlockDevice.sizeBytes` into `oldBlocks + currentBlocks +
+  newBlocks + spareBlocks` fixed-size blocks, and every blob must fit
+  inside a single block — confirmed against
+  [Buildbarn's own block-sizing writeup](https://meroton.github.io/blog/buildbarn-block-sizes/).
+  The max storable blob is `blocksOnBlockDevice.sizeBytes / totalBlocks`,
+  a number the original 100G/38-block sizing plan
+  (`specs/plans/issue-28-bst-cache-krytis.md`, open question #6) never
+  computed — it only reasoned about total CAS capacity. BUG-006: the
+  100G/38-block layout (`8/24/3/3`) gave a ~2.63 GiB per-blob ceiling,
+  which rejected krytis's assembled OCI image blob (confirmed 5.89 GiB)
+  with gRPC `INVALID_ARGUMENT` on `UploadBlob`. Raising
+  `maximumMessageSizeBytes` from 2 GiB to 8 GiB (a real but *separate*
+  gRPC-transport-level limit) did not fix it — identical error on retry.
+  Fixed by changing the block layout to `1/4/2/1` over 130G (16.25
+  GiB/block, 8 blocks total) instead: sized against bow's *actual*
+  headroom at fix time (357G free of 5.5T, 94% used — down from the
+  401G free the original plan assumed, consumed by the growing media
+  libraries sharing that disk), not the original assumption. When sizing
+  any local CAS/AC/FSAC backend, compute `sizeBytes / totalBlocks` and
+  compare against the largest blob you actually expect — total capacity
+  alone doesn't bound the largest single object the cache can hold.
+  Changing block counts on an existing deployment reshapes the local
+  storage ring buffer; if bb-storage errors on startup after a block-count
+  change, `/data/storage-cas/{blocks,key_location_map,persistent_state}`
+  is pure cache state — safe to wipe and let it repopulate. See BUG-006.
 
 ## Provisioning (Butane/Ignition)
 
