@@ -28,7 +28,7 @@ failed:
 
 gRPC status `3` = `INVALID_ARGUMENT`.
 
-## Root cause (probable, not yet confirmed against an exact blob size)
+## Root cause, attempt 1 (necessary but not sufficient)
 
 `components/buildbarn/config/common.libsonnet` sets:
 
@@ -38,58 +38,104 @@ maximumMessageSizeBytes: 2 * 1024 * 1024 * 1024,  // 2 GiB
 
 applied to both `storage.jsonnet`'s and `asset.jsonnet`'s `grpcServers`.
 Buildbarn's gRPC message-size interceptor returns `INVALID_ARGUMENT` for
-any single message exceeding this limit. `oci/krytis/image.bst`'s blob is
-the full assembled desktop OCI image (freedesktop-sdk + niri + desktop
-apps) — plausibly multi-GB uncompressed, and if BuildStream's CAS client
-sends it via a single-message RPC (e.g. `BatchUpdateBlobs`, intended for
-bundling many *small* blobs, not streaming one huge one) rather than a
-chunked `ByteStream.Write`, the whole blob has to fit under
-`maximumMessageSizeBytes` in one message. Every other element in the
-build is small enough to clear this bar; the final assembled image likely
-isn't.
+any single message exceeding this limit, and this was raised to 8 GiB
+(commit `1d786a6`) as a reasonable general-purpose bump. **This did not
+fix the bug** — retried after bb-storage/bb-asset restarted onto the new
+config, identical `INVALID_ARGUMENT` on the same blob. The 8 GiB raise is
+harmless and worth keeping (gRPC transport-level ceiling is a real,
+separate limit from the one below), but it was the wrong hypothesis for
+*this* failure.
 
-**Not yet confirmed:** the exact byte size of blob
-`45589bfb88a5e5d72aba50adb16bb0db4ef9ccdcd7fb994aa269734f6a54057f`. The
-krytis CI run that hit this had already cached the element from an
-earlier build, so no fresh size was logged; would need either a local
-`bst artifact log`/CAS inspection on the krytis side, or bow-side
-Prometheus metrics (`enablePrometheus: true` is already set — check
-`buildbarn_blobstore_*_size_bytes` or similar) to pin down the actual
-number before picking a specific new limit.
+## Root cause, attempt 2 (confirmed)
+
+Buildbarn's local storage backend (`contentAddressableStorage.backend.local`
+in `storage.jsonnet`) divides `blocksOnBlockDevice.source.file.sizeBytes`
+into `oldBlocks + currentBlocks + newBlocks + spareBlocks` fixed-size
+blocks, and **every blob must fit inside a single block** — a limit
+completely independent of `maximumMessageSizeBytes`. Confirmed against
+[Buildbarn's own block-sizing writeup](https://meroton.github.io/blog/buildbarn-block-sizes/):
+the max storable blob is `blocksOnBlockDevice.sizeBytes / totalBlocks`.
+
+The original layout — `oldBlocks: 8, currentBlocks: 24, newBlocks: 3,
+spareBlocks: 3` (38 blocks) over 100G — gives a per-blob ceiling of
+`100 * 1024^3 / 38` ≈ **2.63 GiB**. The actual failing blob
+(`oci/krytis/image.bst`, hash
+`45589bfb88a5e5d72aba50adb16bb0db4ef9ccdcd7fb994aa269734f6a54057f`) was
+confirmed at **6,321,065,984 bytes (5.89 GiB)** — more than double the
+ceiling. This, not message size, is why the push failed both before and
+after the 8 GiB `maximumMessageSizeBytes` bump.
+
+The original 100G/38-block sizing in
+`specs/plans/issue-28-bst-cache-krytis.md` (open question #6) reasoned
+about total CAS *capacity* only — it never computed the per-block max
+blob size implied by the block count. That's the gap this bug exposes.
 
 ## Fix
 
-Raised `maximumMessageSizeBytes` in `common.libsonnet` from 2 GiB to
-8 GiB — CAS storage is already provisioned generously (100G,
-`blocksOnBlockDevice.source.file.sizeBytes` in `storage.jsonnet`), so
-the message-size ceiling costs nothing to raise generously rather than
-tuning precisely to the current image size, since the image will only
-grow as more desktop components are added. The constant is shared via
-`common.libsonnet`, so both `storage.jsonnet` (CAS blob upload, where
-this failure occurred) and `asset.jsonnet` pick it up automatically.
+Two changes, both in `components/buildbarn/config/`:
 
-This was a `quick-fix`-shaped change (single jsonnet constant, no logic
-risk) per AGENTS.md § Discovered Defects — no separate `specs/plans/`
-doc, this BUG-006 file serves as the plan record.
+1. `common.libsonnet`: `maximumMessageSizeBytes` 2 GiB → 8 GiB (kept from
+   attempt 1, harmless general-purpose headroom for the gRPC transport
+   limit).
+2. `storage.jsonnet`'s CAS `local` backend: block layout changed from
+   `oldBlocks: 8, currentBlocks: 24, newBlocks: 3, spareBlocks: 3` (100G,
+   38 blocks, 2.63 GiB/block) to `oldBlocks: 1, currentBlocks: 4,
+   newBlocks: 2, spareBlocks: 1` (**130G**, 8 blocks, **16.25 GiB/block**
+   — 2.8x margin over the confirmed 5.89 GiB blob).
+
+**Sizing decision:** bow's `/var/lib/materia-data` was at **94% disk
+utilization (357G free of 5.5T)** when this was fixed — down from the
+401G free the original 100G CAS quota was sized against
+(`specs/plans/issue-28-bst-cache-krytis.md`), consumed by the media
+libraries (jellyfin/grimmory/audiobookshelf/music) sharing that disk.
+Given that pressure, a same-size (100G), block-count-only reduction
+(e.g. 6 blocks → 16.67 GiB/block, zero extra disk) was considered and
+rejected by the user in favor of a modest +30G growth to 130G — judged
+worth trading a sliver of the shared disk's remaining headroom for
+keeping *some* extra block-count/granularity (8 blocks vs. 6) over the
+zero-cost alternative. `actionCache` and `fileSystemAccessCache` local
+backends were left unchanged (2G/100M, small metadata records, not
+raw blob content — not implicated in this failure).
+
+This moved past `quick-fix` scope once the message-size fix failed —
+root cause required actual investigation (a second, independent limit
+buried in Buildbarn's local-storage block math) and a capacity trade-off
+decision affecting a disk shared with unrelated components. No separate
+`specs/plans/` doc was written; this BUG-006 file serves as the record
+per AGENTS.md § Discovered Defects (`fix-bug`).
 
 ## Verification
 
 **Repo-side (done):** `mise clean && mise ign --server-name bow` —
-Preflight rendered clean, confirming the jsonnet still parses/transpiles
-with no template errors.
+Preflight rendered clean, confirming the jsonnet template still
+parses/transpiles with no butane errors. (No local jsonnet evaluator
+exists in this repo's toolchain — the only real syntax/semantic
+verification path is a live container start.)
 
-**Not yet done — requires a live host action, tracked here so this
-doesn't get marked `fixed` prematurely:** Buildbarn reads
-`grpcServers.maximumMessageSizeBytes` at process start, not
-hot-reloaded, so the repo constant alone does nothing until bow's
-`bb-storage`/`bb-asset` containers actually restart on the new config
-(next `materia-update` run that picks up this commit, or a manual
-`systemctl restart bb-storage.service bb-asset.service` on bow). Then
-re-run krytis's `cache-warm.yml` (or a local `bst artifact push` of
-`oci/krytis/image.bst`) and confirm blob
-`45589bfb88a5e5d72aba50adb16bb0db4ef9ccdcd7fb994aa269734f6a54057f` (or
-its current equivalent) pushes without `INVALID_ARGUMENT` before closing
-this out as `fixed`.
+**Not yet done — requires live host actions, tracked here so this
+doesn't get marked `fixed` prematurely:**
+
+1. Redeploy: next `materia-update` run on bow that picks up this commit,
+   or a manual `systemctl restart bb-storage.service bb-asset.service`.
+   Buildbarn reads both `maximumMessageSizeBytes` and the CAS block
+   layout at process start only.
+2. **Changing `oldBlocks`/`currentBlocks`/`newBlocks`/`spareBlocks`
+   reshapes the local storage ring buffer.** Existing on-disk state
+   (`/data/storage-cas/{blocks,key_location_map,persistent_state}`) was
+   written under the old 38-block geometry; if bb-storage errors on
+   startup about a block-count/geometry mismatch, this is a pure cache
+   (losing it just forces re-population, not data loss) — safe to
+   `rm -rf` those three paths under `/data/storage-cas/` on bow and
+   restart. Confirm whether this was actually necessary once verified
+   live.
+3. Re-run krytis's `cache-warm.yml` (or a local `bst artifact push` of
+   `oci/krytis/image.bst`) and confirm blob
+   `45589bfb88a5e5d72aba50adb16bb0db4ef9ccdcd7fb994aa269734f6a54057f`
+   (or its current equivalent) pushes without `INVALID_ARGUMENT` before
+   closing this out as `fixed`.
+4. Re-check `df -h /var/lib/materia-data` after the resize lands to
+   confirm the +30G was actually consumed as expected (sparse file
+   growth, not a surprise full allocation).
 
 ## Cross-repo note
 
