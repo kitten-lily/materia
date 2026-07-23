@@ -1,6 +1,6 @@
 # BUG-006 — bow rejects push of krytis's final assembled OCI image: gRPC `INVALID_ARGUMENT` on UploadBlob
 
-**status:** found
+**status:** implemented-pending-verification
 **found:** 2026-07-23, during krytis's `cache-warm.yml` workflow run
 (https://github.com/starlit-os/krytis/actions/runs/30033645226/job/89319996724),
 verifying the bow artifact-cache wiring merged in krytis#343
@@ -57,25 +57,39 @@ Prometheus metrics (`enablePrometheus: true` is already set — check
 `buildbarn_blobstore_*_size_bytes` or similar) to pin down the actual
 number before picking a specific new limit.
 
-## Fix direction (not yet applied — needs plan-work/fix-bug per AGENTS.md Agent Rules)
+## Fix
 
-Raise `maximumMessageSizeBytes` in `common.libsonnet` well above whatever
-the final image's actual size turns out to be — CAS storage is already
-provisioned generously (100G, `blocksOnBlockDevice.source.file.sizeBytes`
-in `storage.jsonnet`), so the message-size ceiling costs nothing to raise
-generously (e.g. 8 GiB) rather than tuning precisely to the current image
-size, since the image will only grow as more desktop components are
-added. Applies to both `storage.jsonnet` (CAS blob upload, where this
-failure occurred) and potentially `asset.jsonnet` if remote-asset
-operations ever handle comparably large payloads.
+Raised `maximumMessageSizeBytes` in `common.libsonnet` from 2 GiB to
+8 GiB — CAS storage is already provisioned generously (100G,
+`blocksOnBlockDevice.source.file.sizeBytes` in `storage.jsonnet`), so
+the message-size ceiling costs nothing to raise generously rather than
+tuning precisely to the current image size, since the image will only
+grow as more desktop components are added. The constant is shared via
+`common.libsonnet`, so both `storage.jsonnet` (CAS blob upload, where
+this failure occurred) and `asset.jsonnet` pick it up automatically.
 
-This is a `quick-fix`-shaped change (single jsonnet constant, no logic
-risk) per AGENTS.md § Discovered Defects, but should still go through
-Preflight (`mise clean && mise ign --server-name bow`) before considering
-it done, and needs the corresponding running-host quadlet actually
-reloaded/redeployed on bow (not just the repo constant bumped) since
-Buildbarn's `grpcServers.maximumMessageSizeBytes` is read at process
-start, not hot-reloaded.
+This was a `quick-fix`-shaped change (single jsonnet constant, no logic
+risk) per AGENTS.md § Discovered Defects — no separate `specs/plans/`
+doc, this BUG-006 file serves as the plan record.
+
+## Verification
+
+**Repo-side (done):** `mise clean && mise ign --server-name bow` —
+Preflight rendered clean, confirming the jsonnet still parses/transpiles
+with no template errors.
+
+**Not yet done — requires a live host action, tracked here so this
+doesn't get marked `fixed` prematurely:** Buildbarn reads
+`grpcServers.maximumMessageSizeBytes` at process start, not
+hot-reloaded, so the repo constant alone does nothing until bow's
+`bb-storage`/`bb-asset` containers actually restart on the new config
+(next `materia-update` run that picks up this commit, or a manual
+`systemctl restart bb-storage.service bb-asset.service` on bow). Then
+re-run krytis's `cache-warm.yml` (or a local `bst artifact push` of
+`oci/krytis/image.bst`) and confirm blob
+`45589bfb88a5e5d72aba50adb16bb0db4ef9ccdcd7fb994aa269734f6a54057f` (or
+its current equivalent) pushes without `INVALID_ARGUMENT` before closing
+this out as `fixed`.
 
 ## Cross-repo note
 

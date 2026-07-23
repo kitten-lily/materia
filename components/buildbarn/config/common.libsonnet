@@ -25,7 +25,13 @@
 // mounted at deploy time — nothing sensitive is committed to this repo.
 
 {
-  maximumMessageSizeBytes: 2 * 1024 * 1024 * 1024,
+  // 8 GiB — CAS storage is provisioned generously (100G, see
+  // storage.jsonnet), so the message-size ceiling costs nothing to raise
+  // well past the largest observed artifact rather than tuning it
+  // precisely. The prior 2 GiB limit rejected krytis's assembled OCI
+  // image (oci/krytis/image.bst) with gRPC INVALID_ARGUMENT on
+  // UploadBlob — see specs/bugs/BUG-006.
+  maximumMessageSizeBytes: 8 * 1024 * 1024 * 1024,
 
   jwtAuthenticationPolicy: {
     jwt: {

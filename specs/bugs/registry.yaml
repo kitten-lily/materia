@@ -36,7 +36,7 @@ bugs:
     file: specs/bugs/BUG-005-audiobookshelf-podcasts-dir-missing-on-bow.md
   - id: BUG-006
     title: "bow rejects push of krytis's final assembled OCI image: gRPC INVALID_ARGUMENT on UploadBlob"
-    status: found
+    status: implemented-pending-verification
     severity: P2
     found: 2026-07-23
     epic: issue-28-bst-cache-krytis
