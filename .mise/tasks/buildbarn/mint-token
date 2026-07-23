@@ -18,7 +18,7 @@ push | pull) ;;
   ;;
 esac
 
-_priv_pem=$(sops -d "$_vault" 2>/dev/null | yq -r '.components.buildbarn.jwtPrivateKeyPem // ""')
+_priv_pem=$(fnox exec -- sops -d "$_vault" 2>/dev/null | yq -r '.components.buildbarn.jwtPrivateKeyPem // ""')
 if [[ -z "$_priv_pem" ]]; then
   gum style --foreground 1 "error: components.buildbarn.jwtPrivateKeyPem not found in $_vault"
   gum style --foreground 1 "       run: mise buildbarn:secret-init --server-name $_server_name"
