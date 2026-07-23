@@ -4,7 +4,7 @@ Description=Pangolin app
 [Container]
 Pod=pangolin.pod
 ContainerName=app
-Image=docker.io/fosrl/pangolin:ee-1.20.0@sha256:664263615d0c9042d0d8e9927b7aae938cd1f9dcf524252167314656c9ed425b
+Image=docker.io/fosrl/pangolin:ee-1.21.0@sha256:24d3ffc61a85036dda76178c175a8b4e430b108f3f5d3ec24337740731a474fb
 # Runtime state (db, logs, key, generated traefik configs) in a named volume;
 # only the materia-templated config files are bind-mounted in on top.
 Volume=pangolin-config.volume:/app/config
