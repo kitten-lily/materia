@@ -182,7 +182,7 @@ components/
     bb-storage.container.gotmpl   # CAS + ActionCache + FSAC, joins newt-net, bind mounts from LVM data disk
     bb-asset.container.gotmpl     # remote-asset index, joins newt-net, reaches bb-storage by container name
     config/common.libsonnet       # shared JWT auth policy + authorizers (push/pull role claim)
-    config/storage.jsonnet        # bb-storage config — 130G CAS quota / 8-block layout, see BUG-006
+    config/storage.jsonnet        # bb-storage config — 150G CAS quota / 10-block layout, see BUG-006
     config/asset.jsonnet          # bb-asset config — 'error' fetcher (pure cache, never fetches on its own)
     certs/server.crt              # self-signed server TLS cert (public; key is a materia Secret)
     blueprint-resources.yaml      # raw TCP resource declarations — pasted into Pangolin dashboard manually, see file header
@@ -888,8 +888,8 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   with gRPC `INVALID_ARGUMENT` on `UploadBlob`. Raising
   `maximumMessageSizeBytes` from 2 GiB to 8 GiB (a real but *separate*
   gRPC-transport-level limit) did not fix it — identical error on retry.
-  Fixed by changing the block layout to `1/4/2/1` over 130G (16.25
-  GiB/block, 8 blocks total) instead: sized against bow's *actual*
+  Fixed by changing the block layout to `2/5/2/1` over 150G (15
+  GiB/block, 10 blocks total) instead: sized against bow's *actual*
   headroom at fix time (357G free of 5.5T, 94% used — down from the
   401G free the original plan assumed, consumed by the growing media
   libraries sharing that disk), not the original assumption. When sizing

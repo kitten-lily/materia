@@ -33,17 +33,16 @@ local common = import 'common.libsonnet';
         // gRPC-transport-level limit). The original 100G/38-block layout
         // (8/24/3/3) gave a ~2.63 GiB ceiling, which rejected krytis's
         // assembled OCI image blob (5.89 GiB) with INVALID_ARGUMENT —
-        // see specs/bugs/BUG-006. 130G/8 blocks (1/4/2/1) gives a
-        // 16.25 GiB ceiling (2.8x margin over that blob), chosen over a
-        // same-size block-count reduction because bow's data disk was
-        // at 94% utilization (357G free of 5.5T) when this was fixed —
-        // +30G was judged worth the headroom against a 0-extra-disk,
-        // similarly-coarse option.
-        oldBlocks: 1,
-        currentBlocks: 4,
+        // see specs/bugs/BUG-006. 150G/10 blocks (2/5/2/1) gives a
+        // 15 GiB ceiling (2.5x margin over that blob), sized against
+        // bow's data disk headroom (357G free of 5.5T, 94% utilized) at
+        // fix time — an explicit +50G-over-original tradeoff for finer
+        // granularity than the minimal-disk-cost alternative.
+        oldBlocks: 2,
+        currentBlocks: 5,
         newBlocks: 2,
         blocksOnBlockDevice: {
-          source: { file: { path: '/data/storage-cas/blocks', sizeBytes: 130 * 1024 * 1024 * 1024 } },
+          source: { file: { path: '/data/storage-cas/blocks', sizeBytes: 150 * 1024 * 1024 * 1024 } },
           spareBlocks: 1,
         },
         persistent: {

@@ -79,9 +79,9 @@ Two changes, both in `components/buildbarn/config/`:
    limit).
 2. `storage.jsonnet`'s CAS `local` backend: block layout changed from
    `oldBlocks: 8, currentBlocks: 24, newBlocks: 3, spareBlocks: 3` (100G,
-   38 blocks, 2.63 GiB/block) to `oldBlocks: 1, currentBlocks: 4,
-   newBlocks: 2, spareBlocks: 1` (**130G**, 8 blocks, **16.25 GiB/block**
-   — 2.8x margin over the confirmed 5.89 GiB blob).
+   38 blocks, 2.63 GiB/block) to `oldBlocks: 2, currentBlocks: 5,
+   newBlocks: 2, spareBlocks: 1` (**150G**, 10 blocks, **15 GiB/block**
+   — 2.5x margin over the confirmed 5.89 GiB blob).
 
 **Sizing decision:** bow's `/var/lib/materia-data` was at **94% disk
 utilization (357G free of 5.5T)** when this was fixed — down from the
@@ -89,13 +89,15 @@ utilization (357G free of 5.5T)** when this was fixed — down from the
 (`specs/plans/issue-28-bst-cache-krytis.md`), consumed by the media
 libraries (jellyfin/grimmory/audiobookshelf/music) sharing that disk.
 Given that pressure, a same-size (100G), block-count-only reduction
-(e.g. 6 blocks → 16.67 GiB/block, zero extra disk) was considered and
-rejected by the user in favor of a modest +30G growth to 130G — judged
-worth trading a sliver of the shared disk's remaining headroom for
-keeping *some* extra block-count/granularity (8 blocks vs. 6) over the
-zero-cost alternative. `actionCache` and `fileSystemAccessCache` local
-backends were left unchanged (2G/100M, small metadata records, not
-raw blob content — not implicated in this failure).
+(e.g. 6 blocks → 16.67 GiB/block, zero extra disk) was initially
+considered; the user chose to grow disk allocation instead. First
+landed at 130G/8 blocks (+30G, 16.25 GiB/block, 2.8x margin), then
+revised to **150G/10 blocks** (+50G over the original 100G, 15 GiB/block,
+2.5x margin) per explicit follow-up request — finer block granularity
+(10 vs. 8 blocks) traded for a slightly smaller per-blob margin.
+`actionCache` and `fileSystemAccessCache` local backends were left
+unchanged (2G/100M, small metadata records, not raw blob content — not
+implicated in this failure).
 
 This moved past `quick-fix` scope once the message-size fix failed —
 root cause required actual investigation (a second, independent limit
@@ -134,7 +136,7 @@ doesn't get marked `fixed` prematurely:**
    (or its current equivalent) pushes without `INVALID_ARGUMENT` before
    closing this out as `fixed`.
 4. Re-check `df -h /var/lib/materia-data` after the resize lands to
-   confirm the +30G was actually consumed as expected (sparse file
+   confirm the +50G was actually consumed as expected (sparse file
    growth, not a surprise full allocation).
 
 ## Cross-repo note
