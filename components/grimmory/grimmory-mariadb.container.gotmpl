@@ -5,7 +5,7 @@ After=network-online.target
 
 [Container]
 ContainerName=grimmory-mariadb
-Image=reg.mini.dev/mariadb:12.3.2@sha256:489bd1e4484a350470e5590a50f0e391a6fffcae9918f51e688da44ed6d203fe
+Image=reg.mini.dev/mariadb:12.3.2@sha256:143294be546b8ff30d172780130cdfb31f3f23051fbcc8a826748e243e9b7997
 # Join newt-net so the grimmory app reaches it by container name
 # "grimmory-mariadb:3306" (DATABASE_URL in grimmory.container.gotmpl).
 # Same named-network requirement as the app. No PublishPort — 3306 is
