@@ -5,7 +5,7 @@ After=network-online.target
 
 [Container]
 ContainerName=beszel-hub
-Image=docker.io/henrygd/beszel:0.18.7@sha256:a849ad80814b6a1a3be665304dcace5d4854b3bed7bde4dd1227e8ce1b82d477
+Image=docker.io/henrygd/beszel:0.18.8@sha256:4c51486968efa0b0a702c1b0967966a2e06fb250b7418f3072d2488faea27c51
 # Standalone container — NOT in pangolin.pod. The hub is isolated from the
 # edge node's shared network namespace (a misbehaving hub must not be able to
 # affect public ingress). Routed to the public internet via Newt tunnel
