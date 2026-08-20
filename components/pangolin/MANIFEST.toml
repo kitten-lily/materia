@@ -2,7 +2,7 @@ Secrets = ["serverSecret", "cfDnsApiToken"]
 
 [Defaults]
 appName = "My Network"
-badgerVersion = "v1.5.0"
+badgerVersion = "v1.6.1"
 
 [[Services]]
 Service = "pangolin-pod.service"
