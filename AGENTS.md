@@ -174,9 +174,16 @@ components/
     audiobookshelf-metadata.volume # named volume for /metadata (root-owned, no User=/Group=)
   jellyfin/                      # Jellyfin movies + TV media server (standalone, bow-only)
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
-    jellyfin.container.gotmpl     # joins newt-net, /dev/dri passthrough, ro Movies + TVShows binds from LVM data disk, jellyfin.<baseDomain>
+    jellyfin.container.gotmpl     # joins newt-net, /dev/dri passthrough, ro Movies + TVShows binds from LVM data disk (under video/), jellyfin.<baseDomain>
     jellyfin-config.volume        # named volume for /config (root-owned, no User=/Group=)
     jellyfin-cache.volume         # named volume for /cache (root-owned, no User=/Group=)
+  mediamanager/                  # MediaManager TV + movie management ("Arr" replacement, standalone, bow-only)
+    MANIFEST.toml                # component manifest — Secrets (mediamanagerTokenSecret, mediamanagerDbPassword), Services
+    mediamanager.container.gotmpl # app, joins newt-net, runs as UID 1000, single rw bind of LVM video/ subtree, mediamanager.<baseDomain>
+    mediamanager-postgres.container.gotmpl # minimus postgres 17 sidecar, joins newt-net, Notify=healthy gates the app
+    config.toml.gotmpl            # templated backend config, mounted read-only via CONFIG_DIR (see gotchas)
+    mediamanager-db.volume        # named volume for /var/lib/postgresql/data (root-owned, entrypoint chowns it)
+    mediamanager-images.volume    # named volume for the poster cache at /images (UID 1000)
   buildbarn/                     # BuildStream cache server for krytis (standalone, bow-only, issue #28)
     MANIFEST.toml                # component manifest — Secrets (jwtJwks, serverKeyPem), Services
     bb-storage.container.gotmpl   # CAS + ActionCache + FSAC, joins newt-net, bind mounts from LVM data disk
@@ -1145,6 +1152,71 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   transcoding rather than hard-failing, so this is easy to miss unless
   explicitly checked. Pangolin SSO is kept ON (browser-driven UI, same
   reasoning as grimmory/audiobookshelf, not beszel-agent).
+- **Hardlinks can't cross mount points, even on one filesystem — so a
+  media manager and its downloads directory need a *single* bind mount.**
+  `mediamanager` hardlinks a finished download from `torrent_directory`
+  into the library instead of copying it, and probes exactly that at
+  startup (`run_filesystem_checks()`). Linux's `link()` refuses when the
+  two paths sit on different mounts regardless of the underlying
+  filesystem, so the obvious per-library bind layout every other
+  component here uses (`Volume=/var/lib/materia-data/Movies:…`,
+  `…/TVShows:…`, `…/Downloads:…`) fails with `OSError: [Errno 18]
+  Invalid cross-device link` and silently degrades to full file copies —
+  two copies of every import, on a disk already ~94% used. Confirmed by
+  local smoke test before deploy, on sibling directories of one tmpfs.
+  Fix: bow's video content lives under a single parent,
+  `/var/lib/materia-data/video/{Movies,TVShows,Downloads}`, bind-mounted
+  once as `Volume=/var/lib/materia-data/video:/data:z`. `jellyfin`'s two
+  read-only mounts were repointed at the same subtree; their
+  *container-side* paths (`/media/Movies`, `/media/TVShows`) are
+  unchanged, so jellyfin's library DB needs no re-scan. Binding
+  `/var/lib/materia-data` wholesale would also have worked but hands the
+  app read-write access to buildbarn's CAS and every other library —
+  rejected. Any future component that hardlinks between two
+  materia-data paths must keep them under one bind.
+- **MediaManager's `CONFIG_FILE` env var cannot be set from outside the
+  container — use `CONFIG_DIR`.** `media_manager/config.py` honours
+  `CONFIG_FILE` first and `$CONFIG_DIR/config.toml` second, which reads
+  like an invitation to point `CONFIG_FILE` straight at a
+  materia-installed file. It doesn't work: `mediamanager-startup.sh`
+  executes `CONFIG_FILE="$CONFIG_DIR/config.toml"`, and reassigning an
+  already-exported shell variable keeps the export, so the app child
+  process inherits the script's value. The failure is silent and
+  confusing — the app reads the image's bundled example config and dies
+  with `failed to resolve host 'db'` (the compose service name from
+  upstream's example), not with any config-path error. Set
+  `CONFIG_DIR=/etc/mediamanager` and mount the templated file there
+  instead. Pair it with `LOG_FILE=/tmp/media_manager.log`: the rotating
+  file handler is hardcoded to `/app/config/media_manager.log`, which
+  stops existing once `CONFIG_DIR` moves, and `dictConfig` hard-fails
+  (`ValueError: Unable to configure handler 'file'`). Both were found by
+  running the real image locally, not by reading the source.
+- **Run MediaManager as `User=1000` — its entrypoint's root branch
+  recursively chowns the entire media library on every start.**
+  `mediamanager-startup.sh` checks `id -u`: as root it runs
+  `chown -R mediamanager:mediamanager /data` whenever `stat -c '%U'
+  /data` isn't already `mediamanager`, and `/data` is a container-layer
+  directory (only its children are mounted), so it is root-owned again
+  after *every* container recreate — including every Renovate digest
+  bump. As non-root the script skips permission fixing entirely. Running
+  as root would additionally `chown -R "$CONFIG_DIR"`, which fails hard
+  against the read-only config mount under the script's `set -eEuo
+  pipefail`. Cost of `User=1000`: host-side bind sources must be owned
+  `1000:1000` (deploy step), and named volumes the app writes need
+  `User=1000`/`Group=1000` per the existing UID-1000 volume gotcha.
+- **Minimus postgres needs no translation (unlike minimus mariadb).**
+  `reg.mini.dev/postgres` ships the stock `docker-entrypoint.sh` with
+  `User=0` and `PGDATA=/var/lib/postgresql/data`, i.e. the official
+  `POSTGRES_USER`/`POSTGRES_DB`/`POSTGRES_PASSWORD` contract and the
+  official data dir — verified from the registry image config and then
+  live. So its `.volume` stays root-owned with no `User=`/`Group=` (the
+  entrypoint chowns `PGDATA` itself), the opposite of what minimus
+  mariadb needed. Pin the 17 series: 18 relocated the data directory,
+  which would silently re-init an empty cluster on an existing volume.
+  `pg_isready` is present, so `HealthCmd` + `Notify=healthy` can gate a
+  dependent app's start — needed here because MediaManager runs
+  `alembic upgrade head` in its entrypoint and exits non-zero (rather
+  than retrying) when the DB isn't up yet.
 
 ## Development conventions
 
