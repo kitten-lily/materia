@@ -29,8 +29,12 @@ AddDevice=/dev/dri:/dev/dri
 # media mounts — jellyfin shouldn't modify source media files.
 # No music library: music's navidrome already owns that content type on
 # this host.
-Volume=/var/lib/materia-data/Movies:/media/Movies:ro,z
-Volume=/var/lib/materia-data/TVShows:/media/TVShows:ro,z
+# Both libraries live under .../video/ alongside mediamanager's Downloads
+# directory so that component can hardlink imports into them (hardlinks
+# can't cross mount points). Container-side paths are unchanged, so
+# jellyfin's library DB needs no re-scan after the host-side move.
+Volume=/var/lib/materia-data/video/Movies:/media/Movies:ro,z
+Volume=/var/lib/materia-data/video/TVShows:/media/TVShows:ro,z
 
 # App config (library DB, users, metadata/artwork cache) and transcoding
 # cache — named volumes, not bind mounts. Materia treats the data dir as
