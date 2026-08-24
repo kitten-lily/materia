@@ -1,0 +1,44 @@
+# MediaManager backend configuration.
+#
+# Installed to /var/lib/materia/components/mediamanager/config.toml and
+# bind-mounted read-only at /etc/mediamanager/config.toml — the app reads it
+# via the CONFIG_FILE env var (NOT CONFIG_DIR, which the image's startup
+# script writes into; see mediamanager.container.gotmpl).
+#
+# Only keys present in v1.12.3's pydantic settings models are set here.
+# Upstream's config.example.toml tracks master and already carries keys this
+# release doesn't know — don't copy it wholesale.
+#
+# Secrets are deliberately absent: token_secret and the database password
+# arrive as podman-secret env overrides (MEDIAMANAGER_AUTH__TOKEN_SECRET,
+# MEDIAMANAGER_DATABASE__PASSWORD), which take priority over this file.
+
+[misc]
+frontend_url = "https://mediamanager.{{ .baseDomain }}"
+cors_urls = ["https://mediamanager.{{ .baseDomain }}"]
+
+# Container-side paths. /data is a single bind of the host's video library
+# root (Movies, TVShows, Downloads together) — one mount, so MediaManager can
+# hardlink a finished download into the library instead of copying it; Linux
+# rejects hardlinks across mount points even on one filesystem. /images is a
+# named volume, deliberately outside /data.
+image_directory = "/images"
+tv_directory = "/data/TVShows"
+movie_directory = "/data/Movies"
+torrent_directory = "/data/Downloads"
+
+development = false
+
+[database]
+# Reached by container name on newt-net; the password is injected as an env
+# override from the materia-managed podman secret.
+host = "mediamanager-postgres"
+port = 5432
+user = "mediamanager"
+dbname = "mediamanager"
+
+[auth]
+session_lifetime = 86400
+# Whoever registers with this address becomes an administrator. Without it
+# MediaManager mints a random admin and prints the credentials to its log.
+admin_emails = ["{{ .mediamanagerAdminEmail }}"]

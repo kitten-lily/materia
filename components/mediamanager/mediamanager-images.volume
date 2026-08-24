@@ -1,0 +1,7 @@
+# Named volume for MediaManager's poster/backdrop cache (/data/images).
+# The app container runs as UID/GID 1000, and podman named volumes are
+# root-owned by default — per the UID-1000 volume-ownership gotcha, the
+# volume is created with matching ownership instead.
+[Volume]
+User=1000
+Group=1000

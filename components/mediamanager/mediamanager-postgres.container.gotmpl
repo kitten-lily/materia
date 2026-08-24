@@ -1,0 +1,43 @@
+[Unit]
+Description=MediaManager PostgreSQL
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=mediamanager-postgres
+# Minimus postgres. Unlike minimus mariadb (which needed MARIADB_*/data-dir
+# translation away from the linuxserver convention), this image ships the
+# stock docker-entrypoint.sh with User=0 and PGDATA=/var/lib/postgresql/data,
+# i.e. the official POSTGRES_* contract. Pinned to 17, not 18: upstream's
+# compose targets 17 and 18 relocated the data directory.
+Image=reg.mini.dev/postgres:v17.11@sha256:42030b5889ee4822e5dfd4b40aa7b87045963f789883885293031470de18f24e
+
+# Join newt-net so the app reaches it by container name
+# "mediamanager-postgres:5432". No PublishPort — 5432 is never bound on the
+# host, reachable only by name on newt-net.
+Network=newt-net
+
+Environment=TZ=Etc/UTC
+Environment=POSTGRES_DB=mediamanager
+Environment=POSTGRES_USER=mediamanager
+{{ secretEnv "mediamanagerDbPassword" "POSTGRES_PASSWORD" }}
+
+# Root-owned volume on purpose: the entrypoint runs as root and chowns PGDATA
+# to the postgres user itself, so no User=/Group= on the .volume (unlike the
+# UID-1000 volumes elsewhere in this repo).
+Volume=mediamanager-db.volume:/var/lib/postgresql/data:z
+
+# Gate the app's start on the DB actually accepting connections — see the
+# Requires=/After= note in mediamanager.container.gotmpl.
+Notify=healthy
+HealthCmd=pg_isready -U mediamanager -d mediamanager
+HealthInterval=5s
+HealthRetries=20
+HealthTimeout=5s
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

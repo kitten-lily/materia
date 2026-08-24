@@ -1,0 +1,6 @@
+# Named volume for MediaManager's PostgreSQL data directory
+# (/var/lib/postgresql/data). Root-owned: the postgres entrypoint runs as
+# root and chowns PGDATA to its own runtime user, so no User=/Group= here
+# (unlike mediamanager-images.volume, which a UID-1000 process writes to
+# directly).
+[Volume]

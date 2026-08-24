@@ -1,0 +1,85 @@
+[Unit]
+Description=MediaManager (TV + movie management)
+Wants=network-online.target
+After=network-online.target
+# The sidecar gates readiness, not just start order: its unit uses
+# Notify=healthy + HealthCmd, so this unit isn't started until postgres
+# accepts connections. MediaManager runs `alembic upgrade head` in its
+# entrypoint and exits non-zero if the DB is unreachable, so ordering alone
+# (grimmory's approach, which leans on the app's own connection retry) would
+# crash-loop here instead of waiting.
+Requires=mediamanager-postgres.service
+After=mediamanager-postgres.service
+
+[Container]
+ContainerName=mediamanager
+Image=quay.io/maxdorninger/mediamanager:1.12.3@sha256:83b80dce26f8cdbbf8afec06784a85e7eedcba05ad4be57d2f70b006304d7a8c
+
+# Join newt-net so Newt (on bow via [Roles.tunneled]) reaches the app by
+# container name "mediamanager:8000" for the mediamanager.<baseDomain>
+# resource, AND so the app reaches its postgres sidecar by container name.
+# Container name resolution only works on named networks, not the default
+# bridge. No PublishPort — exposure is via the tunnel only.
+Network=newt-net
+
+# Run as the image's own mediamanager user (UID/GID 1000, owns /app,
+# /app/.venv and UV_CACHE_DIR). This is load-bearing, not hygiene:
+# mediamanager-startup.sh's root branch does `chown -R mediamanager /data`
+# whenever /data isn't already owned by it — and as non-root it skips
+# permission fixing entirely. Running as root would therefore recursively
+# chown the whole media library on every start, and would also try to chown
+# the read-only config mount below (a hard failure under its `set -e`).
+# Host-side directories must be owned 1000:1000.
+User=1000
+Group=1000
+
+Environment=TZ=Etc/UTC
+# CONFIG_DIR, NOT CONFIG_FILE: config.py honours CONFIG_FILE first, but
+# mediamanager-startup.sh reassigns that same *exported* variable
+# (CONFIG_FILE="$CONFIG_DIR/config.toml"), so a CONFIG_FILE passed in from
+# the outside is silently overwritten before the app ever sees it —
+# confirmed by local smoke test (the app read the image's example config and
+# died resolving its "db" host). Pointing CONFIG_DIR at our own directory is
+# the only override the entrypoint respects. Safe with a read-only mount
+# because the script's copy-example and chown branches don't run: the file
+# exists, and we're non-root.
+Environment=CONFIG_DIR=/etc/mediamanager
+# The rotating-file log handler is hardcoded to $CONFIG_DIR's image default
+# (/app/config/media_manager.log) unless LOG_FILE says otherwise; that
+# directory doesn't exist once CONFIG_DIR moves, and dictConfig hard-fails on
+# it. Logs also go to stdout (→ journal), so the file is redundant — park it
+# on the container's own ephemeral filesystem.
+Environment=LOG_FILE=/tmp/media_manager.log
+# Every config value can be overridden by MEDIAMANAGER_<SECTION>__<KEY>;
+# env beats the TOML file, which is how the secrets stay out of it.
+{{ secretEnv "mediamanagerTokenSecret" "MEDIAMANAGER_AUTH__TOKEN_SECRET" }}
+{{ secretEnv "mediamanagerDbPassword" "MEDIAMANAGER_DATABASE__PASSWORD" }}
+
+# Templated config, bind-mounted as a single file (never the whole data dir —
+# materia plans a Remove for anything it didn't install there).
+Volume={{ m_dataDir "mediamanager" }}/config.toml:/etc/mediamanager/config.toml:ro,z
+
+# Video library root — ONE read-write bind covering Movies, TVShows and
+# Downloads together. Single mount is required, not tidiness: MediaManager
+# hardlinks finished downloads into the library, and Linux rejects
+# hardlinks across mount points even when both sides sit on the same
+# filesystem (EXDEV — confirmed by local smoke test with separate binds).
+# The fallback is a full file copy, i.e. two copies of every import on an
+# already-crowded disk. Everything else on bow's LVM data disk (buildbarn's
+# CAS, Music, Books, AudioBooks, Podcasts) stays outside this subtree and
+# therefore invisible here. Read-write is likewise mandatory:
+# run_filesystem_checks() executes at import time and mkdir/rmdir-probes the
+# TV and movie directories, so a read-only mount kills the container at
+# startup. jellyfin keeps its own read-only mounts of the same content.
+Volume=/var/lib/materia-data/video:/data:z
+
+# Poster/backdrop cache — app-managed state, so a named volume. Deliberately
+# mounted OUTSIDE /data: nesting it under the bind above would materialise an
+# empty mount-point directory inside the media library.
+Volume=mediamanager-images.volume:/images:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

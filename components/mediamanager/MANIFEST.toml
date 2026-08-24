@@ -1,0 +1,11 @@
+Secrets = ["mediamanagerTokenSecret", "mediamanagerDbPassword"]
+
+[Defaults]
+
+[[Services]]
+Service = "mediamanager.service"
+RestartedBy = ["mediamanager.container", "config.toml"]
+
+[[Services]]
+Service = "mediamanager-postgres.service"
+RestartedBy = ["mediamanager-postgres.container"]
