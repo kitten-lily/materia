@@ -2,7 +2,12 @@ Secrets = ["serverSecret", "cfDnsApiToken"]
 
 [Defaults]
 appName = "My Network"
-badgerVersion = "v1.6.1"
+# Pinned to v1.5.0 — v1.6.0/v1.6.1/v1.7.0 all fail Traefik's plugin-catalog
+# integrity check (404 from plugins.traefik.io/public/validate), which disables
+# ALL plugins and drops every badger-referencing router => 404 on every host.
+# See specs/bugs/BUG-007, fosrl/badger#31, traefik/piceus#156. v1.6+ is only
+# needed for Pangolin >= 1.22's public resource type (we run ee-1.21.1).
+badgerVersion = "v1.5.0"
 
 [[Services]]
 Service = "pangolin-pod.service"

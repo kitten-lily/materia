@@ -44,6 +44,20 @@
       matchPackageNames: ["docker.io/fosrl/pangolin"],
       versioning: "regex:^(?<compatibility>ee)-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
     },
+    {
+      // fosrl/badger is HELD at v1.5.0. Every tag from v1.6.0 onward fails
+      // Traefik's plugin-catalog integrity check — `GET
+      // plugins.traefik.io/public/validate/github.com/fosrl/badger/<v>` returns
+      // 404 for v1.6.0/v1.6.1/v1.7.0 and 200 for v1.5.0 — which makes Traefik
+      // disable ALL plugins on startup, invalidating every router that
+      // references the badger middleware (i.e. all of them) and returning 404
+      // for every hostname, dashboard included. PR #52 bumped v1.5.0 -> v1.6.1
+      // and took the edge node down at the next traefik restart.
+      // Lift this once traefik/piceus#156 / fosrl/badger#31 are resolved AND
+      // the validate endpoint returns 200 for the target version.
+      matchPackageNames: ["fosrl/badger"],
+      allowedVersions: "<=1.5.0",
+    },
   ],
 
   customManagers: [
