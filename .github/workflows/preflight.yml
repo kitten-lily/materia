@@ -67,3 +67,56 @@ jobs:
           echo
           echo "fix locally: mise check:known-hosts --fix   (then commit)"
           exit 1
+
+  badger-plugin-catalog:
+    name: badger version accepted by traefik plugin catalog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Traefik disables ALL plugins when one fails its catalog integrity
+      # check, which invalidates every router referencing the badger
+      # middleware and makes the edge node answer 404 for every hostname —
+      # dashboard included (BUG-007; Renovate PR #52 bumped badger v1.5.0 ->
+      # v1.6.1 and did exactly that). Traefik's check is
+      # `GET plugins.traefik.io/public/validate/<module>/<version>`; anything
+      # other than 200 fails the load. Gate the pinned version on it here so a
+      # bump can't reach a host before we know the catalog accepts it.
+      - name: badger catalog validate check
+        run: |
+          set -euo pipefail
+          manifest="components/pangolin/MANIFEST.toml"
+          version="$(sed -n 's/^badgerVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")"
+          if [[ -z "$version" ]]; then
+            echo "::error::no badgerVersion found in $manifest"
+            exit 1
+          fi
+          echo "pinned badger version: $version"
+
+          url="https://plugins.traefik.io/public/validate/github.com/fosrl/badger/$version"
+          code=""
+          for attempt in 1 2 3; do
+            if code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")"; then
+              [[ "$code" == "200" ]] && break
+            else
+              code=""
+            fi
+            sleep 5
+          done
+
+          if [[ -z "$code" ]]; then
+            echo "::warning::could not reach the traefik plugin catalog — skipping"
+            exit 0
+          fi
+
+          if [[ "$code" == "200" ]]; then
+            echo "OK — traefik plugin catalog accepts badger $version"
+            exit 0
+          fi
+
+          echo "::error::traefik plugin catalog rejects badger $version (HTTP $code)"
+          echo "traefik would disable ALL plugins on startup, dropping every"
+          echo "badger-referencing router and returning 404 for every host."
+          echo "see specs/bugs/BUG-007, fosrl/badger#31, traefik/piceus#156"
+          exit 1
