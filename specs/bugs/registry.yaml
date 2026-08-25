@@ -41,3 +41,10 @@ bugs:
     found: 2026-07-23
     epic: issue-28-bst-cache-krytis
     file: specs/bugs/BUG-006-buildbarn-message-size-limit-blocks-large-artifact-push.md
+  - id: BUG-007
+    title: "badger v1.6.x/v1.7.0 fails traefik plugin-catalog integrity check: every hostname 404s"
+    status: fixed
+    severity: P0
+    found: 2026-08-25
+    epic: pangolin
+    file: specs/bugs/BUG-007-badger-plugin-catalog-integrity-404.md

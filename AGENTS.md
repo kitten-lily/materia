@@ -584,6 +584,34 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   by UID 1000; use `Tmpfs=/plugins-storage` for ephemeral writable dirs (the
   badger plugin re-downloads on each boot, ~1s). Confirmed by local smoke
   test during issue #8's traefik minimus migration.
+- **A bad `badgerVersion` bump is a total edge outage, and it looks like a
+  routing bug.** Traefik validates every remote plugin against its catalog
+  (`GET plugins.traefik.io/public/validate/<module>/<version>`,
+  `pkg/plugins/downloader.go`'s `RegistryDownloader.Check`); a non-200
+  disables **all** plugins, and since every router — this repo's
+  `dynamic_config.yml` ones *and* every resource router Pangolin generates
+  through the HTTP provider — references the `badger` middleware, Traefik
+  then has zero valid routers and answers a bare `404 page not found` for
+  every hostname, dashboard included. All three pod services stay `active
+  (running)`, materia's run is green, and nothing is in `--failed`: the only
+  evidence is `journalctl -u traefik.service` (`Plugins are disabled because
+  an error has occurred` + one `invalid middleware "badger@…"` line per
+  router). badger v1.6.0/v1.6.1/v1.7.0 all return 404 from that endpoint
+  while v1.5.0 returns 200 — a catalog-side breakage (fosrl/badger#31,
+  traefik/piceus#156), not a corrupt download: the download endpoint still
+  serves a valid, byte-identical zip, and the endpoint ignores
+  `X-Plugin-Hash` entirely for plugins it knows. Renovate PR #52's
+  v1.5.0 → v1.6.1 bump took flutterina down this way (BUG-007), delayed
+  until the next `traefik.service` restart because the already-running
+  process kept serving with the old plugin loaded. `badgerVersion` is now
+  held at `<=1.5.0` in `renovate.json5` and gated by preflight's
+  `badger-plugin-catalog` job, which fails a PR whose pinned version the
+  catalog rejects. v1.6+ is only needed for Pangolin >= 1.22's public
+  resource type. To reproduce any plugin question locally without touching
+  a host: `podman run --rm --tmpfs /plugins-storage -v <dir>:/etc/traefik:ro,Z
+  reg.mini.dev/traefik:<tag> --configFile=/etc/traefik/traefik.yml` — the
+  `--tmpfs` is required, or the plugin manager fails earlier with `mkdir
+  plugins-storage: permission denied` and masks the real error.
 - **CI can publish more than one image per push — verify the digest against
   the run, not just "the latest one someone noted down".** A digest
   recorded during earlier epic work turned out to belong to a CI run
