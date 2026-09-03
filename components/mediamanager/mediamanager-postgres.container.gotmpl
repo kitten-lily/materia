@@ -10,7 +10,7 @@ ContainerName=mediamanager-postgres
 # stock docker-entrypoint.sh with User=0 and PGDATA=/var/lib/postgresql/data,
 # i.e. the official POSTGRES_* contract. Pinned to 17, not 18: upstream's
 # compose targets 17 and 18 relocated the data directory.
-Image=reg.mini.dev/postgres:v17.11@sha256:f89be2798cc6733bb68aac82a84b55f68064ef89ce7ef54c611234e93a6408a5
+Image=reg.mini.dev/postgres:v17.11@sha256:3cf069017a58642812ee2daf10169ce0562276300e935c8edf5f8c09fffd57c7
 
 # Join newt-net so the app reaches it by container name
 # "mediamanager-postgres:5432". No PublishPort — 5432 is never bound on the
