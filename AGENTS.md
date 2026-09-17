@@ -956,7 +956,26 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `Components = []` first, populate `attributes/<name>.yml`, *then* wire
   the real `Components` list — same "map has no entry for key"
   fatal-abort risk as any other new component, see the
-  `baseDomain`/`beszel-agent` gotcha above.
+  `baseDomain`/`beszel-agent` gotcha above. **Three prerequisites Ignition
+  normally handles silently, confirmed missing on the krytis-build
+  rollout — `server:adopt-render`'s output now prints all three:**
+  (1) the box's OS hostname must be set to the server name by hand
+  (`hostnamectl set-hostname <name>`) — a stock cloud image's default
+  hostname (e.g. `vmi1234567`) makes materia silently find no matching
+  `Hosts.<name>` and do nothing, no error, "Nothing to do" in the log
+  looking exactly like a healthy no-op run; if the box runs cloud-init,
+  also drop a `preserve_hostname: true` override
+  (`/etc/cloud/cloud.cfg.d/`) or the next reboot resets it from instance
+  metadata; (2) `podman.socket` must be enabled by hand
+  (`systemctl enable --now podman.socket`) — Flatcar hosts get this from
+  Ignition's `enable-podman-socket.service` oneshot, which doesn't exist
+  on an adopted non-Flatcar host, and without it the materia-update
+  quadlet fails with `statfs /run/podman/podman.sock: no such file or
+  directory`; (3) `/var/lib/materia` must exist before the first run
+  (`mkdir -p /var/lib/materia`) — it's a bind-mount source, and podman
+  does not auto-create missing bind-mount source directories the way it
+  does named volumes, failing with `statfs /var/lib/materia: no such
+  file or directory` otherwise.
 
 ## Provisioning (Butane/Ignition)
 
