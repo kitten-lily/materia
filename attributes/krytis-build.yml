@@ -1,0 +1,19 @@
+components:
+    beszel-agent:
+        beszelKey: ENC[AES256_GCM,data:nb+duiGsO5yFp9eIseczQxN/920MS65qyDHRBsMfUZXZhM3QZyQkQ7QGAMbg6hzuGEqqqTK1coTYw2kZevKpp40DKEF9tv11XEwCV9cFDFs=,iv:DqsOtGRqJrD25WWbzDZvcczylCeHatu6Fvh9lcT3ty0=,tag:gcODZO4orf33+rf113K66A==,type:str]
+        beszelToken: ENC[AES256_GCM,data:oz7FWpLpYuHn9FGyGugcO3j3OROwhCmk7hUMsA8p3+HsnDIr,iv:5hrt5NlanDdT3ePMJEO+9mE7Ju5apJ5o8c67e+8PDMg=,tag:7OdcvekXhR6exua5kxOrGA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBBa0RCdU1BMGdENjByRUpi
+            ZEI0enVwVGM0OUVnOXQ1L2Vtd01JUkVTS2pnCnBwVkEzNGJLMjhwNExldG9RMnBa
+            U05JNnJXU2dYREg1WjhIM3ZEbVVMUE0KLS0tIDBlWFQzKzJ6M1ZOaUtpeU4yWjFD
+            TWdNK1MveStiWENEZldId0syY3lpTWcKAmF4/+h7rUEPrF6z/WXjryMOJJWJAxFK
+            amneWq0yoFY0FfiioKTdGCh6JWt8duJzkjyddplMwx8vyPwJlHBvOA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
+    lastmodified: "2026-09-17T07:25:10Z"
+    mac: ENC[AES256_GCM,data:jpJac0JPiCp2KpkX733xPZ5qaFLnc15PN6355rg8qnsRPEMsMZH4El6ZSBAGoE4zJ4Be6q1P0KCIcNr15WojDWDDOOD27+zLNjCz9H8nScVoor+Jb9UIcYmlbgh3qoeRO2lNgWk+XXsqd/wU7mvdgciGTVRkSNaH62hI0f8u+64=,iv:E9lms/UdRE2AQH7EqsH8e/2DquaSRDvkuj3B5RsCKg4=,tag:7L09SI2Z729JOa5sdzxcrA==,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.13.3

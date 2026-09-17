@@ -7,6 +7,9 @@ key.txt
 # Rendered Ignition — secret (contains baked keys), never commit.
 *.ign
 
+# Rendered adopted-host bootstrap files (contains the age private key).
+provisioning/servers/*/bootstrap/
+
 # mise local overrides (deployment-specific: domain, server name, etc.)
 .mise.local.toml
 

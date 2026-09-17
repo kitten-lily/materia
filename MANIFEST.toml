@@ -11,3 +11,6 @@ Components = ["newt"]
 [Hosts.bow]
 Components = ["music", "grimmory", "audiobookshelf", "jellyfin", "buildbarn", "mediamanager"]
 Roles = ["base", "tunneled"]
+
+[Hosts.krytis-build]
+Components = ["beszel-agent"]

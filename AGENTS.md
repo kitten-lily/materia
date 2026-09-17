@@ -206,6 +206,9 @@ provisioning/
     flutterina/
       server.toml                # per-server config (type, hetzner/bare_metal settings)
       materia.ign                 # gitignored, rendered by `mise ign`
+    krytis-build/
+      server.toml                # type = "adopted" — no hetzner/bare_metal settings
+      bootstrap/                  # gitignored, rendered by `mise server:adopt-render`
   storageboxes/
     <box>/
       storagebox.toml             # Storage Box config (type, location, snapshot plan)
@@ -216,7 +219,7 @@ mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, but
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, server/new, hz/*, ipxe/*, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, clean)
 ```
 
 ## Multi-server model
@@ -935,11 +938,31 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   storage ring buffer; if bb-storage errors on startup after a block-count
   change, `/data/storage-cas/{blocks,key_location_map,persistent_state}`
   is pure cache state — safe to wipe and let it repopulate. See BUG-006.
+- **Adopting an already-running host (no Ignition).** materia's daemon is
+  just a podman quadlet + systemd timer — nothing about it requires
+  Flatcar/Ignition, only podman + systemd + the same four files Ignition
+  would otherwise write (`/etc/materia/config.toml`, `/etc/materia/key.txt`,
+  `materia-update.container`, `materia-update.timer`). `server:new --type
+  adopted` + `server:adopt-render` render them locally for manual
+  `scp`+SSH install instead of baking them into a first-boot Ignition
+  config. Used for `krytis-build` (issue #99) — the krytis repo's
+  self-hosted CI runner VPS (registered there under the `krytis-vps`
+  GitHub Actions label), a pre-existing, already-in-service host that can
+  never be wiped and reprovisioned the way `bow`/`flutterina` were. The
+  server name is the box's real OS hostname (`krytis-build`), not the
+  GitHub Actions runner label — required, not just convention, since
+  materia resolves `MANIFEST.toml`'s `Hosts.<name>` against
+  `m_facts "hostname"`. Sequencing still matters: land the host +
+  `Components = []` first, populate `attributes/<name>.yml`, *then* wire
+  the real `Components` list — same "map has no entry for key"
+  fatal-abort risk as any other new component, see the
+  `baseDomain`/`beszel-agent` gotcha above.
 
 ## Provisioning (Butane/Ignition)
 
-Every server is provisioned via Butane → Ignition on Flatcar, rendered from
-one of two templates in `provisioning/templates/` based on
+Every server except `krytis-build` (see the adoption gotcha above) is
+provisioned via Butane → Ignition on Flatcar, rendered from one of two
+templates in `provisioning/templates/` based on
 `provisioning/servers/<name>/server.toml`'s `type`. The `.bu` carries only
 OS-level setup + materia installation — no reconciler scripts, no seed-secrets
 service, no GitHub App credentials (materia replaces all of those).
