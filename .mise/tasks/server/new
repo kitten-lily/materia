@@ -3,7 +3,7 @@
 
 #USAGE flag "--server-name <name>" help="Server name"
 #USAGE flag "--type <type>" help="Provisioning type" {
-#USAGE   choices "hetzner" "bare-metal"
+#USAGE   choices "hetzner" "bare-metal" "adopted"
 #USAGE }
 #USAGE flag "--hetzner-type <type>" help="Hetzner server type (hetzner only)" default="cx23"
 #USAGE flag "--hetzner-location <location>" help="Hetzner location (hetzner only)" default="hel1"
@@ -28,9 +28,9 @@ if grep -q "^\[Hosts\.${_server_name}\]" MANIFEST.toml 2>/dev/null; then
 fi
 
 case "$_type" in
-  hetzner|bare-metal) ;;
+  hetzner|bare-metal|adopted) ;;
   *)
-    gum style --foreground 1 "error: unknown --type '$_type' (expected hetzner or bare-metal)"
+    gum style --foreground 1 "error: unknown --type '$_type' (expected hetzner, bare-metal, or adopted)"
     exit 1
     ;;
 esac
@@ -62,6 +62,19 @@ type = "bare-metal"
 data_disks = []
 EOF
     ;;
+  adopted)
+    cat > "$_server_toml" <<EOF
+# Server config for "${_server_name}", read by \`mise server:adopt-render\`.
+# Committed — non-secret.
+#
+# type = "adopted": an already-running, non-Flatcar host that never went
+# through Ignition. materia's daemon (podman quadlet + timer) is installed
+# by hand via \`mise server:adopt-render\` + manual scp/SSH instead of being
+# baked in at first boot.
+
+type = "adopted"
+EOF
+    ;;
 esac
 
 _components_toml="[]"
@@ -91,6 +104,10 @@ case "$_type" in
     echo "  mise ign --server-name ${_server_name}            # real ignition"
     echo "  mise ipxe:serve --server-name ${_server_name}"
     echo "  see provisioning/BARE-METAL.md for the full runbook"
+    ;;
+  adopted)
+    echo "  mise server:adopt-render --server-name ${_server_name}"
+    echo "  # then follow the printed scp/ssh install sequence"
     ;;
 esac
 echo ""

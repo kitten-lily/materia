@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#MISE description="Render materia's daemon install files for an already-running (non-Ignition) host"
+
+#USAGE flag "--server-name <name>" help="Server name (must have provisioning/servers/<name>/server.toml with type = \"adopted\")"
+
+set -euo pipefail
+
+_server_name="${usage_server_name:?server name required, use --server-name}"
+_server_toml="provisioning/servers/${_server_name}/server.toml"
+
+if [[ ! -f "$_server_toml" ]]; then
+  echo "error: $_server_toml not found — run: mise server:new --server-name ${_server_name} --type adopted" >&2
+  exit 1
+fi
+
+_type=$(yq -o=json -p=toml "$_server_toml" | jq -r '.type // empty')
+if [[ "$_type" != "adopted" ]]; then
+  echo "error: $_server_toml has type=\"${_type}\", expected \"adopted\" — use 'mise ign' for hetzner/bare-metal hosts" >&2
+  exit 1
+fi
+
+REPO_URL=$(git remote get-url origin 2>/dev/null || true)
+if [[ -z "$REPO_URL" ]]; then
+  echo "error: no git origin remote found — set up a remote first" >&2
+  exit 1
+fi
+
+_out="provisioning/servers/${_server_name}/bootstrap"
+mkdir -p "$_out"
+
+# Same fnox-sourced secrets as `mise ign` — shared age key across every
+# host's SOPS-encrypted attributes vault, and the healthchecks slug-mode
+# base ping URL for the materia-update dead-man's-switch.
+fnox get AGE_SECRET_KEY > "$_out/key.txt"
+chmod 600 "$_out/key.txt"
+_hc_ping_url=$(fnox get HC_PING_URL)
+if [[ -z "$_hc_ping_url" ]]; then
+  echo "error: healthchecks/ping-url not set in Proton Pass — create the item first (see fnox.toml)" >&2
+  exit 1
+fi
+
+cat > "$_out/config.toml" <<EOF
+[source]
+kind = "git"
+url = "${REPO_URL}"
+
+attributes = "sops"
+
+[sops]
+base_dir = "attributes"
+EOF
+
+# Content mirrors provisioning/templates/hetzner.bu's materia-update.container
+# exactly (same env vars, same volumes) — only HostName/the dead-man's-switch
+# slug differ per server. \$ is escaped so the shell on the target host
+# expands \$EXIT_STATUS/\$url at run time, not this render.
+cat > "$_out/materia-update.container" <<EOF
+[Unit]
+Description=Materia: quadlet manager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null ${_hc_ping_url}/materia-update-${_server_name}/start
+ExecStopPost=-/usr/bin/bash -c 'url="${_hc_ping_url}/materia-update-${_server_name}"; [ "\$EXIT_STATUS" = "0" ] || url="\$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "\$url"'
+
+[Container]
+Image=ghcr.io/stryan/materia:stable
+ContainerName=materia
+Exec=update
+
+Environment=MATERIA_SOURCE__KIND="git"
+Environment=MATERIA_SOURCE__URL=${REPO_URL}
+Environment=MATERIA_ATTRIBUTES="sops"
+Environment=MATERIA_SOPS__BASE_DIR="attributes"
+Environment=SOPS_AGE_KEY_FILE=/etc/materia/key.txt
+
+SecurityLabelDisable=true
+HostName=${_server_name}
+Network=host
+
+Volume=/etc/materia:/etc/materia
+Volume=/run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+Volume=/run/podman/podman.sock:/run/podman/podman.sock
+Volume=/var/lib/materia:/var/lib/materia
+Volume=/etc/containers/systemd:/etc/containers/systemd
+Volume=/usr/local/bin:/usr/local/bin
+Volume=/etc/systemd/system:/etc/systemd/system
+EOF
+
+cat > "$_out/materia-update.timer" <<EOF
+[Unit]
+Description=Materia daily update
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*-*-* 05:00:00
+Unit=materia-update.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+echo "wrote ${_out}/{config.toml,key.txt,materia-update.container,materia-update.timer}"
+echo "SECRET: key.txt contains the age private key — deliver over SSH only, do NOT commit (gitignored)."
+echo ""
+echo "Install on ${_server_name} over SSH (replace <host>):"
+echo "  ssh <host> 'sudo mkdir -p /etc/materia'"
+echo "  scp ${_out}/config.toml <host>:/tmp/ && ssh <host> 'sudo mv /tmp/config.toml /etc/materia/config.toml'"
+echo "  scp ${_out}/key.txt <host>:/tmp/ && ssh <host> 'sudo mv /tmp/key.txt /etc/materia/key.txt && sudo chmod 600 /etc/materia/key.txt'"
+echo "  scp ${_out}/materia-update.container <host>:/tmp/ && ssh <host> 'sudo mv /tmp/materia-update.container /etc/containers/systemd/materia-update.container'"
+echo "  scp ${_out}/materia-update.timer <host>:/tmp/ && ssh <host> 'sudo mv /tmp/materia-update.timer /etc/systemd/system/materia-update.timer'"
+echo "  ssh <host> 'sudo systemctl daemon-reload && sudo systemctl enable --now materia-update.timer && sudo systemctl start materia-update.service'"
+echo "  ssh <host> 'sudo journalctl -u materia-update.service -n 50 --no-pager'   # confirm it converged"
