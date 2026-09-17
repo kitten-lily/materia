@@ -84,18 +84,16 @@ reference in `MANIFEST.toml` before its attributes exist makes the *next*
 `materia-update` on that host fail fatally, aborting reconciliation of
 **every** component on the host, not just the new one. `krytis-build` has
 no other components today so the blast radius is smaller (nothing else to
-break), but the same two-step sequence from that gotcha still applies
-here to avoid a guaranteed-red first run:
+break), but the same sequencing concern shaped the plan of record below.
 
-1. **This PR:** land `[Hosts.krytis-build]` with `Components = []`, the
-   `server:new --type adopted` + `server:adopt-render` tooling, and
-   `provisioning/servers/krytis-build/server.toml`. No `attributes/
-   krytis-build.yml` yet — nothing references it yet.
-2. **Follow-up (blocked on the user):** once the beszel-hub "Add System"
-   TOKEN/KEY are minted and land in `attributes/krytis-build.yml` via
-   `sops`, flip `Components` to `["beszel-agent"]` in a second small
-   commit, then hand off the rendered bootstrap files for the user to
-   install over SSH (FIDO2-gated — this agent cannot SSH in directly).
+In practice the two steps collapsed into one PR: the user minted the
+beszel-hub TOKEN/KEY and added them to the "Krytis Build VPS" Proton Pass
+item's Beszel section *before* this PR was implemented, so
+`attributes/krytis-build.yml` could be created with real values and
+`Components` set to `["beszel-agent"]` in the same change — no
+intermediate `Components = []` state was ever committed. The sequencing
+constraint still applies for any *future* component added to this host
+(or any other): land the attributes first, wire `Components` second.
 
 ## Files to create / modify
 
@@ -301,29 +299,30 @@ re-derive it from scratch:
 
 ## Deployment steps (out of IaC scope, tracked in the issue)
 
-1. User creates the beszel-hub "Add System" entry for `krytis-build` at
-   `https://beszel.ririi.dev` → gets TOKEN + KEY.
-2. `sops attributes/krytis-build.yml`, set:
-   ```yaml
-   components:
-     beszel-agent:
-       beszelKey: "ssh-ed25519 AAAA..."
-       beszelToken: "..."
-   globals:
-     beszelHubUrl: https://beszel.ririi.dev   # only if not already global
-   ```
-3. Flip `[Hosts.krytis-build] Components = ["beszel-agent"]` in
-   `MANIFEST.toml`, commit, merge.
-4. `mise server:adopt-render --server-name krytis-build` (needs
-   `pass-cli login` for fnox).
-5. Run the printed `scp`/`ssh` sequence against `krytis-build` (FIDO2 key
-   required — this agent cannot do this step).
-6. Verify:
+1. ~~User creates the beszel-hub "Add System" entry for `krytis-build`
+   at `https://beszel.ririi.dev` → gets TOKEN + KEY.~~ Done — landed in
+   the "Krytis Build VPS" Proton Pass item's Beszel section before this
+   PR was implemented.
+2. ~~`sops attributes/krytis-build.yml`, set `beszelKey`/
+   `beszelToken`.~~ Done in this PR (`beszelHubUrl` was already a
+   `globals` attribute — `beszel-hub`/`beszel-agent` on `bow`/`flutterina`
+   already depend on it, confirmed present).
+3. ~~Flip `[Hosts.krytis-build] Components = ["beszel-agent"]`.~~ Done in
+   this PR.
+4. `mise server:adopt-render --server-name krytis-build` — done in this
+   PR's working tree; rendered files live at
+   `provisioning/servers/krytis-build/bootstrap/` (gitignored, not part
+   of the PR diff).
+5. **Remaining:** run the printed `scp`/`ssh` sequence against
+   `krytis-build` (FIDO2 key required — this agent cannot do this step;
+   the user runs it after merge).
+6. **Remaining:** verify:
    ```
    ssh <host> 'sudo systemctl status materia-update.timer materia-update.service'
    ssh <host> 'sudo podman ps'   # beszel-agent container running
    ```
    and confirm the new system shows up green in the beszel-hub dashboard.
+
 
 ## Out of scope
 
