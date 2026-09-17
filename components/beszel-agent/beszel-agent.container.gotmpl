@@ -18,6 +18,11 @@ Group=1000
 Environment="KEY={{ .beszelKey }}"
 Environment=HUB_URL={{ .beszelHubUrl }}
 Environment=SYSTEM_NAME={{ m_facts "hostname" }}
+# Required for container-level stats (issue #32) — beszel's DOCKER_HOST is
+# never auto-detected for Podman ("either the Podman API or the Docker
+# API, not both", per beszel.dev/guide/podman); without it the agent
+# silently reports zero container stats with no error either way.
+Environment=DOCKER_HOST=unix:///run/podman/podman.sock
 
 [Service]
 Restart=always
