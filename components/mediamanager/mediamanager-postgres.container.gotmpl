@@ -8,9 +8,14 @@ ContainerName=mediamanager-postgres
 # Minimus postgres. Unlike minimus mariadb (which needed MARIADB_*/data-dir
 # translation away from the linuxserver convention), this image ships the
 # stock docker-entrypoint.sh with User=0 and PGDATA=/var/lib/postgresql/data,
-# i.e. the official POSTGRES_* contract. Pinned to 17, not 18: upstream's
-# compose targets 17 and 18 relocated the data directory.
-Image=reg.mini.dev/postgres:v17.11@sha256:6a031454b52fcb18e7ac6affcd999c33e91471ba5b8a780c5f7d06cc2d25148c
+# i.e. the official POSTGRES_* contract. On v18 (moved from v17 in issue #104):
+# v18 relocated PGDATA's on-disk layout vs. v17, so this was NOT a live
+# pg_dump/pg_upgrade migration — mediamanager wasn't in production use yet,
+# so mediamanager-db.volume was wiped and v18 initialized a fresh cluster at
+# deploy time. If real data exists before a future major bump, that bump
+# needs an actual pg_dump/pg_upgrade path instead of this rebuild-in-place
+# approach.
+Image=reg.mini.dev/postgres:v18.6@sha256:39f468f5f2b2ece9381dc1cf0444e9c50c9bfb60c2382bfbe7c8d3467683a297
 
 # Join newt-net so the app reaches it by container name
 # "mediamanager-postgres:5432". No PublishPort — 5432 is never bound on the

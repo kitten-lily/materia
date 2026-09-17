@@ -1281,8 +1281,14 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   official data dir — verified from the registry image config and then
   live. So its `.volume` stays root-owned with no `User=`/`Group=` (the
   entrypoint chowns `PGDATA` itself), the opposite of what minimus
-  mariadb needed. Pin the 17 series: 18 relocated the data directory,
-  which would silently re-init an empty cluster on an existing volume.
+  mariadb needed. Was pinned to the 17 series (18 relocated the data
+  directory, which would silently re-init an empty cluster on an existing
+  volume) until issue #104 (2026-09-17): mediamanager wasn't in production
+  use yet, so the bump to v18.6 was done as a rebuild-in-place (wipe
+  `mediamanager-db.volume`, let v18's entrypoint init a fresh cluster) —
+  NOT a `pg_dump`/`pg_upgrade` migration. A future major bump against a
+  volume with real data needs an actual dump/restore or `pg_upgrade` path,
+  not this shortcut.
   `pg_isready` is present, so `HealthCmd` + `Notify=healthy` can gate a
   dependent app's start — needed here because MediaManager runs
   `alembic upgrade head` in its entrypoint and exits non-zero (rather
