@@ -1,5 +1,9 @@
 # Named volume for beszel hub persistent data (/beszel_data).
-# The henrygd/beszel image runs as root (alpine-based, not a minimus image),
-# so no User=/Group= here — unlike letsencrypt.volume which sets them for the
-# minimus traefik. See specs/plans/issue-20-beszel-monitoring.md.
+# henrygd/beszel builds FROM scratch and has no /etc/passwd, so the image
+# ships no USER directive — but as a static Go binary it runs fine under an
+# arbitrary UID via User=/Group= below (verified: issue #26). User=/Group=
+# here give the volume the matching 1000:1000 ownership, same pattern as
+# letsencrypt.volume for minimus traefik.
 [Volume]
+User=1000
+Group=1000

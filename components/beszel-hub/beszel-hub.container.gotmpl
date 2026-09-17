@@ -19,6 +19,8 @@ Network=newt-net
 PublishPort=8090:8090
 Environment=APP_URL=https://beszel.{{ .baseDomain }}
 Volume=beszel-data.volume:/beszel_data:z
+User=1000
+Group=1000
 
 [Service]
 Restart=always

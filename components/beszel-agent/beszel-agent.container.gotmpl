@@ -8,6 +8,12 @@ ContainerName=beszel-agent
 Image=docker.io/henrygd/beszel-agent:0.19.0@sha256:00c88600e7d120128f623b2deb5257603d464e841fd68f88cc791dcc075f9e46
 Network=host
 Volume=/run/podman/podman.sock:/run/podman/podman.sock:ro
+# Runs as UID 1000 (verified: issue #26) — henrygd/beszel-agent is also a
+# scratch-image static Go binary, no root requirement found. No volume for
+# /var/lib/beszel-agent (container-layer only, ephemeral) so no host-side
+# chown is needed for that path.
+User=1000
+Group=1000
 {{ secretEnv "beszelToken" "TOKEN" }}
 Environment="KEY={{ .beszelKey }}"
 Environment=HUB_URL={{ .beszelHubUrl }}
