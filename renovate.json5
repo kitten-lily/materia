@@ -26,11 +26,12 @@
       groupName: "pangolin stack",
     },
     {
-      // Digest-only bumps (tag unchanged, image content refreshed) — low risk,
-      // automerge via GitHub native auto-merge. ignoreTests needed because the
-      // repo has no status checks; without it Renovate never calls the automerge
-      // API and the PR sits open forever.
-      matchUpdateTypes: ["digest"],
+      // Digest, patch, and minor bumps — low risk, automerge via GitHub
+      // native auto-merge. Major bumps always require manual review.
+      // ignoreTests needed because the repo has no status checks; without
+      // it Renovate never calls the automerge API and the PR sits open
+      // forever.
+      matchUpdateTypes: ["digest", "patch", "minor"],
       automerge: true,
       automergeType: "pr",
       ignoreTests: true,
