@@ -90,6 +90,22 @@
       datasourceTemplate: "github-tags",
     },
     {
+      // materia image pin in the Butane provisioning templates (#105).
+      // Not a *.container[.gotmpl] file, so the quadlet manager never sees
+      // it — this is the only image in the repo not covered by
+      // docker:pinDigests via a native manager. Was a floating :stable tag
+      // (no digest, no Renovate tracking, no reviewable diff on bump);
+      // now pinned like every other component image.
+      customType: "regex",
+      description: "materia image pin in Butane provisioning templates",
+      managerFilePatterns: ["/(^|/)provisioning/templates/.+\\.bu$/"],
+      matchStrings: [
+        "Image=ghcr\\.io/stryan/materia:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-fA-F0-9]+)",
+      ],
+      depNameTemplate: "ghcr.io/stryan/materia",
+      datasourceTemplate: "docker",
+    },
+    {
       // OpenSSH portable source version pin — only load-bearing if the
       // from-source static build path was taken (see AGENTS.md); harmless
       // no-op otherwise since Alpine's openssh-static tracks its own

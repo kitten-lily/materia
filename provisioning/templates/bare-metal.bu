@@ -125,7 +125,10 @@ storage:
           ExecStopPost=-/usr/bin/bash -c 'url="${HC_PING_URL}/materia-update-${SERVER_NAME}"; [ "$$EXIT_STATUS" = "0" ] || url="$$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "$$url"'
 
           [Container]
-          Image=ghcr.io/stryan/materia:stable
+          # Digest-pinned release, tracked by renovate.json5's stryan/materia
+          # custom.regex manager — matches every other component image's
+          # git-pinned GitOps convention (was a floating :stable tag, #105).
+          Image=ghcr.io/stryan/materia:v0.7.2@sha256:e5c23a3d1f8ff017e9ab81f4c97e1a68aa69a32af5c01bdc51f6de366006b16a
           ContainerName=materia
           Exec=update
 
