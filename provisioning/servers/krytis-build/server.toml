@@ -1,0 +1,15 @@
+# Server config for "krytis-build", read by `mise server:adopt-render`.
+# Committed — non-secret.
+#
+# type = "adopted": an already-running, non-Flatcar host that never went
+# through Ignition. materia's daemon (podman quadlet + timer) is installed
+# by hand via `mise server:adopt-render` + manual scp/SSH instead of being
+# baked in at first boot. See specs/plans/issue-99-krytis-build-beszel.md.
+#
+# This is the krytis repo's self-hosted GitHub Actions runner VPS
+# (Contabo, Debian 13/trixie), registered there as the "krytis-vps"
+# GitHub Actions runner label — not the same machine as `bow`. Provisioned
+# and owned by krytis's own `mise runner-vps:*` tasks; materia only
+# manages the one component assigned to it here.
+
+type = "adopted"
