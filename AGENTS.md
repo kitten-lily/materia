@@ -277,13 +277,54 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   tunneled resources. With separate containers on a network, those IPs are
   unreachable from Traefik — breaking all tunneled resource proxying, not just
   private HTTPS.
-- **Pod restart safety.** The old repo's pod-drain issue (stopping all
-  container services drains the pod, killing the infra container, causing
-  "dependency failed" on next start) was a reconciler-script problem — it
-  restarted everything at once with `systemctl restart`. Materia restarts only
-  the service whose resource changed. The pod's infra container keeps the
-  namespace alive during individual container restarts. The pod only restarts
-  if the `.pod` file itself changes.
+- **Pod restart safety requires `ExitPolicy=continue` — quadlet's default
+  (`stop`) makes ANY `app.service` restart a total edge outage.** This
+  bullet previously claimed the pod-drain issue was a reconciler-script
+  problem that materia avoids by restarting only the changed service.
+  That was wrong, and it cost a P0 on 2026-09-21 (BUG-009). Two facts
+  combine: (1) `podman-systemd.unit(5)` — "Set the exit policy of the pod
+  when the last container exits. **Default for quadlets is stop**", so
+  podman stops the pod (killing the infra container, the shared netns and
+  every `PublishPort`) the instant its last member exits; (2)
+  `gerbil.service` and `traefik.service` both `Requires=app.service`, and
+  systemd propagates a stop to units that `Requires=` a unit being
+  restarted — so restarting *app alone* stops all three, app leaves last,
+  and the pod drains. `app.service` has `BindsTo=pangolin-pod.service`, so
+  its restart then fails outright: `Bound to unit pangolin-pod.service,
+  but unit isn't active` → `Dependency failed`. Externally this is not a
+  503: Traefik and the published ports are gone, so every hostname just
+  refuses the connection. Every Renovate bump of `app.container`'s digest
+  was rolling this dice. Fix: `ExitPolicy=continue` in the `[Pod]` section
+  (verified live — `systemctl restart app.service` now keeps
+  `pod_state=Running` and all three services active). Recovery if it ever
+  happens again: `sudo systemctl start pangolin-pod.service` then app,
+  gerbil, traefik. Any new pod in this repo should set
+  `ExitPolicy=continue` unless it is genuinely meant to disappear with its
+  workload. The pod itself still only restarts when the `.pod` file
+  changes.
+- **Podman healthcheck mechanics (issue #113).** Four things that are easy
+  to get wrong: (1) **podman DOES inherit an image's `HEALTHCHECK`** — a
+  container with no `HealthCmd=` still reports `healthy`/`unhealthy` if
+  the image declares one (verified), so jellyfin/grimmory/mediamanager are
+  already probed; restating `HealthCmd=` in the quadlet is only needed to
+  control `HealthInterval=`/`HealthRetries=`/`HealthStartPeriod=`, which
+  otherwise take podman's defaults. (2) **`podman build` in the default
+  OCI format silently DROPS `HEALTHCHECK`** (it is a Docker-schema field) —
+  use `--format docker`, or any local test of healthcheck behaviour will
+  wrongly conclude podman ignores image healthchecks. (3) A plain-string
+  `HealthCmd=` is wrapped in `/bin/sh -c`, which **does not exist** in
+  scratch/distroless images (`traefik` minimus, `beszel-hub`,
+  `beszel-agent`, both buildbarn images — confirmed by `podman exec … /bin/sh`
+  failing with `crun: executable file /bin/sh not found`). Use the
+  JSON-array form for those, which execs directly:
+  `HealthCmd=["/beszel","health","--url","http://localhost:8090"]`. (4) A
+  probe referencing an env var must escape it as `$$VAR` — quadlet emits
+  the command into `ExecStart=`, where systemd would expand `$VAR` (unset
+  in the unit environment) to empty before podman ever sees it.
+  `HealthOnFailure=` defaults to `none` (report only); `kill` + the usual
+  `Restart=always` is what makes an unhealthy-but-alive container
+  self-heal — never set it on `newt`, whose probe tracks the upstream
+  tunnel, or an edge outage becomes a restart loop.
 - **Startup ordering, not networking.** `connection refused to localhost:3001`
   is a race: Gerbil/Traefik must be `After=app.service`/`Requires=app.service`,
   and `app` uses `Notify=healthy` + `HealthCmd` so dependents wait until it

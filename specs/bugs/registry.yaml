@@ -55,3 +55,10 @@ bugs:
     found: 2026-09-21
     epic: beszel
     file: specs/bugs/BUG-008-beszel-hub-uid1000-existing-volume.md
+  - id: BUG-009
+    title: "restarting app.service drains pangolin.pod (quadlet ExitPolicy=stop default): total edge outage"
+    status: fixed
+    severity: P0
+    found: 2026-09-21
+    epic: pangolin
+    file: specs/bugs/BUG-009-pangolin-pod-exit-policy-drain.md

@@ -5,6 +5,18 @@
 wrongly reports unhealthy, or — where `Notify=healthy` is used — a bad probe
 turning into a start-up hang)
 
+> **STAGE 1 STATUS: DONE, verified live on flutterina 2026-09-21.**
+> `app`, `gerbil`, `newt`, `beszel-hub` all report `health=healthy`.
+> The rollout uncovered and fixed a pre-existing P0 in the pangolin
+> component: restarting `app.service` drained `pangolin.pod` (quadlet's
+> default `ExitPolicy=stop` + `Requires=app.service` on gerbil/traefik),
+> taking the whole edge down mid-deploy. Fixed with
+> `ExitPolicy=continue` — see
+> `specs/bugs/BUG-009-pangolin-pod-exit-policy-drain.md`. AGENTS.md's
+> "Pod restart safety" bullet (which asserted the opposite) was
+> corrected, and the healthcheck mechanics from #113 were documented in
+> the same pass, so stage 4 is also done.
+
 ## Scope of this stage (stage 1 of 5)
 
 flutterina only, and only the containers that need **no** prerequisite config
