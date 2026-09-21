@@ -8,6 +8,19 @@ ContainerName=beszel-agent
 Image=docker.io/henrygd/beszel-agent:0.20.0@sha256:765e3d4a087c4bcbf6b78ed0f1dfdcd669c4bf6ad5789a832d2944603ae7fd08
 Network=host
 Volume=/run/podman/podman.sock:/run/podman/podman.sock:ro
+# System D-Bus socket — required for systemd service reporting (status,
+# CPU/memory per unit, restart counts, and beszel's failed-service
+# alerts). The agent talks to org.freedesktop.systemd1 over the system
+# bus (go-systemd `NewSystemConnectionContext`); without this mount its
+# own availability probe fails and the whole collector is skipped with a
+# single `DEBUG Systemd not available` line — no error, no services, and
+# nothing in the UI. Verified locally A/B: without the mount that debug
+# line appears and stats carry no service data; with it, stats include
+# `Services:[97 …]` (total, failed). Target path is /var/run/... per
+# beszel.dev/guide/systemd, which is also go-systemd's default bus
+# address. NO :z/:Z — relabelling the host's system bus socket would
+# affect every other consumer on the box.
+Volume=/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
 # Runs as root. The UID-1000 hardening (#26) was reverted here too: the
 # rootful podman socket this mount targets is root:root 0660
 # (podman.socket ships SocketMode=0660 with no SocketGroup), so a UID-1000
