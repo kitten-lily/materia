@@ -1,9 +1,8 @@
 # Named volume for beszel hub persistent data (/beszel_data).
-# henrygd/beszel builds FROM scratch and has no /etc/passwd, so the image
-# ships no USER directive — but as a static Go binary it runs fine under an
-# arbitrary UID via User=/Group= below (verified: issue #26). User=/Group=
-# here give the volume the matching 1000:1000 ownership, same pattern as
-# letsencrypt.volume for minimus traefik.
+# henrygd/beszel builds FROM scratch with no USER directive, so the image
+# runs as root and writes root-owned data here. No User=/Group= — unlike
+# letsencrypt.volume (minimus traefik) — because these keys only apply when
+# the volume is CREATED: on a host where the volume already exists with
+# root-owned content they are silently ignored, and pairing them with
+# User=1000 on the container is what broke the hub in #26 (reverted).
 [Volume]
-User=1000
-Group=1000

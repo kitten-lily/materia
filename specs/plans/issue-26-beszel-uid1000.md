@@ -1,3 +1,22 @@
+> **OUTCOME (2026-09-21): REVERTED — this change took the hub down.**
+> The plan's local verification used a *fresh, empty* volume, which podman
+> auto-chowns to the container user. Flutterina's `systemd-beszel-data`
+> volume already existed root-owned (since #20), so `User=`/`Group=` on
+> the `.volume` were ignored (creation-time only) and the UID-1000 hub
+> crash-looped on `attempt to write a readonly database (1544)` from the
+> first `materia-update` after the commit landed — `503 no available
+> server` on `beszel.<baseDomain>` for ~4 days. The agent's `User=1000`
+> additionally broke #32 (rootful `podman.sock` is `root:root 0660`,
+> EACCES for UID 1000, fails soft with zero container stats). Full
+> analysis, reproduction, and the correct re-attempt sequence:
+> `specs/bugs/BUG-008-beszel-hub-uid1000-existing-volume.md`.
+>
+> To retry #26: chown the existing volume on every deployed host FIRST
+> (`sudo podman unshare chown -R 1000:1000 "$(sudo podman volume inspect
+> systemd-beszel-data --format '{{.Mountpoint}}')"`), then land the
+> container/volume change. Leave the agent as root until the podman
+> socket has a shared group.
+
 # Implementation Plan — Issue #26: `User=1000` for beszel hub + agent
 
 **issue:** https://github.com/kitten-lily/materia/issues/26

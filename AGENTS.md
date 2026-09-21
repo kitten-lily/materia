@@ -587,6 +587,42 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   by UID 1000; use `Tmpfs=/plugins-storage` for ephemeral writable dirs (the
   badger plugin re-downloads on each boot, ~1s). Confirmed by local smoke
   test during issue #8's traefik minimus migration.
+- **Switching an ALREADY-DEPLOYED component to non-root takes a host-side
+  chown — the `.volume` quadlet's `User=`/`Group=` alone silently does
+  nothing, and the app dies at runtime.** `User=`/`Group=` in a `.volume`
+  file are *creation-time* arguments; podman also auto-chowns a named
+  volume to the container's user only when that volume is **empty** at
+  first use. A volume that already holds data from a previous root-run
+  keeps its root ownership forever, so adding `User=1000` to the
+  `.container` turns a working service into a crash loop on the next
+  `materia-update` — on a fresh host the identical commit works fine,
+  which is why local/greenfield testing never catches it. Caught
+  2026-09-21: commit `7a33daa` (#26) added `User=1000`/`Group=1000` to
+  `beszel-hub` + `beszel-data.volume`; flutterina's
+  `systemd-beszel-data` volume had existed root-owned since #20, so the
+  hub exited immediately on every start with PocketBase's
+  `attempt to write a readonly database (1544)`, `Restart=always`
+  crash-looped it, and `https://beszel.<baseDomain>` served Traefik's
+  `503 no available server` for ~4 days while the rest of the edge
+  (pangolin + every bow-tunneled resource) stayed green — beszel is the
+  alerting system, so nothing else reported it. Reproduced exactly with
+  local rootless podman (populate a volume root-run, then rerun
+  `--user 1000:1000` → same error; `podman unshare chown -R 1000:1000
+  <mountpoint>` → healthy `/api/health` 200), and the error is
+  version-independent (0.19.0 and 0.20.0 behave identically — the
+  same-day Renovate bump to 0.20.0 was a red herring). Either do the
+  chown on every already-provisioned host **before** the commit lands,
+  or don't make the change. Reverted here (commit reverts #26's
+  `User=`/`Group=` on hub, volume, and agent) since the fleet is
+  GitOps-pull and a repo revert is the only fix that needs no shell.
+- **Non-root containers can't read the rootful podman socket.**
+  `podman.socket` ships `SocketMode=0660` with no `SocketUser=`/
+  `SocketGroup=`, so `/run/podman/podman.sock` is `root:root 0660` and a
+  `User=1000` container mounting it gets EACCES. `beszel-agent` fails
+  *soft* here — it keeps running and reporting host metrics, just with
+  zero container stats, i.e. it silently undoes #32 with no failed unit
+  and no obvious symptom. Any component that needs the podman socket
+  must run as root until the socket is given a shared group.
 - **A bad `badgerVersion` bump is a total edge outage, and it looks like a
   routing bug.** Traefik validates every remote plugin against its catalog
   (`GET plugins.traefik.io/public/validate/<module>/<version>`,

@@ -19,8 +19,12 @@ Network=newt-net
 PublishPort=8090:8090
 Environment=APP_URL=https://beszel.{{ .baseDomain }}
 Volume=beszel-data.volume:/beszel_data:z
-User=1000
-Group=1000
+# Runs as root. The UID-1000 hardening (#26) was reverted: flutterina's
+# beszel-data volume predates it and is root-owned, and podman only
+# auto-chowns an EMPTY named volume — so the hub crashed on every start
+# with "attempt to write a readonly database (1544)". Re-attempting needs
+# a host-side `podman unshare chown -R 1000:1000` on the existing volume
+# FIRST. See AGENTS.md ("Switching an existing component to non-root").
 
 [Service]
 Restart=always
