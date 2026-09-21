@@ -1415,15 +1415,50 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   mariadb needed. Was pinned to the 17 series (18 relocated the data
   directory, which would silently re-init an empty cluster on an existing
   volume) until issue #104 (2026-09-17): mediamanager wasn't in production
-  use yet, so the bump to v18.6 was done as a rebuild-in-place (wipe
+  use yet, so the bump to v18.6 was landed as a rebuild-in-place (wipe
   `mediamanager-db.volume`, let v18's entrypoint init a fresh cluster) —
-  NOT a `pg_dump`/`pg_upgrade` migration. A future major bump against a
-  volume with real data needs an actual dump/restore or `pg_upgrade` path,
-  not this shortcut.
+  NOT a `pg_dump`/`pg_upgrade` migration. **That wipe was never executed
+  on bow, and the bump took the whole host down for four days — see the
+  next bullet.** A future major bump against a volume with real data
+  needs an actual dump/restore or `pg_upgrade` path, not this shortcut.
   `pg_isready` is present, so `HealthCmd` + `Notify=healthy` can gate a
   dependent app's start — needed here because MediaManager runs
   `alembic upgrade head` in its entrypoint and exits non-zero (rather
   than retrying) when the DB isn't up yet.
+- **A repo change that requires a host-side manual step will not happen,
+  and on materia it fails the *entire* host, not just its component.**
+  Commit `612f8c3` changed the postgres pin from v17.11 to v18.6 and
+  described the required `podman volume rm systemd-mediamanager-db` only
+  in its commit body and a quadlet comment. Nothing in the repo performs
+  a volume wipe — materia installs the new `.container` and restarts the
+  service, full stop. Postgres then refused the v17 `PGDATA` (`FATAL:
+  database files are incompatible with server`), crash-looped to
+  `start-limit-hit`, and `materia-update` aborted its plan on the
+  dependent step (`WARN 0/8 steps completed` / `FATA service
+  mediamanager-postgres.service unhealthy`) — so bow received **no**
+  commits at all from 2026-09-18 to 2026-09-21, silently missing the
+  BUG-009 pod fix, the #113 healthchecks, and every Renovate bump. This
+  is the third instance of the same all-or-nothing blast radius already
+  recorded above (a missing attribute key aborting every component; the
+  `RemainAfterExit` revert's wrong expected state doing the same), so
+  treat any single-component breakage on a materia host as a
+  whole-host outage until proven otherwise. Rules: (1) a change needing
+  destructive host-side state surgery is not a Renovate-class change —
+  make the step executable (a `mise` task, or a runbook line actually
+  run per host) rather than prose; (2) after landing one, verify the
+  next `materia-update` on each affected host actually succeeded —
+  `journalctl -u materia-update.service | grep FATA` is the check.
+  See `specs/bugs/BUG-010-mediamanager-postgres-major-bump-volume-not-wiped.md`.
+- **`systemd-sysupdate-reboot.service` fails daily on Flatcar and is not
+  ours.** Flatcar ships one placeholder transfer definition,
+  `/usr/lib/sysupdate.d/noop.transfer`, whose
+  `MatchPattern=invalid@v.raw` can never match, so stock systemd's
+  `systemd-sysupdate reboot` exits 1 (`Couldn't find any suitable
+  installed versions.`) at ~04:10 every day. Flatcar's real updater is
+  `update-engine.service`. Functionally harmless, but it permanently
+  occupies `systemctl --failed` — the one place a real failure would
+  show — so don't read a non-empty `--failed` on a Flatcar box as
+  "something broke" without checking whether it's only this unit.
 
 ## Development conventions
 

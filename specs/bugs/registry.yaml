@@ -62,3 +62,10 @@ bugs:
     found: 2026-09-21
     epic: pangolin
     file: specs/bugs/BUG-009-pangolin-pod-exit-policy-drain.md
+  - id: BUG-010
+    title: "postgres v17->v18 bump landed without the volume wipe: materia-update blocked on bow for 4 days"
+    status: fixed
+    severity: P1
+    found: 2026-09-21
+    epic: mediamanager
+    file: specs/bugs/BUG-010-mediamanager-postgres-major-bump-volume-not-wiped.md
