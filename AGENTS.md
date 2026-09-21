@@ -820,6 +820,33 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   Traefik → beszel-hub. Dashboard-only change, no repo/IaC involved — but
   easy to miss since the *routing* half of local-site setup looks correct
   right up until this auth layer silently intercepts every request.
+- **A beszel system's `host` field is a live SSH fallback target, and a
+  wildcard DNS record makes every host name resolve to the edge — so one
+  system's record silently starts showing another's data.** Each system
+  row in the hub stores `host:port` (default agent port `45876`) from the
+  "add system" dialog; when an agent's WebSocket is not connected the hub
+  falls back to SSH-polling that address. `*.kittenlily.net` is wildcarded
+  onto flutterina, so `bow.kittenlily.net` resolves to **flutterina's**
+  public IP (`getent hosts bow.kittenlily.net` == `getent hosts
+  flutterina.kittenlily.net` == `getent hosts kittenlily.net`) and the
+  hub polled flutterina's agent for the Bow record. Symptom (2026-09-21):
+  Bow's dashboard entry showed flutterina's metrics — identical
+  `system_stats` rows 2s apart, `m: 3.72` (flutterina's 4 GB VPS) where
+  Bow had always reported `31.08`, and the Bow record's container list was
+  the flutterina pangolin stack (`app`, `gerbil`, `traefik`,
+  `pangolin-infra`, `newt`, `beszel-hub`) — while the Flutterina record
+  had no containers at all. Fingerprints were NOT colliding (distinct
+  per system in the `fingerprints` table, and flutterina's matched
+  `podman exec beszel-agent /agent fingerprint`), which is what rules out
+  the agent-identity explanation and points at address resolution. When
+  debugging beszel data attribution, the hub's SQLite DB is the fastest
+  ground truth: `tar` `data.db`/`-wal`/`-shm` out of
+  `/var/lib/containers/storage/volumes/systemd-beszel-data/_data`, then
+  compare `systems`, `fingerprints`, `containers` and `system_stats`
+  (delete the copy afterwards — it holds user records). Grouping
+  `system_stats` by `json_extract(stats,'$.m')` dates the exact moment a
+  record's data source changed. Give each system a host address that
+  actually reaches that machine and is not swallowed by the wildcard.
 - **nftables.service ships with a `ConditionPathExists=` on its rules
   file, and the exact path depends on the Flatcar/nftables version.** The
   base unit gates its own startup on the rules file existing — a dropin
