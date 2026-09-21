@@ -50,7 +50,7 @@ bugs:
     file: specs/bugs/BUG-007-badger-plugin-catalog-integrity-404.md
   - id: BUG-008
     title: "beszel hub crash-loops after User=1000: pre-existing volume is root-owned"
-    status: implemented-pending-verification
+    status: fixed
     severity: P1
     found: 2026-09-21
     epic: beszel

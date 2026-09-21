@@ -1,9 +1,9 @@
 # BUG-008 — beszel hub crash-loops after `User=1000`: pre-existing volume is root-owned
 
-**status:** implemented-pending-verification
+**status:** fixed (verified live on flutterina 2026-09-21 08:37 UTC)
 **found:** 2026-09-21, reported as "beszel is down"
-**severity:** P1 (monitoring + alerting blind for ~4 days; no other service
-affected)
+**severity:** P1 (monitoring + alerting blind 2026-09-18 05:00 →
+2026-09-21 08:37 UTC, ~3.5 days; no other service affected)
 **epic:** standalone (beszel-hub / beszel-agent, issue #26)
 
 ## Symptom
@@ -116,12 +116,33 @@ directory).
 
 - Local repro above: root-run healthy, UID-1000-on-root-owned-data fails
   with the exact production-consistent error, chown + UID 1000 healthy.
-- Post-deploy (pending): after the next `materia-update` on flutterina,
-  `beszel.<baseDomain>/api/health` returns `200` and
-  `beszel-hub.service` is `active (running)` without restart churn. Force
-  it sooner with `sudo systemctl start materia-update.service` on the host.
-- Then re-check #24's Pangolin health check + alert rule — a 4-day hub
-  outage should not have gone unannounced.
+- Live host, before the fix (`journalctl -u beszel-hub.service`,
+  flutterina): `2026/09/21 05:00:11 attempt to write a readonly database
+  (1544)` → `Main process exited, code=exited, status=1/FAILURE` →
+  `restart counter is at 5` → `start-limit-hit`, unit `failed`. Volume
+  contents confirmed `0 0` (root:root):
+  `data.db` last written `Sep 18 05:00` — the exact materia-update run
+  that applied `7a33daa`, so the hub was down 2026-09-18 05:00 → 09-21
+  08:37 UTC (~3.5 days).
+- Live host, after `sudo systemctl start materia-update.service` applied
+  `474113a` (plan: update both containers + the volume, reload, restart
+  both services; exit 0): `beszel-hub.service` + `beszel-agent.service`
+  `active`, zero `User=1000` lines left in either installed quadlet,
+  `curl localhost:8090/api/health` → `200`, hub log `REST API:
+  http://0.0.0.0:8090/api/`. Public `https://beszel.<baseDomain>/api/health`
+  → `200 {"message":"API is healthy."}` (was `503 no available server`).
+  Agent reconnected: `INFO WebSocket connected host=beszel.<baseDomain>`,
+  `NRestarts=0`.
+- Secondary defect confirmed on the live host: `/run/podman/podman.sock`
+  is `srw-rw---- 0 0`, i.e. a UID-1000 agent could never have read it;
+  as root, `curl --unix-socket /run/podman/podman.sock
+  http://d/v1.41/containers/json` returns the container list, so #32's
+  container stats are restored.
+- `bow` also runs `beszel-agent` (via `[Roles.base]`) and still has the
+  UID-1000 agent until its own `materia-update` timer fires; the hub is
+  unaffected either way, only bow's container stats.
+- Still open: re-check #24's Pangolin health check + alert rule — a
+  3.5-day hub outage should not have gone unannounced.
 
 ## Prevention
 
