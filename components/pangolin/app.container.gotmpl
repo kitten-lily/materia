@@ -19,6 +19,10 @@ HealthCmd=/usr/bin/curl -f http://localhost:3001/api/v1/
 HealthInterval=3s
 HealthRetries=15
 HealthTimeout=15s
+# Startup grace: the app runs DB migrations before serving, and
+# TimeoutStartSec below allows 15 minutes for a cold one. Without a start
+# period those expected early failures count against HealthRetries.
+HealthStartPeriod=30s
 
 [Service]
 Restart=always

@@ -61,6 +61,20 @@ Environment=PROVISIONING_BLUEPRINT_FILE=/etc/newt/blueprint.yaml
 # — defense in depth beyond the network segmentation itself.
 Environment=DOCKER_ENFORCE_NETWORK_VALIDATION=true
 
+# Tunnel-state healthcheck. Newt writes "ok" to HEALTH_FILE once its ping
+# to the Pangolin server succeeds and REMOVES the file when the connection
+# is lost (newt/ping.go), so `test -f` tracks the actual tunnel rather
+# than process liveness. Env name is bare HEALTH_FILE, not
+# NEWT_HEALTH_FILE (newtconfig.go). Deliberately no HealthOnFailure= —
+# newt reconnects on its own, and an edge outage must not turn into a
+# container restart loop.
+Environment=HEALTH_FILE=/tmp/newt-health
+HealthCmd=test -f /tmp/newt-health
+HealthInterval=60s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=60s
+
 [Service]
 Restart=always
 

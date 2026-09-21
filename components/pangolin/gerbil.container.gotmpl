@@ -11,6 +11,16 @@ AddCapability=NET_ADMIN SYS_MODULE
 Exec=--reachableAt=http://127.0.0.1:3003 --generateAndSaveKeyTo=/var/config/key --remoteConfig=http://localhost:3001/api/v1/gerbil/get-config --reportBandwidthTo=http://localhost:3001/api/v1/gerbil/receive-bandwidth
 Volume=pangolin-config.volume:/var/config
 
+# /healthz on gerbil's own HTTP server (the port comes from --reachableAt
+# above) — the same server Pangolin calls for /peer and
+# /update-proxy-mapping, so a 200 proves the control-plane API, not just
+# process liveness. busybox wget: the alpine-based image has no curl.
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:3003/healthz
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=15s
+
 [Service]
 Restart=always
 

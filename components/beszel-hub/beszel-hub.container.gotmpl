@@ -26,6 +26,18 @@ Volume=beszel-data.volume:/beszel_data:z
 # a host-side `podman unshare chown -R 1000:1000` on the existing volume
 # FIRST. See AGENTS.md ("Switching an existing component to non-root").
 
+# The hub binary probes itself: `beszel health` HTTP-GETs /api/health and
+# exits non-zero on anything but 200. JSON-array form is MANDATORY here —
+# the image is FROM scratch with no /bin/sh, and podman wraps a plain
+# string in `/bin/sh -c`. The --url flag is required (bare `health` exits
+# 1 with `required flag(s) "url" not set`). This is the check that would
+# have caught BUG-008 on its first interval instead of after 3.5 days.
+HealthCmd=["/beszel","health","--url","http://localhost:8090"]
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=30s
+
 [Service]
 Restart=always
 
