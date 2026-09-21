@@ -847,6 +847,33 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `system_stats` by `json_extract(stats,'$.m')` dates the exact moment a
   record's data source changed. Give each system a host address that
   actually reaches that machine and is not swallowed by the wildcard.
+- **A containerized beszel-agent reports NO systemd services until the
+  system D-Bus socket is mounted — and it fails silently.** The collector
+  (`agent/systemd.go`) talks to `org.freedesktop.systemd1` over the system
+  bus, but first runs `isSystemdAvailable()`, which stats
+  `/run/systemd/system`, `/run/dbus/system_bus_socket` and
+  `/var/run/dbus/system_bus_socket`. None exist in the scratch agent
+  image, so the whole collector is skipped with a single
+  `DEBUG Systemd not available` line (invisible at the default log level)
+  — no error, no UI section, nothing in the hub's `systemd_services`
+  table. A *binary* agent (e.g. a Home Assistant box) needs no such
+  config, which is why one host can show services while every
+  containerized one shows none. Fix:
+  `Volume=/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro`
+  (target path per beszel.dev/guide/systemd, also go-systemd's default bus
+  address). **Never add `:z`/`:Z`** — relabelling the host's system bus
+  socket affects every other consumer on the box. Needs systemd 243+
+  (`ListUnitsByPatterns`); flutterina has 260, krytis-build 257. Verified
+  A/B locally before deploy (without the mount: the debug line and no
+  service data; with it: `Services:[97 …]` = [total, failed] in the stats
+  payload) and live afterwards: 79 services, 0 failed for Flutterina.
+  `SERVICE_PATTERNS` (comma-separated, `.service` appended automatically)
+  narrows the default `*.service` if the list is too noisy.
+  Caveat for any new host: a missing bind source is a hard failure
+  (`Error: statfs …: no such file or directory`, exit 125 — same class as
+  BUG-005), not a graceful skip, and `beszel-agent` is assigned to every
+  host via `[Roles.base]` — so confirm the socket exists on a new box
+  before it reconciles.
 - **nftables.service ships with a `ConditionPathExists=` on its rules
   file, and the exact path depends on the Flatcar/nftables version.** The
   base unit gates its own startup on the rules file existing — a dropin
