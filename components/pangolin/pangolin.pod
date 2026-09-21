@@ -11,6 +11,16 @@ After=network-online.target
 
 [Pod]
 PodName=pangolin
+# Keep the infra container alive when every member container is stopped.
+# Quadlet's DEFAULT is ExitPolicy=stop, which drains the pod the moment the
+# last member exits — and because gerbil.service and traefik.service both
+# Requires=app.service, systemd stops ALL THREE whenever app is restarted.
+# The pod then stops itself, and app's restart fails with "Bound to unit
+# pangolin-pod.service, but unit isn't active" → total edge outage from an
+# ordinary app.container change (BUG-009, hit 2026-09-21). With `continue`
+# the infra container (and therefore the shared netns + published ports)
+# survives member restarts.
+ExitPolicy=continue
 PublishPort=80:80/tcp
 PublishPort=443:443/tcp
 PublishPort=443:443/udp
