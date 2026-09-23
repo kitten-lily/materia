@@ -538,7 +538,21 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `forget --prune` locally the mirror keeps the deleted pack, the two
   replaced index files and the forgotten snapshot — it still passes
   `restic check --read-data` and restores fine, but it only ever grows
-  and `restic snapshots` there still lists forgotten snapshots. See
+  and `restic snapshots` there still lists forgotten snapshots.
+  Session provisioning, confirmed live: the whole Drive session is one
+  file, `~/.password-store/ch.proton.drive/drive-sdk-cli/auth-session.gpg`,
+  and it **transplants** — a fresh container given only a copied
+  `.password-store` + `.gnupg` listed Drive with no login of its own, so
+  "sign in on a workstation, ship the store to the server as a secret"
+  works. Two plumbing constraints make or break that copy: the GPG key
+  MUST be generated with `--passphrase ""` (without it `--batch
+  --quick-generate-key` still protects the key, and every headless
+  decrypt dies with `public key decryption failed: Not a tty` when the
+  agent launches pinentry — unfixable afterwards, `--export-secret-keys`
+  says `No passphrase given` and `--passwd` has no batch form), and the
+  copied `.gnupg` MUST be scrubbed of `*.lock`/`.#lk*`/`S.*` or the
+  destination hangs ~30s in `database_open … waiting for lock` and then
+  fails `No secret key`. See
   `specs/plans/issue-103-poc-results.md`.
 - **`Stopped = true` is the general "never auto-start" flag, not just for
   `.build`/`.image` services.** Confirmed against the materia manifest

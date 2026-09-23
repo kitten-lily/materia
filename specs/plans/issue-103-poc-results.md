@@ -24,7 +24,7 @@ shape is observable without signing in).
 | A″ — auth URL shape (open Q #1) | no | **done** (new — answers the go/no-go gate) |
 | D1 — restic copy/incremental/prune | no | **done** |
 | B — interactive `auth login` | **yes** | **done** (run 2) |
-| C — session portability (open Q #2) | **yes** | blocked on a re-export — see finding 6 |
+| C — session portability (open Q #2) | **yes** | **done — PASS** (run 3) |
 | D2 — `filesystem upload` skip check | **yes** | harness ready, not run |
 | Open Q #3 (session lifetime), #5–#7 (quota, throttling, cost) | **yes** | not answerable here |
 
@@ -166,7 +166,7 @@ All of this ran locally, no Proton account (`--section restic`):
   `empty-trash`) — the parent plan's "upload `data/` with skip +
   overwrite the control paths" design has no deletion half.
 
-### 6. Interactive `auth login` works; transplanting the session needs two GPG fixes
+### 6. Session portability confirmed (open Q #2 — answered, PASS)
 
 Run 2 (2026-09-23, real Proton account, `--section auth`): sign-in
 completed from the printed URL on another machine, and the CLI stored
@@ -196,19 +196,27 @@ the harness and both are provisioning-relevant for Phase 2:
    `invalid option "--new-passphrase"`), so the key must be generated
    correctly or regenerated.
 
-With both fixes, a full export → fresh-container import → `pass show`
-round trip decrypts non-interactively (verified with a stand-in secret,
-no Proton account involved). The real session blob from run 2 predates
-fix 2, so open question #2 still needs one more `--section auth` +
-`--section portability` pass to be answered against actual Drive.
+With both fixes, run 3 (`--section auth` re-login, then
+`--section portability`) **passed against the real account**: a fresh
+container with no login of its own, given only the copied
+`.password-store` + `.gnupg`, listed `/my-files` successfully.
+
+Open question #2 is therefore answered: the Drive session is portable as
+GPG-encrypted files and is not bound to the host that performed the
+sign-in. The parent plan's fallback provisioning design — bootstrap the
+login on a workstation, ship the resulting store to the server as a
+materia secret — is viable. Note what that secret must contain: not just
+`auth-session.gpg`, but the GPG private key able to decrypt it, i.e. a
+key deliberately generated without a passphrase (no pinentry is
+available on a headless host) and a `.gnupg` scrubbed of lock files.
 
 
 ## What is still open
 
-- **Section B/C/D2** — need a human with a real Proton account. The
-  harness runs them in throwaway containers with a throwaway GPG key;
-  see `mise poc:proton-drive --section auth` (then `portability`, then
-  `upload`).
+- **Section D2** — the only remaining runnable step: `mise
+  poc:proton-drive --section restic` (to recreate `repo-b` if the
+  workdir was cleaned) then `--section upload`, which checks that a
+  second identical upload transfers nothing.
 - **Open Q #3 (session lifetime)** — cannot be answered in one session;
   needs a login, then a re-test days/weeks later.
 - **Open Q #5/#6/#7 (quota, fair-use throttling, cost)** — account-side
