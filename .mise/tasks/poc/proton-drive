@@ -336,7 +336,11 @@ _section_drive_reset() {
     _warn "no $_work/pass-store.tar.gz — run --section auth first"
     exit 1
   }
-  _say "deleting $_drive_poc_path and emptying trash"
+  _say "trashing $_drive_poc_path, then emptying trash"
+  # `filesystem delete` is PERMANENT-delete and only accepts items that are
+  # already in the trash ("You can permanently delete items only from trash.
+  # Trash your files first."). The order is trash -> empty-trash; running
+  # empty-trash first just clears whatever was already there.
   podman run -it --rm \
     -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
     -e HOME=/root \
@@ -346,8 +350,8 @@ _section_drive_reset() {
       set -e
       tar -C /root -xzf /poc/pass-store.tar.gz
       chmod 700 /root/.gnupg
-      proton-drive filesystem delete '"$_drive_poc_path"' || true
-      proton-drive filesystem empty-trash || true
+      proton-drive filesystem trash '"$_drive_poc_path"' || echo "(nothing to trash)"
+      proton-drive filesystem empty-trash
       proton-drive filesystem list '"$_drive_parent"'
     '
 }

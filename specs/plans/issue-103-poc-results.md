@@ -279,6 +279,24 @@ Phase 1 (proof of concept) is therefore complete. What remains is not
 mechanism but operational sizing: session lifetime, quota headroom,
 fair-use behaviour under real backup volume, and cost.
 
+### 10. `filesystem delete` is permanent-delete and only accepts trashed items
+
+Found during teardown. `proton-drive filesystem delete <path>` on a live
+node fails with *"You can permanently delete items only from trash. Trash
+your files first."* and leaves the node in place (`Directory was not
+deleted`) — despite `help` listing `delete` and `trash` as peers with no
+hint of the ordering. The working sequence is `filesystem trash <path>`
+then `filesystem empty-trash`; verified, and the POC tree is gone from
+the account (a second run reports `Node not found`, which the harness now
+tolerates).
+
+Phase 2 relevance: the deletion half the mirror needs (finding 5) is a
+**two-step** operation, and the intermediate state still consumes quota —
+trashed data is not freed until `empty-trash`. A prune-mirroring wrapper
+must do both, and `empty-trash` is account-wide, not path-scoped, so it
+will also purge anything else the user happens to have in the trash.
+That is a real side effect to weigh before automating it on a schedule.
+
 ## What is still open
 
 - **Open Q #6 at scale** — the skip behaviour is proven; what is not

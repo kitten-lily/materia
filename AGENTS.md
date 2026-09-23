@@ -570,8 +570,13 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   looks hung. There is no skip-empty option and no batching; enumerate
   the non-empty prefixes and upload only those. Per-file uploads are
   serial round trips too, so API round trips — not bandwidth — bound
-  throughput for a repo with many pack files. See
-  `specs/plans/issue-103-poc-results.md`.
+  throughput for a repo with many pack files. Deletion is two-step:
+  `filesystem delete` is *permanent*-delete and refuses a live node
+  (`You can permanently delete items only from trash. Trash your files
+  first.`, leaving it in place), so the sequence is `filesystem trash
+  <path>` then `filesystem empty-trash` — and trashed data still
+  consumes quota until emptied, while `empty-trash` is account-wide,
+  not path-scoped. See `specs/plans/issue-103-poc-results.md`.
 - **`Stopped = true` is the general "never auto-start" flag, not just for
   `.build`/`.image` services.** Confirmed against the materia manifest
   reference: "Prevents materia from starting the service." Any timer-
