@@ -1077,6 +1077,39 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   Hostnames will be used." Do NOT use `Network=host` for Newt — it breaks
   container name discovery entirely and gives access to all host
   interfaces.
+- **A Pangolin site resource's `destination` is resolved *inside the newt
+  container*, so the host's own hostname does not work — and the failure
+  looks like an SSH/policy problem, not a DNS one.** A `mode: "host"`
+  site resource pointing at a service on the newt host itself (rather
+  than at a container on `newt-net`) must use an address the container
+  can resolve and route to: the host's LAN IP, the `newt-net` gateway
+  (`10.89.0.1` with podman's default named-network pool), or
+  `host.containers.internal` (podman writes it into the container's
+  `/etc/hosts`, pointing at that gateway). All three were confirmed to
+  reach a host-side `sshd` from a throwaway container on `newt-net`;
+  `127.0.0.1`/`localhost` reaches only the newt container's own loopback,
+  and a bare hostname like the box's own name is `NXDOMAIN` — aardvark-dns
+  only answers for container names on the named network. Symptom of any
+  of the three wrong values: the tunnel **accepts** the TCP connection and
+  closes it ~1s later with zero bytes (`kex_exchange_identification:
+  Connection closed by remote host` for SSH), which reads like the edge
+  blocking the port. It isn't — newt dials the target with a plain
+  `net.Dialer` and there is no port-22 case or loopback filter anywhere in
+  its proxy path. A *filtered* (rather than refused/unresolvable) target
+  would instead hang until newt's 5s `tcpConnectTimeout`. Inspect and fix
+  without the dashboard via the API (session token from
+  `~/.config/pangolin/accounts.json`, cookie `p_session_token` plus header
+  `X-CSRF-Token: x-csrf-protection`):
+  `GET /api/v1/org/<org>/site/<siteId>/resources` shows
+  `destination`/`tcpPortRangeString`/`alias`, and
+  `POST /api/v1/site-resource/<siteResourceId>` with
+  `{"destination": "<ip>"}` updates it — newt is pushed the change, no
+  restart. Prefer an IP: the update schema's refine
+  (`server/routers/siteResource/updateSiteResource.ts`) accepts a bare
+  hostname only when `alias` is present *in the same payload*.
+  Reaching the host this way also depends on the bare-metal nftables
+  `input` chain accepting the port from the podman subnets (SSH is already
+  covered by its blanket `tcp dport 22 accept`; another service is not).
 - **Newt provisioning keys are consumed once.** The `spk_...` key in the
   vault is exchanged for a unique `id` + `secret` on first boot, which
   Newt persists to `newt-config.volume`. On subsequent boots, Newt reads
@@ -1084,13 +1117,23 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   wiped (`podman volume rm`), Newt can't re-provision with the same key —
   create a new key in the Pangolin dashboard and update the vault. The
   key has a max usage count set at creation time; each host consumes one.
-- **`DOCKER_ENFORCE_NETWORK_VALIDATION=true` is defense in depth, not a
-  replacement for network segmentation.** Newt validates that a target
-  container is on `newt-net` before proxying, and reports unreachable
-  targets instead of proxying to the wrong container. But the primary
-  isolation is the network itself — a container not on `newt-net` is
-  invisible to Newt regardless of this flag. Keep both: the network for
-  isolation, the flag for catching misconfigured resource targets.
+- **`DOCKER_ENFORCE_NETWORK_VALIDATION=true` only filters container
+  *discovery* — it does not gate proxying.** The flag reaches exactly one
+  place in newt's source (`docker.ListContainers`, called from
+  `newt/handlers.go`): it resolves newt's own container, adds a
+  `network=<each of newt's networks>` filter to the Docker/podman
+  container list, and hard-errors the listing if newt can't identify
+  itself. So the dashboard only ever offers containers that share
+  `newt-net` as resource targets. There is *no* dial-time check: the
+  proxy path uses a plain `net.Dialer`, and `docker.IsWithinHostNetwork`
+  (the function that would enforce it, error text "target address not
+  within host container network") has zero callers in newt `main` as of
+  2026-09-23. That is why a non-container `destination` — the host's own
+  LAN IP, per the site-resource gotcha above — proxies fine with the flag
+  on. The real isolation is the network itself: a container not on
+  `newt-net` is invisible to Newt regardless of this flag. Keep it for
+  the narrowed discovery list, but don't count on it to block a
+  misconfigured target.
 - **Buildbarn's JWT and x509 auth policies use *different* proto field
   names for the same concept — don't copy one's field name onto the
   other.** The x509/mTLS `AuthenticationPolicy`
