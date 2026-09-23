@@ -237,6 +237,34 @@ in the CLI so far: a flag-ordering mistake produces a green, silent
 no-upload. Any Phase 2 wrapper must verify the remote side after
 uploading (e.g. `filesystem list … -j`) rather than trusting exit 0.
 
+### 8. Never hand `repo/data` to the CLI wholesale — 256 serial folder creations
+
+First real D2 attempt, aborted by hand because it looked hung. It wasn't:
+`restic init` pre-creates the full 256-directory `data/XX` fan-out, and
+in the POC repo **253 of those 256 are empty** (7 files total, 3 of them
+pack files). `filesystem upload` mirrors the local tree faithfully, one
+serial `POST /drive/v2/volumes/…/folders` per directory at ~250–400 ms
+each — so the run reported `Uploaded 4 | Queued 259` and spent ~75 s
+creating empty folders before the payload mattered. There is no
+skip-empty-directories option, and folder creation is not batched or
+parallelised.
+
+Consequences for Phase 2:
+
+- A wrapper must enumerate the **non-empty** `data/XX` directories itself
+  and upload only those (the harness now does: `create-folder` per
+  non-empty prefix, then `upload` that prefix's files). Over a real
+  repo this is the difference between 256 mandatory round trips per run
+  and one per prefix that actually holds packs.
+- Per-file cost is a serial API round trip too, so upload throughput —
+  not bandwidth — is the scaling limit for a repo with thousands of pack
+  files. Needs measurement against a realistically-sized slice before
+  committing to a daily cadence (ties into open question #6).
+- `--verbose` makes this unreadable (hundreds of `Creating folder in …`
+  lines around one progress line). The default progress output
+  (`Uploaded N | Queued M`) is the useful signal; keep `--verbose` for
+  debugging only.
+
 ## What is still open
 
 - **Section D2** — the only remaining runnable step: `mise

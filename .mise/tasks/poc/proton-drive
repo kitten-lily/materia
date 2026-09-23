@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Issue #103 proof-of-concept: Proton Drive CLI as a second restic backup destination (workstation only, never a production host)"
 
-#USAGE flag "--section <section>" help="runtime | restic | auth | portability | upload | clean" default="runtime"
+#USAGE flag "--section <section>" help="runtime | restic | auth | portability | upload | drive-reset | clean" default="runtime"
 #USAGE flag "--version <version>" help="Proton Drive CLI release to test" default="0.8.0"
 #USAGE flag "--workdir <workdir>" help="Throwaway scratch directory" default="/tmp/proton-drive-poc"
 
@@ -13,6 +13,7 @@
 #   auth        = Section B  — interactive `auth login`  (NEEDS a human + real account)
 #   portability = Section C  — pass-store session portability (needs `auth` first)
 #   upload      = Section D2 — filesystem upload + skip check (needs `auth` + `restic`)
+#   drive-reset = delete the POC tree from the real account (needs `auth`)
 #   clean       = Section E  — local teardown (Drive-side cleanup is printed, not run)
 
 set -euo pipefail
@@ -271,11 +272,16 @@ _section_upload() {
   # (merge|rename|replace|skip). `upload` takes localPath... PARENTpath — the
   # last argument is the parent folder, not the destination name.
   #
-  # TRAP: global options must come AFTER the subcommand. A LEADING `-v` resolves
+  # TRAP 1: global options must come AFTER the subcommand. A LEADING `-v` resolves
   # to the `version` command via the CLI's unique-short-name matching, so
   # `proton-drive -v filesystem upload …` prints the version banner, uploads
   # NOTHING, and exits 0. A leading `-j` at least errors (`Command not found`).
-  # Always write `proton-drive filesystem upload … --verbose`.
+  #
+  # TRAP 2: never hand `repo/data` to the CLI wholesale. `restic init` pre-creates
+  # all 256 `data/XX` fan-out directories, almost all empty; the CLI mirrors the
+  # tree with one serial `POST /folders` per directory (~280ms each), i.e. ~75s
+  # of empty-folder churn before any real payload moves. Upload only the
+  # directories that actually contain pack files.
   podman run -it --rm \
     -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
     -e HOME=/root \
@@ -285,20 +291,65 @@ _section_upload() {
       set -e
       tar -C /root -xzf /poc/pass-store.tar.gz
       chmod 700 /root/.gnupg
-      proton-drive filesystem create-folder '"$_drive_parent"' '"$_drive_poc_folder"' || true
+      root="'"$_drive_poc_path"'"
+      proton-drive filesystem create-folder '"$_drive_parent"' '"$_drive_poc_folder"' >/dev/null 2>&1 || true
+      proton-drive filesystem create-folder "$root" data >/dev/null 2>&1 || true
+
+      push_data() {
+        for d in /poc/repo-b/data/*/; do
+          n=$(basename "$d")
+          set -- "$d"*
+          [ -e "$1" ] || continue
+          proton-drive filesystem create-folder "$root/data" "$n" >/dev/null 2>&1 || true
+          proton-drive filesystem upload -f skip -d merge -t "$@" "$root/data/$n"
+        done
+      }
+
       echo "=== upload 1 ==="
+      t0=$(date +%s)
+      push_data
       proton-drive filesystem upload -f skip -d merge -t \
-        /poc/repo-b/data /poc/repo-b/index /poc/repo-b/snapshots \
-        /poc/repo-b/keys /poc/repo-b/config '"$_drive_poc_path"' --verbose
+        /poc/repo-b/index /poc/repo-b/snapshots /poc/repo-b/keys /poc/repo-b/config \
+        "$root"
+      echo "upload 1 took $(( $(date +%s) - t0 ))s"
+
       echo "=== upload 2 — identical input, expect zero bytes transferred ==="
-      proton-drive filesystem upload -f skip -d merge -t \
-        /poc/repo-b/data '"$_drive_poc_path"' --verbose
+      t0=$(date +%s)
+      push_data
+      echo "upload 2 took $(( $(date +%s) - t0 ))s"
+
       echo "=== resulting tree ==="
-      proton-drive filesystem list '"$_drive_poc_path"' -j
-      proton-drive filesystem list '"$_drive_poc_path"'/data -j
+      proton-drive filesystem list "$root"
+      proton-drive filesystem list "$root/data"
     '
   _warn "Compare run 1 vs run 2 output. Zero transfers on run 2 confirms the"
   _warn "incremental assumption the whole design rests on."
+}
+
+# ------------------------------------------ Drive-side reset (needs section B)
+
+# Removes the POC tree from the real account so a rerun starts clean (an
+# interrupted upload leaves partial folders behind) and its storage is
+# reclaimed. Scoped to $_drive_poc_path — it never touches anything else.
+_section_drive_reset() {
+  [[ -s "$_work/pass-store.tar.gz" ]] || {
+    _warn "no $_work/pass-store.tar.gz — run --section auth first"
+    exit 1
+  }
+  _say "deleting $_drive_poc_path and emptying trash"
+  podman run -it --rm \
+    -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
+    -e HOME=/root \
+    -v "$_work:/poc:ro,Z" \
+    --entrypoint sh \
+    "$_img" -c '
+      set -e
+      tar -C /root -xzf /poc/pass-store.tar.gz
+      chmod 700 /root/.gnupg
+      proton-drive filesystem delete '"$_drive_poc_path"' || true
+      proton-drive filesystem empty-trash || true
+      proton-drive filesystem list '"$_drive_parent"'
+    '
 }
 
 # ---------------------------------------------------------------- Section E
@@ -321,10 +372,11 @@ restic) _section_restic ;;
 auth) _section_auth ;;
 portability) _section_portability ;;
 upload) _section_upload ;;
+drive-reset) _section_drive_reset ;;
 clean) _section_clean ;;
 *)
   _warn "unknown --section '$_section'"
-  _warn "valid: runtime | restic | auth | portability | upload | clean"
+  _warn "valid: runtime | restic | auth | portability | upload | drive-reset | clean"
   exit 1
   ;;
 esac

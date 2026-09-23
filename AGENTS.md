@@ -561,7 +561,16 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   A leading `-j` at least errors (`Command not found: -j filesystem`).
   Write `proton-drive filesystem upload … --verbose`, and have any
   wrapper confirm the remote side (`filesystem list … -j`) instead of
-  trusting the exit code. See
+  trusting the exit code. Second upload trap: **never hand a restic
+  `data/` directory to `filesystem upload` wholesale** — `restic init`
+  pre-creates all 256 `data/XX` fan-out directories (253 empty in a
+  small repo), and the CLI mirrors the tree with one serial
+  `POST …/folders` per directory at ~250–400 ms each, so a 7-file repo
+  spends ~75 s creating empty folders (`Uploaded 4 | Queued 259`) and
+  looks hung. There is no skip-empty option and no batching; enumerate
+  the non-empty prefixes and upload only those. Per-file uploads are
+  serial round trips too, so API round trips — not bandwidth — bound
+  throughput for a repo with many pack files. See
   `specs/plans/issue-103-poc-results.md`.
 - **`Stopped = true` is the general "never auto-start" flag, not just for
   `.build`/`.image` services.** Confirmed against the materia manifest
