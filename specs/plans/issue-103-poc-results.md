@@ -25,7 +25,7 @@ shape is observable without signing in).
 | D1 — restic copy/incremental/prune | no | **done** |
 | B — interactive `auth login` | **yes** | **done** (run 2) |
 | C — session portability (open Q #2) | **yes** | **done — PASS** (run 3) |
-| D2 — `filesystem upload` skip check | **yes** | harness ready, not run |
+| D2 — `filesystem upload` skip check | **yes** | **done — PASS** (run 4) |
 | Open Q #3 (session lifetime), #5–#7 (quota, throttling, cost) | **yes** | not answerable here |
 
 ## Findings
@@ -265,26 +265,59 @@ Consequences for Phase 2:
   (`Uploaded N | Queued M`) is the useful signal; keep `--verbose` for
   debugging only.
 
+### 9. Upload + incremental skip confirmed against Drive (Phase 1 complete)
+
+With the non-empty-prefix upload from finding 8, Section D2 **passed on a
+real account**: upload 1 pushed the repo (3 pack files across their
+prefixes plus `config`, `keys/`, `index/`, `snapshots/`), upload 2 with
+identical input transferred nothing, and `filesystem list` showed the
+expected tree. That is the last mechanical assumption the recommended
+architecture rests on — restic's content-addressed, immutable pack files
+plus `-f skip` give incremental uploads with no custom diffing.
+
+Phase 1 (proof of concept) is therefore complete. What remains is not
+mechanism but operational sizing: session lifetime, quota headroom,
+fair-use behaviour under real backup volume, and cost.
+
 ## What is still open
 
-- **Section D2** — the only remaining runnable step: `mise
-  poc:proton-drive --section restic` (to recreate `repo-b` if the
-  workdir was cleaned) then `--section upload`, which checks that a
-  second identical upload transfers nothing.
+- **Open Q #6 at scale** — the skip behaviour is proven; what is not
+  measured is throughput against a realistically-sized repo, where
+  serial per-file round trips (finding 8) dominate.
 - **Open Q #3 (session lifetime)** — cannot be answered in one session;
   needs a login, then a re-test days/weeks later.
 - **Open Q #5/#6/#7 (quota, fair-use throttling, cost)** — account-side
   facts, plus an upload of a realistically-sized repo slice.
 
-## Recommendation (unchanged direction, sharper risks)
+## Recommendation — green-light Phase 2
 
-Nothing found here is a no-go. The two gates the parent plan called out
-are both passed or survivable:
+Every mechanical question the parent plan gated on is answered, and none
+is a no-go:
 
-- headless auth: **passed** — out-of-band URL, no co-located browser;
-- runtime: **passed with a cost** — no `scratch`, `alpine` + `libstdc++`,
-  ~144 MB image.
+- headless auth: **PASS** — out-of-band URL, no co-located browser;
+- session portability: **PASS** — the session ships as GPG-encrypted
+  files and works on a machine that never logged in;
+- runtime: **PASS with a cost** — no `scratch`; `alpine` + `libstdc++`,
+  ~144 MB image against `restic-backup`'s ~25 MB;
+- incremental upload: **PASS** — a second identical upload transfers
+  nothing.
 
-Two new items Phase 2 must carry that the plan did not have: the
-missing deletion half of the mirror (finding 5) and the corrected CLI
-invocation (finding 4).
+Four items Phase 2 must carry that the original plan did not have:
+
+1. The deletion half of the mirror — retention never propagates to an
+   upload-only copy (finding 5).
+2. The corrected CLI surface: `-f skip`/`-d merge`, parent-folder
+   semantics, global flags after the subcommand, never a bare `-v`
+   (findings 4 and 7).
+3. Non-empty-prefix upload enumeration, or every run pays 256 serial
+   folder round trips (finding 8).
+4. Remote-side verification after upload — exit 0 alone is not evidence
+   that anything transferred (finding 7).
+
+Plus two provisioning constraints for the session secret: a
+passphrase-free GPG key, and a `.gnupg` scrubbed of lock files
+(finding 6).
+
+What is left before a pilot is sizing, not feasibility: session
+lifetime, quota headroom, throughput and fair-use behaviour at real
+repo size, and cost.
