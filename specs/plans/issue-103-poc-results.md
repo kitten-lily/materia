@@ -23,8 +23,8 @@ shape is observable without signing in).
 | A′ — credential stores | no | **done** (new, not in the plan) |
 | A″ — auth URL shape (open Q #1) | no | **done** (new — answers the go/no-go gate) |
 | D1 — restic copy/incremental/prune | no | **done** |
-| B — interactive `auth login` | **yes** | harness ready, not run |
-| C — session portability (open Q #2) | **yes** | harness ready, not run |
+| B — interactive `auth login` | **yes** | **done** (run 2) |
+| C — session portability (open Q #2) | **yes** | blocked on a re-export — see finding 6 |
 | D2 — `filesystem upload` skip check | **yes** | harness ready, not run |
 | Open Q #3 (session lifetime), #5–#7 (quota, throttling, cost) | **yes** | not answerable here |
 
@@ -165,6 +165,43 @@ All of this ran locally, no Proton account (`--section restic`):
   (`filesystem delete` the packs/indexes/snapshots prune removed, then
   `empty-trash`) — the parent plan's "upload `data/` with skip +
   overwrite the control paths" design has no deletion half.
+
+### 6. Interactive `auth login` works; transplanting the session needs two GPG fixes
+
+Run 2 (2026-09-23, real Proton account, `--section auth`): sign-in
+completed from the printed URL on another machine, and the CLI stored
+exactly one artefact —
+`~/.password-store/ch.proton.drive/drive-sdk-cli/auth-session.gpg`
+(plus `.gpg-id`). So the session really is a single GPG-encrypted file,
+which is the shape the parent plan's "ship it as a materia secret"
+design assumed.
+
+Moving that store to a second container failed twice, both times for
+GPG-plumbing reasons rather than anything Proton-side. Both are fixed in
+the harness and both are provisioning-relevant for Phase 2:
+
+1. **Stale keyboxd lock files travel with a copied `.gnupg`.** Taring
+   the GPG home verbatim carries `public-keys.d/pubring.db.lock` and
+   `.#lk*`; in the destination every gpg call then loops on
+   `database_open … waiting for lock (held by N)` for ~30s and fails
+   with `keydb_search failed: Operation timed out` → `No secret key`.
+   Delete `*.lock`, `.#lk*`, `S.*` and `random_seed` before packing.
+2. **`gpg --batch --quick-generate-key` without `--passphrase ""`
+   produces a passphrase-protected key.** It looks fine while a TTY is
+   around (the login container had one), then every non-interactive
+   decrypt dies with `public key decryption failed: Not a tty` because
+   the agent launches pinentry. `--passphrase ""` at generation time is
+   required; `--export-secret-keys` and `--passwd` both refuse to fix it
+   after the fact under `--batch` (`No passphrase given`,
+   `invalid option "--new-passphrase"`), so the key must be generated
+   correctly or regenerated.
+
+With both fixes, a full export → fresh-container import → `pass show`
+round trip decrypts non-interactively (verified with a stand-in secret,
+no Proton account involved). The real session blob from run 2 predates
+fix 2, so open question #2 still needs one more `--section auth` +
+`--section portability` pass to be answered against actual Drive.
+
 
 ## What is still open
 

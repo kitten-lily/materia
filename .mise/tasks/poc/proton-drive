@@ -209,11 +209,21 @@ _section_auth() {
     --entrypoint sh \
     "$_img" -c '
       set -e
-      gpg --batch --quick-generate-key "'"$_poc_gpg_uid"'" default default never
+      # --passphrase "" is REQUIRED: without it gpg protects the key even under
+      # --batch, and every later decrypt in a non-interactive container dies with
+      # `public key decryption failed: Not a tty` when the agent launches pinentry.
+      gpg --batch --passphrase "" --quick-generate-key "'"$_poc_gpg_uid"'" default default never
       pass init "$(gpg --list-secret-keys --with-colons proton-drive-poc | awk -F: "/^sec/{print \$5; exit}")"
       proton-drive auth login
       echo "--- session material: ---"
       find /root/.password-store -type f
+      # Strip gpg-agent sockets and stale keyboxd lock files before shipping the
+      # GPG home elsewhere. A copied-in pubring.db.lock makes every gpg call in
+      # the destination hang on `database_open … waiting for lock (held by N)`
+      # and then fail with `No secret key` — the session itself is fine.
+      find /root/.gnupg -name "*.lock" -delete
+      find /root/.gnupg -name ".#lk*" -delete
+      rm -f /root/.gnupg/S.* /root/.gnupg/random_seed
       tar -C /root -czf /poc/pass-store.tar.gz .password-store .gnupg
       echo "--- exported to '"$_work"'/pass-store.tar.gz ---"
     '
