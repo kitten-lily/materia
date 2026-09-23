@@ -211,6 +211,32 @@ key deliberately generated without a passphrase (no pinentry is
 available on a headless host) and a `.gnupg` scrubbed of lock files.
 
 
+### 7. A leading `-v` makes any command a silent no-op
+
+Found while running Section D2. Global options are documented under
+"General options" with no placement rule, so `proton-drive -v filesystem
+upload …` looks correct. It is not: the CLI resolves unique short names
+to commands ("`filesystem upload -> fs up`"), and a **leading `-v`
+matches the `version` command**. The result is the version banner, no
+upload, and **exit 0** — the first D2 run transferred nothing and
+reported success.
+
+Verified unauthenticated (no account needed):
+
+| invocation | result |
+|---|---|
+| `proton-drive -v filesystem list /my-files` | prints version banner, exits 0 — command ignored |
+| `proton-drive -j filesystem list /my-files` | `Command not found: -j filesystem` |
+| `proton-drive filesystem list /my-files -j` | runs (`You need to login first`) |
+| `proton-drive filesystem list -j /my-files` | runs |
+| `proton-drive filesystem list /my-files --verbose` | runs, emits DEBUG log lines |
+
+**Rule: global options go after the subcommand, and never use `-v` —
+write `--verbose`.** For a backup wrapper this is the worst failure mode
+in the CLI so far: a flag-ordering mistake produces a green, silent
+no-upload. Any Phase 2 wrapper must verify the remote side after
+uploading (e.g. `filesystem list … -j`) rather than trusting exit 0.
+
 ## What is still open
 
 - **Section D2** — the only remaining runnable step: `mise

@@ -270,6 +270,12 @@ _section_upload() {
   # (create-new-revision|rename|replace|skip) and -d/--folder-conflict-strategy
   # (merge|rename|replace|skip). `upload` takes localPath... PARENTpath — the
   # last argument is the parent folder, not the destination name.
+  #
+  # TRAP: global options must come AFTER the subcommand. A LEADING `-v` resolves
+  # to the `version` command via the CLI's unique-short-name matching, so
+  # `proton-drive -v filesystem upload …` prints the version banner, uploads
+  # NOTHING, and exits 0. A leading `-j` at least errors (`Command not found`).
+  # Always write `proton-drive filesystem upload … --verbose`.
   podman run -it --rm \
     -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
     -e HOME=/root \
@@ -281,13 +287,15 @@ _section_upload() {
       chmod 700 /root/.gnupg
       proton-drive filesystem create-folder '"$_drive_parent"' '"$_drive_poc_folder"' || true
       echo "=== upload 1 ==="
-      proton-drive -v filesystem upload -f skip -d merge -t \
+      proton-drive filesystem upload -f skip -d merge -t \
         /poc/repo-b/data /poc/repo-b/index /poc/repo-b/snapshots \
-        /poc/repo-b/keys /poc/repo-b/config '"$_drive_poc_path"'
+        /poc/repo-b/keys /poc/repo-b/config '"$_drive_poc_path"' --verbose
       echo "=== upload 2 — identical input, expect zero bytes transferred ==="
-      proton-drive -v filesystem upload -f skip -d merge -t \
-        /poc/repo-b/data '"$_drive_poc_path"'
-      proton-drive -j filesystem list '"$_drive_poc_path"'
+      proton-drive filesystem upload -f skip -d merge -t \
+        /poc/repo-b/data '"$_drive_poc_path"' --verbose
+      echo "=== resulting tree ==="
+      proton-drive filesystem list '"$_drive_poc_path"' -j
+      proton-drive filesystem list '"$_drive_poc_path"'/data -j
     '
   _warn "Compare run 1 vs run 2 output. Zero transfers on run 2 confirms the"
   _warn "incremental assumption the whole design rests on."

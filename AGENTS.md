@@ -552,7 +552,16 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   says `No passphrase given` and `--passwd` has no batch form), and the
   copied `.gnupg` MUST be scrubbed of `*.lock`/`.#lk*`/`S.*` or the
   destination hangs ~30s in `database_open … waiting for lock` and then
-  fails `No secret key`. See
+  fails `No secret key`. Worst trap found so far, and the one most
+  dangerous to a backup job: **global options must come AFTER the
+  subcommand, and a LEADING `-v` silently becomes the `version`
+  command** (the CLI resolves unique short names to commands), so
+  `proton-drive -v filesystem upload …` prints the version banner,
+  uploads nothing and exits 0 — a green run that transferred no data.
+  A leading `-j` at least errors (`Command not found: -j filesystem`).
+  Write `proton-drive filesystem upload … --verbose`, and have any
+  wrapper confirm the remote side (`filesystem list … -j`) instead of
+  trusting the exit code. See
   `specs/plans/issue-103-poc-results.md`.
 - **`Stopped = true` is the general "never auto-start" flag, not just for
   `.build`/`.image` services.** Confirmed against the materia manifest
