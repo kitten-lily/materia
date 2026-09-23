@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+#MISE description="Issue #103 proof-of-concept: Proton Drive CLI as a second restic backup destination (workstation only, never a production host)"
+
+#USAGE flag "--section <section>" help="runtime | restic | auth | portability | upload | clean" default="runtime"
+#USAGE flag "--version <version>" help="Proton Drive CLI release to test" default="0.8.0"
+#USAGE flag "--workdir <workdir>" help="Throwaway scratch directory" default="/tmp/proton-drive-poc"
+
+# Sections map onto specs/plans/issue-103-poc-test-plan.md:
+#   runtime     = Section A  — libc/runtime + credential-store + auth-URL probe
+#                              (NO Proton account needed — all four tests)
+#   restic      = Section D1 — restic copy / incremental / prune divergence
+#                              (NO Proton account needed)
+#   auth        = Section B  — interactive `auth login`  (NEEDS a human + real account)
+#   portability = Section C  — pass-store session portability (needs `auth` first)
+#   upload      = Section D2 — filesystem upload + skip check (needs `auth` + `restic`)
+#   clean       = Section E  — local teardown (Drive-side cleanup is printed, not run)
+
+set -euo pipefail
+
+_section="${usage_section:-runtime}"
+_version="${usage_version:-0.8.0}"
+_work="${usage_workdir:-/tmp/proton-drive-poc}"
+
+_img="proton-drive-poc"
+_poc_gpg_uid="proton-drive-poc <poc@invalid.test>"
+_drive_parent="/my-files"
+_drive_poc_folder="proton-drive-poc"
+_drive_poc_path="${_drive_parent}/${_drive_poc_folder}"
+
+# SHA-512 from https://proton.me/download/drive/cli/index.html for 0.8.0
+# (release date 2026-08-13). Bumping --version REQUIRES refreshing these.
+_sha_musl="c76e2c000cc22c01842c05fd7122a4ffbccbe8c0938b8ac892a125cdcbea1e8d374be89916b6b2fddf7f1678105b67283f75a1f9a44f62df478be119b7dc857b"
+_sha_glibc="cf61c2688c45e1055d8add6221d9471a5a5b64bf3bcdb86460f5cb18414596cc4df3cdb6627c9097c94bec32a3c9915ada3211ef2ae5be33c46ebbc996ccaa28"
+
+_restic_version="0.19.1"
+
+_say() { gum style --foreground 4 "==> $*" 2>/dev/null || echo "==> $*"; }
+_ok() { gum style --foreground 2 "    $*" 2>/dev/null || echo "    $*"; }
+_warn() { gum style --foreground 3 "    $*" 2>/dev/null || echo "    $*"; }
+
+_fetch_cli() {
+  mkdir -p "$_work"
+  local variant sha out
+  for variant in x64-musl x64; do
+    case "$variant" in
+    x64-musl) sha="$_sha_musl" ;;
+    x64) sha="$_sha_glibc" ;;
+    esac
+    out="$_work/proton-drive-linux-$variant"
+    if [[ "$(sha512sum "$out" 2>/dev/null | cut -d' ' -f1)" != "$sha" ]]; then
+      _say "downloading proton-drive $_version linux/$variant (~115 MB)"
+      # -C - resumes a partial file; proton.me has stalled mid-transfer before.
+      curl -fL --retry 5 --retry-all-errors -C - --speed-time 60 --speed-limit 10000 \
+        -o "$out" "https://proton.me/download/drive/cli/${_version}/linux-${variant}/proton-drive"
+    fi
+    if [[ "$(sha512sum "$out" | cut -d' ' -f1)" != "$sha" ]]; then
+      _warn "CHECKSUM MISMATCH for linux/$variant — refusing to run it"
+      exit 1
+    fi
+    chmod +x "$out"
+    _ok "linux/$variant verified ($(du -h "$out" | cut -f1))"
+  done
+}
+
+# alpine + libstdc++ — the minimum that actually runs the musl build.
+# scratch does NOT work (see _section_runtime test 1); the binary is
+# dynamically linked against ld-musl, libstdc++ and libgcc_s.
+_build_img() {
+  _fetch_cli
+  cat > "$_work/Dockerfile.poc" <<'EOF'
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache libstdc++ gnupg pass
+COPY proton-drive-linux-x64-musl /usr/local/bin/proton-drive
+ENTRYPOINT ["/usr/local/bin/proton-drive"]
+EOF
+  podman build -q -t "$_img" -f "$_work/Dockerfile.poc" "$_work" >/dev/null
+}
+
+_fetch_restic() {
+  [[ -x "$_work/restic" ]] && return 0
+  mkdir -p "$_work"
+  _say "downloading static restic $_restic_version into $_work (not installed system-wide)"
+  curl -fsSL -o "$_work/restic.bz2" \
+    "https://github.com/restic/restic/releases/download/v${_restic_version}/restic_${_restic_version}_linux_amd64.bz2"
+  bunzip2 -f "$_work/restic.bz2"
+  chmod +x "$_work/restic"
+}
+
+# ------------------------------------------------- Section A (no account)
+
+_section_runtime() {
+  _fetch_cli
+
+  _say "Test 0 — ELF linkage"
+  file "$_work/proton-drive-linux-x64-musl"
+  readelf -d "$_work/proton-drive-linux-x64-musl" | grep NEEDED
+
+  _say "Test 1 — scratch image (what images/restic-backup/Dockerfile uses)"
+  printf 'FROM scratch\nCOPY proton-drive-linux-x64-musl /proton-drive\nENTRYPOINT ["/proton-drive"]\n' \
+    > "$_work/Dockerfile.scratch"
+  podman build -q -t "${_img}-scratch" -f "$_work/Dockerfile.scratch" "$_work" >/dev/null
+  if podman run --rm "${_img}-scratch" version; then
+    _ok "PASS under scratch"
+  else
+    _warn "FAIL under scratch — expected: the binary needs a dynamic loader"
+  fi
+
+  _say "Test 2a — alpine base only (no libstdc++)"
+  podman run --rm -v "$_work/proton-drive-linux-x64-musl:/proton-drive:ro,Z" \
+    docker.io/library/alpine:3.22 /proton-drive version 2>&1 | head -4 || true
+
+  _say "Test 2b — alpine + libstdc++"
+  _build_img
+  podman run --rm "$_img" version
+  _ok "image size: $(podman images --format '{{.Size}}' "$_img")"
+
+  _say "Test 3 — credential stores, unauthenticated (no account needed)"
+  local rc
+  for store in keychain pass unsafe_file; do
+    echo "--- PROTON_DRIVE_CREDENTIALS_STORE=$store ---"
+    # `pass` is installed in the image, but uninitialised (no GPG key).
+    podman run --rm -e PROTON_DRIVE_CREDENTIALS_STORE="$store" "$_img" \
+      filesystem list /my-files 2>&1 | head -3 || true
+    rc=0
+    podman run --rm -e PROTON_DRIVE_CREDENTIALS_STORE="$store" "$_img" \
+      filesystem list /my-files >/dev/null 2>&1 || rc=$?
+    echo "exit=$rc"
+  done
+
+  _say "Test 4 — headless auth URL probe (no account needed, aborts before sign-in)"
+  _warn "Starts a real login attempt and kills the container after 20s."
+  _warn "It never signs in. Uses podman's own --timeout: an external"
+  _warn "timeout(1) around 'podman run' does NOT stop the container."
+  podman run --rm --timeout 20 -e PROTON_DRIVE_CREDENTIALS_STORE=unsafe_file \
+    "$_img" auth login </dev/null 2>&1 | head -5 || true
+  _warn "Look for 'Open following URL manually (can be on another device)' —"
+  _warn "that line is the go/no-go answer for headless-server auth."
+}
+
+# ------------------------------------------------ Section D1 (no account)
+
+_section_restic() {
+  _fetch_restic
+  local R="$_work/restic"
+  rm -rf "$_work"/{src,repo-a,repo-b,mirror,restored}
+  mkdir -p "$_work"/{src,repo-a,repo-b}
+  printf %s poc-a > "$_work/pw-a"
+  printf %s poc-b > "$_work/pw-b"
+
+  _say "repo-a = Storage Box repo; repo-b = the Proton-side local repo"
+  echo "poc file $(date -u)" > "$_work/src/file1.txt"
+  "$R" -r "$_work/repo-a" --password-file "$_work/pw-a" init -q
+  "$R" -r "$_work/repo-a" --password-file "$_work/pw-a" backup -q "$_work/src"
+  "$R" -r "$_work/repo-b" --password-file "$_work/pw-b" init -q
+  # restic >= 0.17: destination is -r, source is --from-repo (--repo2 is deprecated
+  # and its password handling no longer works the way the old docs describe).
+  "$R" -r "$_work/repo-b" --password-file "$_work/pw-b" \
+    copy --from-repo "$_work/repo-a" --from-password-file "$_work/pw-a"
+  find "$_work/repo-b" -type f | sed "s|$_work/repo-b/||" | sort > "$_work/all1"
+
+  _say "copy run 2 — no new data; expect zero new files"
+  "$R" -r "$_work/repo-b" --password-file "$_work/pw-b" \
+    copy --from-repo "$_work/repo-a" --from-password-file "$_work/pw-a"
+  find "$_work/repo-b" -type f | sed "s|$_work/repo-b/||" | sort > "$_work/all2"
+  if diff -q "$_work/all1" "$_work/all2" >/dev/null; then
+    _ok "PASS — no-op copy adds nothing to upload"
+  else
+    _warn "FAIL — repo changed with no new source data:"
+    diff "$_work/all1" "$_work/all2" || true
+  fi
+
+  _say "copy run 3 — one new snapshot; expect additions only, no rewrites"
+  echo "second poc file $(date -u)" > "$_work/src/file2.txt"
+  "$R" -r "$_work/repo-a" --password-file "$_work/pw-a" backup -q "$_work/src"
+  "$R" -r "$_work/repo-b" --password-file "$_work/pw-b" \
+    copy --from-repo "$_work/repo-a" --from-password-file "$_work/pw-a"
+  find "$_work/repo-b" -type f | sed "s|$_work/repo-b/||" | sort > "$_work/all3"
+  diff "$_work/all2" "$_work/all3" || true
+  sed "s|^|$_work/repo-b/|" "$_work/all1" | xargs -d'\n' sha256sum
+  _ok "run-1 files re-hashed above — a changed hash would break upload skipping"
+
+  _say "prune divergence — what an upload-only Drive mirror looks like afterwards"
+  cp -a "$_work/repo-b" "$_work/mirror"
+  "$R" -r "$_work/repo-b" --password-file "$_work/pw-b" forget --keep-last 1 --prune
+  find "$_work/repo-b" -type f | sed "s|$_work/repo-b/||" | sort > "$_work/all4"
+  diff "$_work/all3" "$_work/all4" || true
+  # The mirror only ever gains files, exactly like an upload-only Drive copy.
+  cp -a -n "$_work/repo-b/." "$_work/mirror/" 2>/dev/null || true
+  _warn "mirror: $(find "$_work/mirror" -type f | wc -l) files, local repo: $(wc -l < "$_work/all4") files"
+  "$R" -r "$_work/mirror" --password-file "$_work/pw-b" check --read-data
+  "$R" -r "$_work/mirror" --password-file "$_work/pw-b" snapshots --no-lock
+  rm -rf "$_work/restored"
+  "$R" -r "$_work/mirror" --password-file "$_work/pw-b" restore latest --target "$_work/restored"
+  _ok "mirror restores; note any forgotten snapshot still listed above — retention"
+  _ok "applied locally does NOT propagate to an upload-only remote copy."
+}
+
+# ------------------------------------------- Section B (needs a human)
+
+_section_auth() {
+  _build_img
+  _warn "NEEDS A HUMAN — 'auth login' binds a real Proton account session."
+  _warn "Runs in a throwaway container: no DISPLAY, no browser, pass-backed store."
+  _warn "Open the printed URL on your own machine, finish sign-in, come back."
+  podman run -it --rm \
+    -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
+    -e HOME=/root \
+    -v "$_work:/poc:Z" \
+    --entrypoint sh \
+    "$_img" -c '
+      set -e
+      gpg --batch --quick-generate-key "'"$_poc_gpg_uid"'" default default never
+      pass init "$(gpg --list-secret-keys --with-colons proton-drive-poc | awk -F: "/^sec/{print \$5; exit}")"
+      proton-drive auth login
+      echo "--- session material: ---"
+      find /root/.password-store -type f
+      tar -C /root -czf /poc/pass-store.tar.gz .password-store .gnupg
+      echo "--- exported to '"$_work"'/pass-store.tar.gz ---"
+    '
+  _ok "run --section portability next to prove the session survives the move"
+}
+
+# ------------------------------------------- Section C (needs section B)
+
+_section_portability() {
+  [[ -s "$_work/pass-store.tar.gz" ]] || {
+    _warn "no $_work/pass-store.tar.gz — run --section auth first"
+    exit 1
+  }
+  _say "fresh container, copied pass store, no login: can it list Drive?"
+  podman run -it --rm \
+    -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
+    -e HOME=/root \
+    -v "$_work:/poc:ro,Z" \
+    --entrypoint sh \
+    "$_img" -c '
+      set -e
+      tar -C /root -xzf /poc/pass-store.tar.gz
+      chmod 700 /root/.gnupg
+      proton-drive filesystem list /my-files
+    '
+  _warn "PASS = listed without logging in → the session is portable as GPG-encrypted"
+  _warn "files, so 'bootstrap on a workstation, ship the store as a materia secret'"
+  _warn "is a viable provisioning design."
+}
+
+# -------------------------------------- Section D2 (needs sections B + D1)
+
+_section_upload() {
+  [[ -s "$_work/pass-store.tar.gz" ]] || {
+    _warn "no $_work/pass-store.tar.gz — run --section auth first"
+    exit 1
+  }
+  [[ -d "$_work/repo-b" ]] || {
+    _warn "no $_work/repo-b — run --section restic first"
+    exit 1
+  }
+  _say "uploading repo-b into $_drive_poc_path twice; second run must transfer nothing"
+  # NOTE: 0.8.0 has no --conflict-strategy flag. It is -f/--file-conflict-strategy
+  # (create-new-revision|rename|replace|skip) and -d/--folder-conflict-strategy
+  # (merge|rename|replace|skip). `upload` takes localPath... PARENTpath — the
+  # last argument is the parent folder, not the destination name.
+  podman run -it --rm \
+    -e PROTON_DRIVE_CREDENTIALS_STORE=pass \
+    -e HOME=/root \
+    -v "$_work:/poc:Z" \
+    --entrypoint sh \
+    "$_img" -c '
+      set -e
+      tar -C /root -xzf /poc/pass-store.tar.gz
+      chmod 700 /root/.gnupg
+      proton-drive filesystem create-folder '"$_drive_parent"' '"$_drive_poc_folder"' || true
+      echo "=== upload 1 ==="
+      proton-drive -v filesystem upload -f skip -d merge -t \
+        /poc/repo-b/data /poc/repo-b/index /poc/repo-b/snapshots \
+        /poc/repo-b/keys /poc/repo-b/config '"$_drive_poc_path"'
+      echo "=== upload 2 — identical input, expect zero bytes transferred ==="
+      proton-drive -v filesystem upload -f skip -d merge -t \
+        /poc/repo-b/data '"$_drive_poc_path"'
+      proton-drive -j filesystem list '"$_drive_poc_path"'
+    '
+  _warn "Compare run 1 vs run 2 output. Zero transfers on run 2 confirms the"
+  _warn "incremental assumption the whole design rests on."
+}
+
+# ---------------------------------------------------------------- Section E
+
+_section_clean() {
+  _say "local teardown"
+  podman rmi -f "$_img" "${_img}-scratch" >/dev/null 2>&1 || true
+  rm -rf "$_work"
+  _ok "removed $_work and the POC images"
+  _warn "Drive-side cleanup is NOT automated — it touches a real account. By hand:"
+  _warn "  proton-drive filesystem delete $_drive_poc_path"
+  _warn "  proton-drive filesystem empty-trash   # 'replace'/'delete' route via trash"
+  _warn "  proton-drive auth logout"
+  _warn "confirm with: proton-drive filesystem list $_drive_parent"
+}
+
+case "$_section" in
+runtime) _section_runtime ;;
+restic) _section_restic ;;
+auth) _section_auth ;;
+portability) _section_portability ;;
+upload) _section_upload ;;
+clean) _section_clean ;;
+*)
+  _warn "unknown --section '$_section'"
+  _warn "valid: runtime | restic | auth | portability | upload | clean"
+  exit 1
+  ;;
+esac
