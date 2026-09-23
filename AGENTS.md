@@ -508,6 +508,38 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   directory" on the temp pack path unless the `.container.gotmpl` adds
   `Tmpfs=/tmp` (quadlet's tmpfs-mount directive — ephemeral, not part of any
   materia-managed path, so it doesn't trip the data-dir-drift gotcha above).
+- **The Proton Drive CLI's "musl" build is dynamically linked — it cannot
+  go in a `scratch` image, and its flags are not what the docs imply**
+  (issue #103 POC, CLI 0.8.0, harness:
+  `mise poc:proton-drive --section runtime|restic`). The `linux-x64-musl`
+  download reads like a drop-in for this repo's `scratch`/minimal-image
+  convention; it isn't. `file` reports `interpreter
+  /lib/ld-musl-x86_64.so.1`, with `NEEDED libstdc++.so.6` and
+  `libgcc_s.so.1` — under `scratch` podman fails with `exec container
+  process (missing dynamic library?)`, and under bare `alpine:3.22` with
+  `Error loading shared library libstdc++.so.6` plus ~50 relocation
+  errors. `alpine:3.22` + `apk add libstdc++` works, at 144 MB (the
+  binary alone is 115 MB — it embeds a Bun runtime), versus
+  `restic-backup`'s ~25 MB scratch image. Three more empirical
+  corrections from the same run: (1) headless auth *does* work —
+  `auth login` with no `DISPLAY` and no browser prints `Open following
+  URL manually (can be on another device)` and polls, so a server can be
+  authenticated over SSH; (2) the default `keychain` credential store
+  fails in a container (`libsecret not available`) while
+  `PROTON_DRIVE_CREDENTIALS_STORE=pass` reaches `You need to login
+  first`, and every failure class exits 1; (3) there is no
+  `--conflict-strategy` flag — it's `-f/--file-conflict-strategy`
+  (`create-new-revision|rename|replace|skip`) and
+  `-d/--folder-conflict-strategy` (`merge|rename|replace|skip`), `-v`/`-j`
+  are global options, `filesystem upload`'s last argument is a *parent*
+  folder, and `replace` trashes rather than deletes (trashed data still
+  consumes quota until `filesystem empty-trash`). Separately, an
+  upload-only mirror of a restic repo never honours retention: after
+  `forget --prune` locally the mirror keeps the deleted pack, the two
+  replaced index files and the forgotten snapshot — it still passes
+  `restic check --read-data` and restores fine, but it only ever grows
+  and `restic snapshots` there still lists forgotten snapshots. See
+  `specs/plans/issue-103-poc-results.md`.
 - **`Stopped = true` is the general "never auto-start" flag, not just for
   `.build`/`.image` services.** Confirmed against the materia manifest
   reference: "Prevents materia from starting the service." Any timer-
