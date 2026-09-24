@@ -1,10 +1,10 @@
 # Plan — VPS benchmark harness (`mise bench:*`)
 
-Status: PLANNED → IMPLEMENTED 2026-09-24. No GitHub issue (tooling-only,
-no component/IaC change). Related: #102 (Hummingbird migration, adds
-Contabo as a third provisioning target — this harness is how a candidate
-Contabo/Hetzner instance gets compared against flutterina before anything
-is migrated onto it).
+Status: PLANNED → IMPLEMENTED 2026-09-24. Findings and handoff filed as
+**#116**. Related: #102 (Hummingbird migration, adds Contabo as a third
+provisioning target — this harness is how a candidate Contabo/Hetzner
+instance gets compared against flutterina before anything is migrated
+onto it).
 
 ## Problem
 
