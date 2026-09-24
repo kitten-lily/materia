@@ -26,4 +26,8 @@ provisioning/servers/*/bootstrap/
 # Local token cache (fnox / Proton Pass)
 .tokensave/
 
+# Benchmark results (mise bench:vps) — embed hostnames/IPs, keep repo generic.
+# Root-anchored: an unanchored "bench/" would also swallow .mise/tasks/bench/.
+/bench/
+
 .pi/

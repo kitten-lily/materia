@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#MISE description="Render a side-by-side comparison of every bench:vps result (bench/results/*.json)"
+
+#USAGE flag "--dir <dir>" help="result directory" default="bench/results"
+
+set -euo pipefail
+
+_dir="${usage_dir:-bench/results}"
+
+shopt -s nullglob
+_files=("$_dir"/*.json)
+((${#_files[@]})) || {
+  echo "no results in $_dir — run: mise bench:vps --target <user@host>" >&2
+  exit 1
+}
+
+# Metric order is deliberate: the axes that decide edge-node sizing first
+# (single-core AEAD throughput, steal, fsync latency), raw scores after.
+jq -s -r '
+  def fmt($v): if $v == null then "-" else ($v|tostring) end;
+  . as $all
+  | [ {k:"cpu_model",     p:["host","cpu_model"]},
+      {k:"cores",         p:["host","cores"]},
+      {k:"mem MB",        p:["host","mem_mb"]},
+      {k:"swap MB",       p:["host","swap_mb"]},
+      {k:"disk GB",       p:["host","disk_gb"]},
+      {k:"virt",          p:["host","virt"]},
+      {k:"os",            p:["host","os"]},
+      {k:"--- crypto",    p:null},
+      {k:"AES-128-GCM 1T MB/s",  p:["crypto","aes128gcm_mbs_1t"]},
+      {k:"ChaCha20 1T MB/s",     p:["crypto","chacha20poly1305_mbs_1t"]},
+      {k:"AES-128-GCM NT MB/s",  p:["crypto","aes128gcm_mbs_nt"]},
+      {k:"ChaCha20 NT MB/s",     p:["crypto","chacha20poly1305_mbs_nt"]},
+      {k:"--- cpu",       p:null},
+      {k:"sysbench 1T ev/s",     p:["cpu","sysbench_eps_1t"]},
+      {k:"sysbench NT ev/s",     p:["cpu","sysbench_eps_nt"]},
+      {k:"steal % under load",   p:["cpu","steal_pct_under_load"]},
+      {k:"--- disk",      p:null},
+      {k:"seq write MB/s",       p:["disk","seq_write_mbs"]},
+      {k:"4k randwrite fsync IOPS", p:["disk","randwrite4k_fsync_iops"]},
+      {k:"fsync p99 us",         p:["disk","fsync_p99_us"]},
+      {k:"4k randread IOPS",     p:["disk","randread4k_iops"]},
+      {k:"--- net",       p:null},
+      {k:"download MB/s",        p:["net","download_mbs"]},
+      {k:"RTT ms",               p:["net","rtt_ms"]},
+      {k:"--- tunnel",    p:null},
+      {k:"wireguard-go Mbit/s",  p:["tunnel","wireguard_go_mbits"]}
+    ] as $rows
+  | ([ "metric" ] + [ $all[].label ]),
+    ([ "------" ] + [ $all[] | "------" ]),
+    ( $rows[]
+      | . as $r
+      | if $r.p == null
+        then ([ $r.k ] + [ $all[] | "" ])
+        else ([ $r.k ] + [ $all[] | fmt(getpath($r.p)) ])
+        end
+    )
+  | @tsv
+' "${_files[@]}" | awk -F'\t' '
+  { for (i=1;i<=NF;i++) { cell[NR,i]=$i; if (length($i)>w[i]) w[i]=length($i) } ; n=NF; rows=NR }
+  END { for (r=1;r<=rows;r++) { line="";
+          for (c=1;c<=n;c++) line=line sprintf("%-*s  ", w[c], cell[r,c]);
+          sub(/ +$/,"",line); print line } }'
+
+echo
+echo "collected:"
+jq -r '"  " + .label + "  " + .collected_at' "${_files[@]}"

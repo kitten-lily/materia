@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+#MISE description="Benchmark a VPS (or this workstation) on the axes that actually bound the edge node — see specs/plans/vps-benchmark-harness.md"
+
+#USAGE flag "--target <target>" help="ssh destination (user@host); omit to benchmark this workstation"
+#USAGE flag "--label <label>" help="result label; defaults to the target host (or 'workstation')" default=""
+#USAGE flag "--sections <sections>" help="comma list: crypto,cpu,disk,net,tunnel (tunnel is opt-in — privileged + saturates every core)" default="crypto,cpu,disk,net"
+#USAGE flag "--duration <duration>" help="seconds per sub-test" default="5"
+#USAGE flag "--workdir <workdir>" help="scratch dir on the target; must be on the disk under test" default=""
+#USAGE flag "--net-url <net_url>" help="HTTP object for the download test (only comparable between boxes using the same URL)" default="https://hel1-speed.hetzner.com/100MB.bin"
+#USAGE flag "--out <out>" help="result directory (gitignored)" default="bench/results"
+# Extra ssh options go in BENCH_SSH_OPTS rather than a flag: usage's parser
+# rejects a flag value that starts with "-". Example, for a disposable
+# candidate VPS reached with a throwaway key:
+#   BENCH_SSH_OPTS="-i /tmp/key -o StrictHostKeyChecking=no" mise bench:vps ...
+
+# Every section maps to a bottleneck observed on the live edge node; nothing
+# generic is measured for its own sake. See the plan for the mapping table.
+#
+#   crypto  openssl AES-GCM + ChaCha20-Poly1305 @ 8 KiB  -> Traefik TLS, wireguard-go
+#   cpu     sysbench 1T/NT + %steal under load           -> headroom, vCPU oversubscription
+#   disk    fio seq write, 4k randwrite fsync=1, randread-> restic window, SQLite commits
+#   net     HTTP download + ICMP RTT                     -> ingress/egress, peering
+#   tunnel  wireguard-go over veth + iperf3              -> gerbil/newt userspace WG data path
+#
+# Everything runs in a throwaway podman container: the fleet is Flatcar, which
+# has no package manager, and a candidate VPS shouldn't get its host polluted.
+
+set -euo pipefail
+
+_target="${usage_target:-}"
+_label="${usage_label:-}"
+_sections="${usage_sections:-crypto,cpu,disk,net}"
+_duration="${usage_duration:-5}"
+_workdir="${usage_workdir:-}"
+_net_url="${usage_net_url:-https://hel1-speed.hetzner.com/100MB.bin}"
+_out="${usage_out:-bench/results}"
+_ssh_opts="${BENCH_SSH_OPTS:-}"
+
+_say() { gum style --foreground 4 "==> $*" 2>/dev/null || echo "==> $*"; }
+_ok() { gum style --foreground 2 "    $*" 2>/dev/null || echo "    $*"; }
+_warn() { gum style --foreground 3 "    $*" 2>/dev/null || echo "    $*"; }
+
+if [[ -z "$_label" ]]; then
+  if [[ -n "$_target" ]]; then _label="${_target##*@}"; else _label="workstation"; fi
+fi
+_label="${_label//[^a-zA-Z0-9._-]/_}"
+
+# The payload is one self-contained bash script executed on the target. It
+# prints exactly one JSON object on stdout; all progress goes to stderr.
+_payload() {
+  cat <<PAYLOAD_EOF
+set -euo pipefail
+SECTIONS="$_sections"
+DURATION="$_duration"
+WORKDIR="$_workdir"
+NET_URL="$_net_url"
+LABEL="$_label"
+PAYLOAD_EOF
+  cat <<'PAYLOAD_EOF'
+
+IMG="localhost/materia-bench:2"
+: "${WORKDIR:=$HOME/.cache/materia-bench}"
+log() { echo "    $*" >&2; }
+has() { case ",$SECTIONS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+command -v podman >/dev/null || { echo "podman not found on target" >&2; exit 1; }
+mkdir -p "$WORKDIR"
+
+# ---------------------------------------------------------------- host facts
+cpu_model=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo)
+[[ -n "$cpu_model" ]] || cpu_model=$(awk -F': ' '/^Model/{print $2; exit}' /proc/cpuinfo)
+cores=$(nproc)
+mem_mb=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo)
+swap_mb=$(awk '/^SwapTotal:/{printf "%d", $2/1024}' /proc/meminfo)
+disk_gb=$(df -BG --output=size "$WORKDIR" | tail -1 | tr -dc '0-9')
+disk_used_gb=$(df -BG --output=used "$WORKDIR" | tail -1 | tr -dc '0-9')
+kernel=$(uname -r)
+# systemd-detect-virt exits 1 when it finds nothing, so `|| echo` would
+# concatenate "none" and the fallback.
+virt=$(systemd-detect-virt 2>/dev/null) || true
+[[ -n "$virt" ]] || virt=unknown
+osname=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || echo unknown)
+
+# ------------------------------------------------------------ bench container
+if ! podman image exists "$IMG" 2>/dev/null; then
+  log "building $IMG (alpine + openssl fio iperf3 sysbench wireguard-go)"
+  cat > "$WORKDIR/Containerfile" <<'CF'
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache bash openssl fio iperf3 sysbench wireguard-go \
+    wireguard-tools iproute2 util-linux-misc curl iputils jq
+CF
+  podman build -q -t "$IMG" -f "$WORKDIR/Containerfile" "$WORKDIR" >/dev/null
+fi
+
+run() { podman run --rm -i "$@" "$IMG" bash -s; }
+
+crypto_json='null'; cpu_json='null'; disk_json='null'; net_json='null'; tunnel_json='null'
+
+# ------------------------------------------------------------------- crypto
+# 8 KiB block column (NF-1: the last column is 16384). Values are in k =
+# 1000 bytes/s, so /1000 gives MB/s. This is the number that predicts both
+# Traefik's TLS ceiling and wireguard-go's.
+if has crypto; then
+  log "crypto: openssl speed (aes-128-gcm, chacha20-poly1305), ${DURATION}s each"
+  crypto_json=$(run -e D="$DURATION" -e N="$cores" <<'IN'
+set -euo pipefail
+# openssl prints the cipher as "AES-128-GCM"/"ChaCha20-Poly1305", not the
+# lowercase name passed to -evp; match case-insensitively. awk's numeric
+# coercion drops the trailing "k" on the value.
+col() { awk -v c="$1" 'tolower($1)==tolower(c) {printf "%.1f", $(NF-1)/1000}'; }
+a1=$(openssl speed -seconds "$D" -evp aes-128-gcm 2>/dev/null | col aes-128-gcm)
+c1=$(openssl speed -seconds "$D" -evp chacha20-poly1305 2>/dev/null | col chacha20-poly1305)
+an=$(openssl speed -seconds "$D" -multi "$N" -evp aes-128-gcm 2>/dev/null | col aes-128-gcm)
+cn=$(openssl speed -seconds "$D" -multi "$N" -evp chacha20-poly1305 2>/dev/null | col chacha20-poly1305)
+jq -n --argjson a1 "${a1:-0}" --argjson c1 "${c1:-0}" \
+      --argjson an "${an:-0}" --argjson cn "${cn:-0}" \
+  '{aes128gcm_mbs_1t:$a1, chacha20poly1305_mbs_1t:$c1,
+    aes128gcm_mbs_nt:$an, chacha20poly1305_mbs_nt:$cn}'
+IN
+  )
+fi
+
+# ---------------------------------------------------------------------- cpu
+# %steal is sampled from /proc/stat, which is host-wide inside the container.
+# It is the tell for an oversubscribed shared vCPU.
+if has cpu; then
+  log "cpu: sysbench 1T + ${cores}T, steal sampled under load"
+  cpu_json=$(run -e D="$DURATION" -e N="$cores" <<'IN'
+set -euo pipefail
+eps() { awk '/events per second:/{printf "%.1f", $4}'; }
+s1=$(sysbench cpu --threads=1 --time="$D" run 2>/dev/null | eps)
+read -r _ u1 n1 sy1 i1 w1 ir1 sf1 st1 _ < /proc/stat
+sn=$(sysbench cpu --threads="$N" --time="$D" run 2>/dev/null | eps)
+read -r _ u2 n2 sy2 i2 w2 ir2 sf2 st2 _ < /proc/stat
+t1=$((u1+n1+sy1+i1+w1+ir1+sf1+st1)); t2=$((u2+n2+sy2+i2+w2+ir2+sf2+st2))
+steal=$(awk -v a="$st1" -v b="$st2" -v c="$t1" -v d="$t2" \
+  'BEGIN{ if (d-c > 0) printf "%.2f", (b-a)*100/(d-c); else print 0 }')
+jq -n --argjson s1 "${s1:-0}" --argjson sn "${sn:-0}" --argjson st "${steal:-0}" \
+  '{sysbench_eps_1t:$s1, sysbench_eps_nt:$sn, steal_pct_under_load:$st}'
+IN
+  )
+fi
+
+# --------------------------------------------------------------------- disk
+# fio writes into a bind-mounted host dir — never the container overlay, or
+# the numbers describe the graph driver instead of the disk. fsync=1 is the
+# SQLite commit path (pangolin app DB, beszel PocketBase).
+if has disk; then
+  log "disk: fio seq-write / 4k randwrite fsync=1 / 4k randread in $WORKDIR"
+  disk_json=$(run -e D="$DURATION" -v "$WORKDIR:/scratch:z" <<'IN'
+set -euo pipefail
+cd /scratch
+# fio writes advisory notes (e.g. "note: both iodepth >= 1 and synchronous
+# I/O engine are selected") to STDOUT, ahead of the JSON document — piping
+# `--output-format=json` straight into jq is therefore unsafe. Route the
+# report through --output= instead. Engine stays the default psync (QD1),
+# which is what SQLite and restic actually issue.
+f() {
+  fio --output-format=json --output=/tmp/fio.json --name=b \
+    --filename=/scratch/fio.tmp "$@" >/dev/null 2>&1
+  cat /tmp/fio.json
+}
+sw=$(f --rw=write --bs=1M --size=512M --direct=1 --end_fsync=1 \
+  | jq '.jobs[0].write.bw_bytes/1048576 | .*10|round/10')
+# Parenthesise each array element: `[a|round, b]` binds as `[a|(round, b)]`,
+# which applies the second expression to the *number* produced by the first.
+rw=$(f --rw=randwrite --bs=4k --size=256M --runtime="$D" --time_based \
+  --fsync=1 --iodepth=1 \
+  | jq '[(.jobs[0].write.iops|round),
+         (.jobs[0].write.clat_ns.percentile["99.000000"]/1000|round)]')
+rr=$(f --rw=randread --bs=4k --size=256M --runtime="$D" --time_based \
+  --direct=1 \
+  | jq '.jobs[0].read.iops|round')
+rm -f /scratch/fio.tmp
+jq -n --argjson sw "${sw:-0}" --argjson rw "${rw:-[0,0]}" --argjson rr "${rr:-0}" \
+  '{seq_write_mbs:$sw, randwrite4k_fsync_iops:$rw[0], fsync_p99_us:$rw[1],
+    randread4k_iops:$rr}'
+IN
+  )
+fi
+
+# ---------------------------------------------------------------------- net
+# --network=host: container NAT would understate throughput.
+if has net; then
+  log "net: download $NET_URL + RTT"
+  net_json=$(run --network=host -e URL="$NET_URL" <<'IN'
+set -uo pipefail
+host=$(echo "$URL" | awk -F/ '{print $3}' | cut -d: -f1)
+# A dead/unreachable probe host must degrade to 0, not abort the whole run:
+# `set -e` plus `pipefail` would otherwise kill the section on the ping pipe.
+sp=$(curl -sS -o /dev/null -w '%{speed_download}' --max-time 120 "$URL" 2>/dev/null || echo 0)
+rtt=$(ping -c 5 -q "$host" 2>/dev/null | awk -F/ '/rtt|round-trip/{printf "%.2f", $5}' || true)
+jq -n --argjson d "$(awk -v s="${sp:-0}" 'BEGIN{printf "%.1f", s/1048576}')" \
+      --argjson r "${rtt:-0}" --arg h "$host" \
+  '{download_mbs:$d, rtt_ms:$r, probe_host:$h}'
+IN
+  )
+fi
+
+# ------------------------------------------------------------------- tunnel
+# Two netns joined by veth, wireguard-go on each side, iperf3 through the
+# tunnel. Both endpoints live on the box under test, so the absolute figure
+# is ~half of what it could proxy between two external peers — valid as a
+# relative comparison, which is the question being asked.
+if has tunnel; then
+  log "tunnel: wireguard-go (userspace) throughput via iperf3"
+  tunnel_json=$(run --cap-add=NET_ADMIN,SYS_ADMIN,NET_RAW --device=/dev/net/tun \
+    -e D="$DURATION" <<'IN'
+set -euo pipefail
+# Both `ip netns exec` AND `ip -n` go through iproute2's netns_switch(),
+# which unshares the mount namespace and remounts /sys — that needs real
+# CAP_SYS_ADMIN over the mount ns and fails inside a container with
+# "mount of /sys failed: Operation not permitted", even with --privileged.
+# `nsenter --net=` does a plain setns(2), so it works with NET_ADMIN+SYS_ADMIN.
+NA=/var/run/netns/bwa; NB=/var/run/netns/bwb
+na() { nsenter --net="$NA" "$@"; }
+nb() { nsenter --net="$NB" "$@"; }
+cleanup() { ip netns del bwa 2>/dev/null || true; ip netns del bwb 2>/dev/null || true; }
+trap cleanup EXIT
+ip netns add bwa; ip netns add bwb
+ip link add vea type veth peer name veb
+ip link set vea netns bwa; ip link set veb netns bwb
+na ip link set lo up; na ip addr add 10.99.0.1/24 dev vea; na ip link set vea up
+nb ip link set lo up; nb ip addr add 10.99.0.2/24 dev veb; nb ip link set veb up
+# wireguard-go's UAPI socket lives at /var/run/wireguard/<iface>.sock, which
+# is in the shared MOUNT namespace — two instances named wg0 in different
+# NET namespaces collide ("UAPI listen error: unix socket in use"). Distinct
+# interface names avoid it. umask: `wg genkey` warns on world-readable output.
+umask 077
+wg genkey > /tmp/ka; wg genkey > /tmp/kb
+pa=$(wg pubkey < /tmp/ka); pb=$(wg pubkey < /tmp/kb)
+na wireguard-go wga >/dev/null 2>&1
+nb wireguard-go wgb >/dev/null 2>&1
+na wg set wga private-key /tmp/ka listen-port 51820 \
+  peer "$pb" allowed-ips 10.100.0.2/32 endpoint 10.99.0.2:51821
+nb wg set wgb private-key /tmp/kb listen-port 51821 \
+  peer "$pa" allowed-ips 10.100.0.1/32 endpoint 10.99.0.1:51820
+na ip addr add 10.100.0.1/24 dev wga; na ip link set wga mtu 1420 up
+nb ip addr add 10.100.0.2/24 dev wgb; nb ip link set wgb mtu 1420 up
+# Handshake warm-up only; iperf3's TCP retries cover a ping-less box.
+na ping -c 3 -W 2 -q 10.100.0.2 >/dev/null 2>&1 || sleep 2
+nb iperf3 -s -1 -B 10.100.0.2 -D
+sleep 1
+r=$(na iperf3 -c 10.100.0.2 -t "$D" -J)
+jq -n --argjson m "$(echo "$r" | jq '.end.sum_received.bits_per_second/1e6|.*10|round/10')" \
+      --argjson rx "$(echo "$r" | jq '.end.sum_received.bytes')" \
+  '{wireguard_go_mbits:$m, bytes:$rx,
+    note:"both WG + iperf3 endpoints on this box; relative comparison only"}'
+IN
+  )
+fi
+
+# The target host is only assumed to have podman — a stock Debian/Ubuntu
+# candidate VPS has no jq — so the final assembly also runs in the container.
+run \
+  -e LABEL="$LABEL" -e AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -e CPU_MODEL="$cpu_model" -e KERNEL="$kernel" -e VIRT="$virt" -e OSNAME="$osname" \
+  -e CORES="$cores" -e MEM_MB="$mem_mb" -e SWAP_MB="$swap_mb" \
+  -e DISK_GB="${disk_gb:-0}" -e DISK_USED_GB="${disk_used_gb:-0}" \
+  -e CRYPTO="${crypto_json:-null}" -e CPUJ="${cpu_json:-null}" \
+  -e DISKJ="${disk_json:-null}" -e NETJ="${net_json:-null}" \
+  -e TUNNELJ="${tunnel_json:-null}" <<'IN'
+jq -n \
+  --arg label "$LABEL" --arg at "$AT" \
+  --arg cpu_model "$CPU_MODEL" --arg kernel "$KERNEL" --arg virt "$VIRT" --arg os "$OSNAME" \
+  --argjson cores "$CORES" --argjson mem_mb "$MEM_MB" --argjson swap_mb "$SWAP_MB" \
+  --argjson disk_gb "$DISK_GB" --argjson disk_used_gb "$DISK_USED_GB" \
+  --argjson crypto "$CRYPTO" --argjson cpu "$CPUJ" \
+  --argjson disk "$DISKJ" --argjson net "$NETJ" --argjson tunnel "$TUNNELJ" \
+  '{label:$label, collected_at:$at,
+    host:{cpu_model:$cpu_model, cores:$cores, mem_mb:$mem_mb, swap_mb:$swap_mb,
+          disk_gb:$disk_gb, disk_used_gb:$disk_used_gb, kernel:$kernel,
+          virt:$virt, os:$os},
+    crypto:$crypto, cpu:$cpu, disk:$disk, net:$net, tunnel:$tunnel}'
+IN
+PAYLOAD_EOF
+}
+
+mkdir -p "$_out"
+_dest="$_out/$_label.json"
+
+if [[ -n "$_target" ]]; then
+  _say "benchmarking $_target [$_sections] -> $_dest"
+  # shellcheck disable=SC2086 -- $_ssh_opts is deliberately word-split
+  _payload | ssh $_ssh_opts "$_target" 'bash -s' > "$_dest.tmp"
+else
+  _say "benchmarking this workstation [$_sections] -> $_dest"
+  _payload | bash -s > "$_dest.tmp"
+fi
+
+jq -e . "$_dest.tmp" >/dev/null || {
+  _warn "target produced invalid JSON — left at $_dest.tmp"
+  exit 1
+}
+mv "$_dest.tmp" "$_dest"
+_ok "wrote $_dest"
+jq . "$_dest"
