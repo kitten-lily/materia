@@ -196,6 +196,20 @@ systemd:
 
         [Install]
         WantedBy=multi-user.target
+    # Flatcar enables systemd-sysupdate-reboot.timer by default but ships
+    # only a placeholder transfer (/usr/lib/sysupdate.d/noop.transfer,
+    # MatchPattern=invalid@v.raw) that can never match, so
+    # `systemd-sysupdate reboot` exits 1 ("Couldn't find any suitable
+    # installed versions.") at ~04:10 every day and parks the unit in
+    # `systemctl --failed` forever — hiding real failures in the one place
+    # they would show. Flatcar's real updater is update-engine/locksmithd,
+    # and this repo ships no sysupdate transfers, so the timer has nothing
+    # to do. Masked rather than disabled so a systemd preset run can't
+    # re-enable it. Unmask if this fleet ever adopts sysext-bakery images
+    # that need reboot coordination. Upstream: flatcar/Flatcar#1979, fix
+    # pending systemd/systemd#42750.
+    - name: systemd-sysupdate-reboot.timer
+      mask: true
 
 passwd:
   users:

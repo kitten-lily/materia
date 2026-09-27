@@ -1490,16 +1490,29 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   next `materia-update` on each affected host actually succeeded —
   `journalctl -u materia-update.service | grep FATA` is the check.
   See `specs/bugs/BUG-010-mediamanager-postgres-major-bump-volume-not-wiped.md`.
-- **`systemd-sysupdate-reboot.service` fails daily on Flatcar and is not
-  ours.** Flatcar ships one placeholder transfer definition,
-  `/usr/lib/sysupdate.d/noop.transfer`, whose
+- **`systemd-sysupdate-reboot.timer` is masked on every Flatcar host —
+  it can only ever fail, and it squats in `systemctl --failed`.**
+  Flatcar enables the timer by default but ships one placeholder
+  transfer definition, `/usr/lib/sysupdate.d/noop.transfer`, whose
   `MatchPattern=invalid@v.raw` can never match, so stock systemd's
   `systemd-sysupdate reboot` exits 1 (`Couldn't find any suitable
-  installed versions.`) at ~04:10 every day. Flatcar's real updater is
-  `update-engine.service`. Functionally harmless, but it permanently
-  occupies `systemctl --failed` — the one place a real failure would
-  show — so don't read a non-empty `--failed` on a Flatcar box as
-  "something broke" without checking whether it's only this unit.
+  installed versions.`) at ~04:10 every day — deterministically, on a
+  box with no sysupdate transfers of its own. Flatcar's real updater is
+  `update-engine.service`/`locksmithd.service`, and
+  `systemd-sysupdate.service` itself is green (that half was fixed by
+  the shipped noop transfer), so nothing is lost by masking. The cost
+  of leaving it was real: a permanently non-empty `--failed` is a
+  broken smoke detector — it trains you to ignore the one place a real
+  failure shows. Both `.bu` templates now carry
+  `- name: systemd-sysupdate-reboot.timer` / `mask: true` (masked, not
+  disabled, so a systemd preset run can't re-enable it), and
+  `flutterina` + `bow` were masked by hand on 2026-09-27 since Butane
+  changes never reach a running host. Clearing the leftover state needs
+  `systemctl reset-failed` *for the timer as well* — `mask --now` on a
+  live timer leaves the timer unit itself failed. Unmask if this fleet
+  ever adopts sysext-bakery images that want reboot coordination.
+  Upstream: flatcar/Flatcar#1979 (open), fix pending in
+  systemd/systemd#42750.
 
 ## Development conventions
 
