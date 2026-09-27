@@ -1107,6 +1107,26 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   does not auto-create missing bind-mount source directories the way it
   does named volumes, failing with `statfs /var/lib/materia: no such
   file or directory` otherwise.
+- **A pinned image tag whose *precision* no upstream tag matches makes
+  Renovate go permanently silent on that image — no PR, no dashboard
+  entry, no error.** Renovate's `docker` versioning is
+  precision-matching by design (docs: "a user on `12.14` expects to be
+  upgraded to `12.15` and not `12.15.0`"), so a three-part pin can only
+  ever be offered three-part tags. `jellyfin` dropped the leading `10.`
+  in its version scheme (`10.11.x` → `12.0` → `12.1`) and now publishes
+  only two-part stable tags, so `components/jellyfin/`'s
+  `10.11.11@sha256:…` pin became unupgradable: 19 days after 12.0
+  shipped (with security fixes), dependency dashboard #6 still listed
+  jellyfin with no available update, and the pinned digest was still
+  current for the dead tag — so the digest watch was quiet too. This
+  fails *open and silent*: the image just stops appearing in Renovate
+  traffic, which reads exactly like "no updates available". Fix is a
+  per-image `versioning:` override with an explicit regex (see
+  `specs/plans/jellyfin-12-upgrade-evaluation.md`); prefer regex over
+  `loose`, since `loose` will happily propose jellyfin's dated
+  `2026092110`/`unstable` builds as giant "major" upgrades. When an
+  upstream renames or re-shapes its version scheme, re-check that the
+  repo's pin still has the same number of parts as the new tags.
 
 ## Provisioning (Butane/Ignition)
 
