@@ -1127,6 +1127,27 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `2026092110`/`unstable` builds as giant "major" upgrades. When an
   upstream renames or re-shapes its version scheme, re-check that the
   repo's pin still has the same number of parts as the new tags.
+- **A major jellyfin upgrade can silently reset a whole config file —
+  check `config/*.xml` against the pre-upgrade backup, not just
+  "does it start".** Jellyfin 12.1 refuses to deserialize a 10.11
+  `config/encoding.xml` that contains `<EncoderPreset xsi:nil="true" />`
+  (`Instance validation error: '' is not a valid value for
+  EncoderPreset`), emits exactly one `[ERR] BaseConfigurationManager:
+  Error loading configuration file` line during startup, and then
+  **rewrites the file from defaults**. On bow (2026-09-27) that turned
+  `HardwareAccelerationType=qsv` + `QsvDevice=/dev/dri/renderD128` +
+  five hardware decode codecs into `none` / empty / two codecs, i.e.
+  every transcode silently dropped to `libx264` on the CPU while the
+  server stayed `(healthy)` and every playback still worked. Nothing
+  else reports it — this is exactly the failure mode #47 describes.
+  Diff the old file out of the pre-upgrade tarball
+  (`tar -xOf <backup>.tar _data/config/encoding.xml`) against the live
+  one and restore the deltas through the API
+  (`POST /System/Configuration/encoding`) rather than hand-editing the
+  file under a running server. Verify the fix from the transcode log:
+  `-init_hw_device vaapi=…,driver=iHD -init_hw_device qsv=qs@va
+  -codec:v:0 h264_qsv` means the hardware path is live; `-codec:v:0
+  libx264` means it is not.
 
 ## Provisioning (Butane/Ignition)
 
