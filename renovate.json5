@@ -59,6 +59,22 @@
       matchPackageNames: ["fosrl/badger"],
       allowedVersions: "<=1.5.0",
     },
+    {
+      // Jellyfin dropped the leading `10.` from its version scheme in
+      // September 2026 (10.11.x -> 12.0 -> 12.1), so stable tags now have two
+      // parts, not three. Renovate's default `docker` versioning is
+      // precision-matching ("a user on 12.14 expects 12.15, not 12.15.0"), so
+      // the old 10.11.11 pin matched no candidate tag at all: no update PR, no
+      // dashboard entry, no error — the image silently stopped receiving
+      // Renovate traffic entirely, security fixes included. This regex accepts
+      // both shapes (X.Y and X.Y.Z) so a future scheme change can't strand the
+      // pin again, while the anchors exclude the rolling `12`/`latest` tags,
+      // the `-rcN` prereleases, and the dated `12.1.20260915-010956` /
+      // `2026092110` builds that plain `loose` versioning would offer as
+      // enormous major upgrades.
+      matchPackageNames: ["docker.io/jellyfin/jellyfin"],
+      versioning: "regex:^(?<major>\\d+)\\.(?<minor>\\d+)(\\.(?<patch>\\d+))?$",
+    },
   ],
 
   customManagers: [
