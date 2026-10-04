@@ -5,7 +5,7 @@ After=network-online.target
 
 [Container]
 ContainerName=beszel-agent
-Image=docker.io/henrygd/beszel-agent:0.20.0@sha256:765e3d4a087c4bcbf6b78ed0f1dfdcd669c4bf6ad5789a832d2944603ae7fd08
+Image=docker.io/henrygd/beszel-agent:0.21.0@sha256:f27b1aa2c68404bc5b9e1a2ab36653bd9b4ee14f6299862f09cd5051a4134767
 Network=host
 Volume=/run/podman/podman.sock:/run/podman/podman.sock:ro
 # System D-Bus socket — required for systemd service reporting (status,
