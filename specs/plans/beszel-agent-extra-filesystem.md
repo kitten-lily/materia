@@ -50,6 +50,11 @@ optional per host:
 ## Verify (on bow, after the next materia-update)
 
 - `journalctl -u materia-update.service | grep FATA` — empty.
-- `sudo podman exec beszel-agent ls /extra-filesystems` shows the folder.
+- `sudo podman inspect beszel-agent --format '{{range .Mounts}}{{.Destination}} {{end}}'`
+  lists `/extra-filesystems/data__Data`. (Not `podman exec … ls`: the
+  agent image is scratch, with no `ls` or shell.)
+- `journalctl -u beszel-agent.service -b | grep 'Detected disk'` shows
+  `name=Data mount=/extra-filesystems/data__Data io=dm-N` (logged at
+  Info level on startup, `agent/disk.go`).
 - The hub's Bow system shows a "Data" disk whose usage matches
   `df -h /var/lib/materia-data`.
