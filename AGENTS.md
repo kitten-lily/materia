@@ -896,7 +896,12 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   device instead. On bow that was the data LV, so the root entry
   overwrote the Data entry under the same `dm-N` key. The agent logged
   `Detected disk name=Data`, then the hub never got it. The only clue is
-  a `Using most active device for root I/O` warning. See
+  a `Using most active device for root I/O` warning. **Flatcar's btrfs
+  partitions show up as useless "storage pools"** (OEM plus an unlabeled
+  one, ~1 GB each, KB used): the agent lists everything under
+  `/sys/fs/btrfs` and has no filter for it. `beszelHideBtrfsPools` adds
+  `Mask=/sys/fs/btrfs` (quadlet, podman ≥4.6), so the agent sees no btrfs.
+  Opt-in per host, so a host with real btrfs keeps its pools. See
   `specs/plans/beszel-agent-extra-filesystem.md`.
 - **nftables.service ships with a `ConditionPathExists=` on its rules
   file, and the exact path depends on the Flatcar/nftables version.** The
