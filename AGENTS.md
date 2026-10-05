@@ -148,7 +148,7 @@ components/
     beszel-data.volume           # named volume for /beszel_data (root-owned, no User=/Group=)
   beszel-agent/                  # beszel monitoring agent (role-assigned, see below)
     MANIFEST.toml                # component manifest — Secrets = ["beszelToken"], Defaults, Services
-    beszel-agent.container.gotmpl # Network=host, podman socket mount, connects to hub via public URL
+    beszel-agent.container.gotmpl # Network=host, podman socket mount, connects to hub via public URL; optional per-host extra disk
   newt/                          # Pangolin tunnel client (role-assigned, [Roles.tunneled])
     MANIFEST.toml                # component manifest — Secrets = ["newtProvisioningKey"], Services
     newt.container.gotmpl        # userspace WireGuard tunnel client, joins newt-net network
@@ -874,6 +874,23 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   BUG-005), not a graceful skip, and `beszel-agent` is assigned to every
   host via `[Roles.base]` — so confirm the socket exists on a new box
   before it reconciles.
+- **Per-host settings for a role-assigned component: use
+  `[Hosts.<name>.Extensions.<component>.Defaults]` + `{{ if exists }}`,
+  not a vault key and not `Overrides`.** `beszel-agent` reports bow's LVM
+  data disk through an optional `Volume=` to
+  `/extra-filesystems/data__Data` (beszel's extra-disk convention:
+  `statfs` gives usage, the mount's real device gives I/O, and the part
+  after `__` is the display name). The line is wrapped in
+  `{{ if exists "beszelExtraFilesystem" }}`. Only bow sets that value, in
+  `MANIFEST.toml`. Confirmed against materia v0.7.2 source:
+  `ExtendComponentManifests` *merges* an Extension's `Defaults` into the
+  component's, and the template vars are vault attributes merged over
+  those Defaults, so `exists` sees the value. `Overrides` *replaces* the
+  whole `Defaults` table instead. A bare `{{ .key }}` on a host that lacks
+  the key is the fatal `map has no entry for key` error (see `baseDomain`
+  above); `exists` avoids it. Never put `:z`/`:Z` on a whole-data-disk
+  bind: that recursively relabels every library on it. See
+  `specs/plans/beszel-agent-extra-filesystem.md`.
 - **nftables.service ships with a `ConditionPathExists=` on its rules
   file, and the exact path depends on the Flatcar/nftables version.** The
   base unit gates its own startup on the rules file existing — a dropin

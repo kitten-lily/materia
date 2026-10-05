@@ -21,6 +21,15 @@ Volume=/run/podman/podman.sock:/run/podman/podman.sock:ro
 # address. NO :z/:Z — relabelling the host's system bus socket would
 # affect every other consumer on the box.
 Volume=/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+# Optional extra disk (host-scoped attribute, e.g. bow's LVM data volume
+# via [Hosts.<name>.Extensions.beszel-agent.Defaults] in MANIFEST.toml).
+# beszel reports usage for anything mounted at /extra-filesystems/<dev>__<Name>
+# (statfs, so any path on the filesystem works) and takes I/O stats from the
+# mount's real device, so the folder's device part is only a fallback.
+# NO :z/:Z — that would recursively relabel the whole data disk.
+{{- if exists "beszelExtraFilesystem" }}
+Volume={{ .beszelExtraFilesystem }}:/extra-filesystems/data__Data:ro
+{{- end }}
 # Runs as root. The UID-1000 hardening (#26) was reverted here too: the
 # rootful podman socket this mount targets is root:root 0660
 # (podman.socket ships SocketMode=0660 with no SocketGroup), so a UID-1000

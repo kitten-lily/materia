@@ -14,3 +14,7 @@ Roles = ["base", "tunneled"]
 
 [Hosts.krytis-build]
 Components = ["beszel-agent"]
+
+# bow's LVM data volume — reported as an extra disk by beszel-agent.
+[Hosts.bow.Extensions.beszel-agent.Defaults]
+beszelExtraFilesystem = "/var/lib/materia-data"
