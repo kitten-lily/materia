@@ -2,6 +2,10 @@
 Components = ["pangolin", "beszel-hub"]
 Roles = ["base", "tunneled"]
 
+# Flatcar's btrfs OEM partitions are noise in beszel's storage pools.
+[Hosts.flutterina.Extensions.beszel-agent.Defaults]
+beszelHideBtrfsPools = true
+
 [Roles.base]
 Components = ["restic-backup", "beszel-agent"]
 
@@ -21,3 +25,4 @@ beszelExtraFilesystem = "/var/lib/materia-data"
 # Explicit root device: without it the agent picks the most active device
 # (the data LV) as root, which swallows the Data disk entry.
 beszelRootFilesystem = "sda"
+beszelHideBtrfsPools = true

@@ -78,3 +78,19 @@ never runs.
 
 Verify: no `most active` warning in `journalctl -u beszel-agent.service -b`,
 and the Data disk appears on the Bow system page.
+
+## Follow-up: hide Flatcar's btrfs storage pools
+
+bow and flutterina each showed two ~1 GB btrfs "storage pools" with KB used
+(Flatcar's OEM partition plus an unlabeled one, shown by UUID). The agent's
+btrfs backend (`agent/btrfs/btrfs_linux.go`) reads every filesystem under
+`/sys/fs/btrfs` and has no env var to filter them. Neither host has real
+btrfs data (root and bow's data LV are ext4).
+
+Fix: opt-in `beszelHideBtrfsPools` flag → quadlet `Mask=/sys/fs/btrfs`
+(podman ≥4.6). The masked dir is empty in the container, so `Filesystems()`
+returns none and no pools are sent. Set for bow and flutterina only;
+krytis-build isn't Flatcar and might have real btrfs.
+
+Verify: `sudo podman inspect beszel-agent --format '{{.HostConfig.MaskedPaths}}'`
+includes `/sys/fs/btrfs`, and the pools are gone from both system pages.

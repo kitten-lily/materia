@@ -40,6 +40,14 @@ Volume={{ .beszelExtraFilesystem }}:/extra-filesystems/data__Data:ro
 {{- if exists "beszelRootFilesystem" }}
 Environment=FILESYSTEM={{ .beszelRootFilesystem }}
 {{- end }}
+# Optional: hide btrfs "storage pools" (host-scoped flag). The agent lists
+# every btrfs filesystem in /sys/fs/btrfs, which on Flatcar is only the tiny
+# OEM partition plus an unlabeled one (shown by UUID): two ~1 GB pools with
+# KB used and no useful signal. beszel has no filter for this, so mask the
+# sysfs dir; the agent then sees no btrfs and sends no pools.
+{{- if exists "beszelHideBtrfsPools" }}
+Mask=/sys/fs/btrfs
+{{- end }}
 # Runs as root. The UID-1000 hardening (#26) was reverted here too: the
 # rootful podman socket this mount targets is root:root 0660
 # (podman.socket ships SocketMode=0660 with no SocketGroup), so a UID-1000
