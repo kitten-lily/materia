@@ -18,3 +18,6 @@ Components = ["beszel-agent"]
 # bow's LVM data volume — reported as an extra disk by beszel-agent.
 [Hosts.bow.Extensions.beszel-agent.Defaults]
 beszelExtraFilesystem = "/var/lib/materia-data"
+# Explicit root device: without it the agent picks the most active device
+# (the data LV) as root, which swallows the Data disk entry.
+beszelRootFilesystem = "sda"
