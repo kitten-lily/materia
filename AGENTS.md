@@ -1107,6 +1107,16 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   them `available`. A sparse blocks file on a shared disk can hit ENOSPC
   later, so `fallocate` it before the first start. See BUG-006 and
   `specs/plans/issue-137-buildbarn-cas-on-root-ssd.md`.
+- **Buildbarn metric names follow the pinned image, not today's docs.**
+  bb-storage `677f49d418` (2026-09-29) renamed the key-location-map
+  metrics from `buildbarn_blobstore_hashing_key_location_map_*` to
+  `buildbarn_lossymap_hash_map_*`, and Buildbarn's current docs only show
+  the new name. bow's pinned `bb-storage@sha256:155fa806…` exports the
+  **old** name, so a grep for the documented name on `:9981` returns
+  nothing, which looks exactly like "all counters are 0". Before trusting
+  an empty grep, list what the endpoint actually exports
+  (`grep -oE '^buildbarn_[a-z_]+' | sort -u`). Re-check every metric name
+  in this file after a bb-storage image bump.
 - **Adopting an already-running host (no Ignition).** materia's daemon is
   just a podman quadlet + systemd timer — nothing about it requires
   Flatcar/Ignition, only podman + systemd + the same four files Ignition

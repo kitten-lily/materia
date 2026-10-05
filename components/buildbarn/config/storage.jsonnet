@@ -24,8 +24,10 @@ local common = import 'common.libsonnet';
       'local': {
         // Stays on NVMe (/data/storage-cas); only the blocks file below moved
         // to the root SSD (#137). Scaled with the blocks file (x4). Verify
-        // after a full warm: buildbarn_lossymap_hash_map_put_too_many_iterations_total
-        // on :9981 must stay 0, or the map is displacing entries early.
+        // after a full warm that every *too_many* counter on :9981 is 0:
+        // buildbarn_blobstore_hashing_key_location_map_* on this pinned image
+        // (renamed buildbarn_lossymap_hash_map_* upstream on 2026-09-29).
+        // Nonzero means the map is displacing entries early.
         keyLocationMapOnBlockDevice: {
           file: { path: '/data/storage-cas/key_location_map', sizeBytes: 1600 * 1024 * 1024 },
         },
