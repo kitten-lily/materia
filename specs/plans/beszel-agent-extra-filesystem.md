@@ -50,6 +50,31 @@ optional per host:
 ## Verify (on bow, after the next materia-update)
 
 - `journalctl -u materia-update.service | grep FATA` — empty.
-- `sudo podman exec beszel-agent ls /extra-filesystems` shows the folder.
+- `sudo podman inspect beszel-agent --format '{{range .Mounts}}{{.Destination}} {{end}}'`
+  lists `/extra-filesystems/data__Data`. (Not `podman exec … ls`: the
+  agent image is scratch, with no `ls` or shell.)
+- `journalctl -u beszel-agent.service -b | grep 'Detected disk'` shows
+  `name=Data mount=/extra-filesystems/data__Data io=dm-N` (logged at
+  Info level on startup, `agent/disk.go`).
 - The hub's Bow system shows a "Data" disk whose usage matches
   `df -h /var/lib/materia-data`.
+
+## Follow-up: root fallback swallowed the Data disk
+
+First deploy: mount present, agent logged `Detected disk name=Data`, but the
+hub showed nothing. Cause (`agent/disk.go`, v0.21.0): rootful podman serves
+`/etc/hosts` from `/run` (tmpfs), so `isRootFallbackPartition` never sees a
+`/dev` device and the agent falls back to `addLastResortRootFs`. That picks
+the most active I/O device, which on bow is the data LV (`dm-N`), and writes
+the root entry under that same key. The Data entry is overwritten with
+`Root: true`, and root entries are never sent as extra disks. Confirmed on
+bow by the `Using most active device for root I/O` warning.
+
+Fix: optional `beszelRootFilesystem` attribute → `Environment=FILESYSTEM=`,
+set to `sda` for bow (the device the fallback chose before the Data mount
+existed, so root I/O is unchanged). With `FILESYSTEM` set, root resolves via
+`addConfiguredRootFs` → `findIoDevice` on host diskstats, and the fallback
+never runs.
+
+Verify: no `most active` warning in `journalctl -u beszel-agent.service -b`,
+and the Data disk appears on the Bow system page.

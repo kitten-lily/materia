@@ -889,7 +889,14 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   whole `Defaults` table instead. A bare `{{ .key }}` on a host that lacks
   the key is the fatal `map has no entry for key` error (see `baseDomain`
   above); `exists` avoids it. Never put `:z`/`:Z` on a whole-data-disk
-  bind: that recursively relabels every library on it. See
+  bind: that recursively relabels every library on it. **An extra disk
+  also needs an explicit root device (`beszelRootFilesystem` →
+  `FILESYSTEM=`).** A rootful podman container's `/etc/hosts` comes from
+  tmpfs, so the agent can't find root and picks the *most active* I/O
+  device instead. On bow that was the data LV, so the root entry
+  overwrote the Data entry under the same `dm-N` key. The agent logged
+  `Detected disk name=Data`, then the hub never got it. The only clue is
+  a `Using most active device for root I/O` warning. See
   `specs/plans/beszel-agent-extra-filesystem.md`.
 - **nftables.service ships with a `ConditionPathExists=` on its rules
   file, and the exact path depends on the Flatcar/nftables version.** The
