@@ -37,6 +37,13 @@ Secret=materia-jwtJwks,type=mount,target=/secrets/jwt-jwks.json,mode=0400
 Volume=/var/lib/materia-data/buildbarn/storage-cas:/data/storage-cas:Z
 Volume=/var/lib/materia-data/buildbarn/storage-ac:/data/storage-ac:Z
 Volume=/var/lib/materia-data/buildbarn/storage-fsac:/data/storage-fsac:Z
+# The CAS *blocks file* alone lives on bow's root SATA SSD (#137): it is
+# the bulk store (600G, more than vg_data can spare), while the hot
+# key_location_map and persistent_state stay on NVMe above. Outside
+# /var/lib/materia on purpose — materia plans unmanaged files under its
+# data dir for removal. Pre-create the directory and fallocate the file
+# before the first start (specs/plans/issue-137-buildbarn-cas-on-root-ssd.md).
+Volume=/var/lib/buildbarn/storage-cas-blocks:/data/storage-cas-blocks:Z
 
 [Service]
 Restart=always
