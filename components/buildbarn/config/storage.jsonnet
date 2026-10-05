@@ -22,28 +22,33 @@ local common = import 'common.libsonnet';
   contentAddressableStorage: {
     backend: {
       'local': {
+        // Stays on NVMe (/data/storage-cas); only the blocks file below moved
+        // to the root SSD (#137). Scaled with the blocks file (x4). Verify
+        // after a full warm: buildbarn_lossymap_hash_map_put_too_many_iterations_total
+        // on :9981 must stay 0, or the map is displacing entries early.
         keyLocationMapOnBlockDevice: {
-          file: { path: '/data/storage-cas/key_location_map', sizeBytes: 400 * 1024 * 1024 },
+          file: { path: '/data/storage-cas/key_location_map', sizeBytes: 1600 * 1024 * 1024 },
         },
         keyLocationMapMaximumGetAttempts: 16,
         keyLocationMapMaximumPutAttempts: 64,
         // The per-blob ceiling this backend can store is
         // blocksOnBlockDevice.sizeBytes / (oldBlocks+currentBlocks+newBlocks+spareBlocks)
         // — independent of maximumMessageSizeBytes (a separate,
-        // gRPC-transport-level limit). The original 100G/38-block layout
-        // (8/24/3/3) gave a ~2.63 GiB ceiling, which rejected krytis's
-        // assembled OCI image blob (5.89 GiB) with INVALID_ARGUMENT —
-        // see specs/bugs/BUG-006. 150G/10 blocks (2/5/2/1) gives a
-        // 15 GiB ceiling (2.5x margin over that blob), sized against
-        // bow's data disk headroom (357G free of 5.5T, 94% utilized) at
-        // fix time — an explicit +50G-over-original tradeoff for finer
-        // granularity than the minimal-disk-cost alternative.
-        oldBlocks: 2,
-        currentBlocks: 5,
-        newBlocks: 2,
+        // gRPC-transport-level limit). It must stay well above krytis's
+        // assembled OCI image blob (5.89 GiB, specs/bugs/BUG-006).
+        //
+        // 600G on the root SSD in Buildbarn's recommended 8/24/3 (+3 spare)
+        // layout: 38 blocks of ~15.8 GiB, so the ceiling is ~15.8 GiB (2.7x
+        // over that blob). BUG-006 had cut this to 2/5/2/1 at 150G to raise the
+        // ceiling; Buildbarn's docs warn that too few "old" blocks turn the
+        // store into a FIFO rather than LRU-like, and krytis's toolchain was
+        // evicted under exactly that layout (#137, krytis#1094).
+        oldBlocks: 8,
+        currentBlocks: 24,
+        newBlocks: 3,
         blocksOnBlockDevice: {
-          source: { file: { path: '/data/storage-cas/blocks', sizeBytes: 150 * 1024 * 1024 * 1024 } },
-          spareBlocks: 1,
+          source: { file: { path: '/data/storage-cas-blocks/blocks', sizeBytes: 600 * 1024 * 1024 * 1024 } },
+          spareBlocks: 3,
         },
         persistent: {
           stateDirectoryPath: '/data/storage-cas/persistent_state',

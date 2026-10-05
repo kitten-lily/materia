@@ -1074,18 +1074,27 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   with gRPC `INVALID_ARGUMENT` on `UploadBlob`. Raising
   `maximumMessageSizeBytes` from 2 GiB to 8 GiB (a real but *separate*
   gRPC-transport-level limit) did not fix it — identical error on retry.
-  Fixed by changing the block layout to `2/5/2/1` over 150G (15
-  GiB/block, 10 blocks total) instead: sized against bow's *actual*
-  headroom at fix time (357G free of 5.5T, 94% used — down from the
-  401G free the original plan assumed, consumed by the growing media
-  libraries sharing that disk), not the original assumption. When sizing
-  any local CAS/AC/FSAC backend, compute `sizeBytes / totalBlocks` and
-  compare against the largest blob you actually expect — total capacity
-  alone doesn't bound the largest single object the cache can hold.
-  Changing block counts on an existing deployment reshapes the local
-  storage ring buffer; if bb-storage errors on startup after a block-count
-  change, `/data/storage-cas/{blocks,key_location_map,persistent_state}`
-  is pure cache state — safe to wipe and let it repopulate. See BUG-006.
+  BUG-006 first worked around it by cutting the layout to `2/5/2/1` over
+  150G (15 GiB/block). That fixed the ceiling but broke something else:
+  Buildbarn's docs (`blobstore.proto`, local backend) recommend 8 old /
+  24 current blocks and warn that too few "old" blocks turn the store
+  into a FIFO instead of LRU-like. Under 2 old blocks, krytis's
+  toolchain (pushed once, never read back from bow) was evicted while
+  bb-asset still indexed it (#137, krytis#1094). Since #137 the CAS
+  blocks file is 600G on bow's root SSD (`/var/lib/buildbarn/`, outside
+  materia's managed data dir) in `8/24/3/3`, about 15.8 GiB/block. Grow
+  the file instead of starving the old group. When sizing any local
+  CAS/AC/FSAC backend, compute `sizeBytes / totalBlocks` and compare
+  against the largest blob you actually expect: total capacity alone
+  doesn't bound the largest single object the cache can hold.
+  Changing the size or block counts reshapes the ring buffer, so wipe and
+  let it repopulate. **Wipe the CAS and bb-asset's index together**
+  (plus AC/FSAC). Wiping only `storage-cas/` (as BUG-006's resize did)
+  leaves the index naming artifacts the CAS no longer holds, and clients
+  that check the index (BuildStream's `bst artifact show`) then report
+  them `available`. A sparse blocks file on a shared disk can hit ENOSPC
+  later, so `fallocate` it before the first start. See BUG-006 and
+  `specs/plans/issue-137-buildbarn-cas-on-root-ssd.md`.
 - **Adopting an already-running host (no Ignition).** materia's daemon is
   just a podman quadlet + systemd timer — nothing about it requires
   Flatcar/Ignition, only podman + systemd + the same four files Ignition
