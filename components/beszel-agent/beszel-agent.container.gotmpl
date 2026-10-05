@@ -30,6 +30,16 @@ Volume=/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
 {{- if exists "beszelExtraFilesystem" }}
 Volume={{ .beszelExtraFilesystem }}:/extra-filesystems/data__Data:ro
 {{- end }}
+# Optional explicit root device (host-scoped, same Extensions pattern).
+# In a rootful podman container the agent can't find the root device: its
+# /etc/hosts hint is served from /run (tmpfs), so it falls back to "most
+# active I/O device" as root. On a host with a busy extra disk that picks
+# the extra disk, and the root entry overwrites the extra disk's entry
+# under the same dm-N key, so the extra disk never reaches the hub. A
+# device name here (diskstats name, e.g. nvme0n1p9) skips the fallback.
+{{- if exists "beszelRootFilesystem" }}
+Environment=FILESYSTEM={{ .beszelRootFilesystem }}
+{{- end }}
 # Runs as root. The UID-1000 hardening (#26) was reverted here too: the
 # rootful podman socket this mount targets is root:root 0660
 # (podman.socket ships SocketMode=0660 with no SocketGroup), so a UID-1000
