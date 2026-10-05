@@ -62,11 +62,16 @@ per-blob ceiling (`sizeBytes / total blocks`, BUG-006) is therefore slightly
 
 It scales with the blocks file (×4). [INFERENCE] There is no published
 bytes-per-entry figure to size it from. Buildbarn's docs give the check
-instead: after deploy and a full cache-warm,
-`buildbarn_lossymap_hash_map_put_too_many_iterations_total` and
-`buildbarn_lossymap_hash_map_put_iterations_count{outcome="TooManyAttempts"}`
-on `:9981` must be 0. If they are not, the map is too small and evicts entries
-early. The map stays on NVMe.
+instead: after deploy and a full cache-warm, the key-location map's
+put/get "too many attempts" counters on `:9981` must be 0. If they are not,
+the map is too small and evicts entries early. The map stays on NVMe.
+
+**The pinned bb-storage exports these as
+`buildbarn_blobstore_hashing_key_location_map_{put_too_many_iterations_total,get_too_many_attempts_total,put_iterations_count{outcome="TooManyAttempts"}}`.**
+Buildbarn's current docs name them `buildbarn_lossymap_hash_map_*`, a rename
+from bb-storage `677f49d418` (2026-09-29). A grep for the new name on the
+pinned image returns nothing, which looks like a pass but isn't one.
+Result on 2026-10-05: all 0; CAS `Inserted` 532,658.
 
 ### Preallocate, because the root disk is shared
 
@@ -123,7 +128,7 @@ cleared together, so the index and storage start empty and in agreement.
    geometry or config errors. No CI evaluates this jsonnet; a container start
    is the only check (AGENTS.md).
 5. In krytis, dispatch `cache-warm.yml`. Pass when its job summary reads
-   `917 of 917` and the `:9981` lossymap counters above are 0.
+   `917 of 917` and the `:9981` key-location-map counters above are 0.
 
 ## Preflight
 
