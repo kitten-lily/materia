@@ -95,14 +95,19 @@ jobs:
           echo "pinned badger version: $version"
 
           url="https://plugins.traefik.io/public/validate/github.com/fosrl/badger/$version"
+          # The catalog sometimes answers 404 for an accepted version for
+          # ~20 s at a time (BUG-011: v1.5.0 on 2026-09-08 and 2026-10-12; runs
+          # seconds before and after got 200). Retry for ~2 min with backoff. A real
+          # rejection (BUG-007) is a steady 404 and still fails, just later.
           code=""
-          for attempt in 1 2 3; do
+          for delay in 5 10 20 40 60 0; do
             if code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url")"; then
+              echo "catalog answered HTTP $code"
               [[ "$code" == "200" ]] && break
             else
               code=""
             fi
-            sleep 5
+            sleep "$delay"
           done
 
           if [[ -z "$code" ]]; then

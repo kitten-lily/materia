@@ -686,7 +686,9 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   process kept serving with the old plugin loaded. `badgerVersion` is now
   held at `<=1.5.0` in `renovate.json5` and gated by preflight's
   `badger-plugin-catalog` job, which fails a PR whose pinned version the
-  catalog rejects. v1.6+ is only needed for Pangolin >= 1.22's public
+  catalog rejects. The catalog also returns short bursts of 404 (about 20 s)
+  for accepted versions, so the job retries for about 2 minutes before failing
+  (BUG-011). v1.6+ is only needed for Pangolin >= 1.22's public
   resource type. To reproduce any plugin question locally without touching
   a host: `podman run --rm --tmpfs /plugins-storage -v <dir>:/etc/traefik:ro,Z
   reg.mini.dev/traefik:<tag> --configFile=/etc/traefik/traefik.yml` — the

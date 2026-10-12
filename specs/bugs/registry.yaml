@@ -69,3 +69,10 @@ bugs:
     found: 2026-09-21
     epic: mediamanager
     file: specs/bugs/BUG-010-mediamanager-postgres-major-bump-volume-not-wiped.md
+  - id: BUG-011
+    title: "badger catalog gate fails main on a transient plugins.traefik.io 404"
+    status: fixed
+    severity: P3
+    found: 2026-10-12
+    epic: ci
+    file: specs/bugs/BUG-011-badger-catalog-gate-transient-404.md
