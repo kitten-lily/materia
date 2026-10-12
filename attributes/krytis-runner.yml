@@ -1,0 +1,19 @@
+components:
+    beszel-agent:
+        beszelKey: ENC[AES256_GCM,data:Vs/Cfy1jD3d9hCTwmz5N/SoY7Yh7rzO/4urY+2UCkY80/TUjrWUW2/mRZzYyDvdOSTjar5Pazu1Nha8NOB+0aFGRr+cN3py3zfBUABFARRg=,iv:yYoOZvOTfA7d6Zm5TUvm9dBB9Wt1zQCKiCA8M85pXAI=,tag:aRH1hEa4LHs91iF1SATAww==,type:str]
+        beszelToken: ENC[AES256_GCM,data:zikGnliOoYjW3Npuxlj6zuuwsNgjVDIvBKGVOS6xSbFOuj0Y,iv:ZoA8yWmWWo/whudYd1FtVu5+p7+P8K63WTr480M1rsk=,tag:XWH6C/8sHj9XwWcquHcF5Q==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBnc0hLMHA2amNtTkJDZFAy
+            SUM2R1o1Rm9tZGxGdlk0MkJYMHE1aHVUMm00Cnd5MGwwZmxBZDNEYWtuL1hBSU9X
+            dnBtdUo2MzFQUDBJRktjSmMrczFOcEkKLS0tIHJnRG9lRkFVNjRxa2pWMjVzeFJ4
+            UkdLUDE0Y2hmVUxJbWMwc3pIbmk5Rm8KHoroVAqfm6G1GgwY+Ts2WX/UFYEtc6O2
+            iam9JHPU0UkDVXDb+9626zrbPy7B0gA7pCWf6eBC7Gajcil6W5evKA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
+    lastmodified: "2026-10-12T18:07:32Z"
+    mac: ENC[AES256_GCM,data:ZZ/uEbGJS5H+rwVMBynngMpcdYzuMtq6+F/zS01NP7Fk9NAZfXL+pBHNRBAZGuwR0Vmc3nsBzYVJXz+KTyoW0BRxHxypTQ5ZGmwanNlqLH4SlF4pNcSJgSsugKZ/UE4mpDbh/atYSRM2QqmnGrLakwy3XNwaFBPbeEE18SQJza4=,iv:55gqEH6qq+bpVgIOWLeQIrJNEUa9EMQodTXMHm3gy/s=,tag:M2U7iR85VoTVzy8NVT3mNA==,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.13.2
