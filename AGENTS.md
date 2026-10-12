@@ -1154,7 +1154,13 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   (`mkdir -p /var/lib/materia`) — it's a bind-mount source, and podman
   does not auto-create missing bind-mount source directories the way it
   does named volumes, failing with `statfs /var/lib/materia: no such
-  file or directory` otherwise.
+  file or directory` otherwise. A fourth gap, which `server:adopt-render`
+  does not print: the healthchecks.io check for the new slug does not
+  exist yet, so the unit's pings get `curl: (22) ... 404` in
+  the journal and the unit still succeeds (they are `-` prefixed). Nothing
+  watches the new host until the check is created. Create it once with
+  `curl "$(fnox get HC_PING_URL)/materia-update-<name>?create=1"`, then set
+  its grace to ~6 h in the UI. Found on `krytis-runner` (#144).
 - **A pinned image tag whose *precision* no upstream tag matches makes
   Renovate go permanently silent on that image — no PR, no dashboard
   entry, no error.** Renovate's `docker` versioning is

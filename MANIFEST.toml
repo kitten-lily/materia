@@ -16,7 +16,12 @@ Components = ["newt"]
 Components = ["music", "grimmory", "audiobookshelf", "jellyfin", "buildbarn", "mediamanager"]
 Roles = ["base", "tunneled"]
 
+# krytis's CI runner, Contabo. Removed once that box is decommissioned
+# (starlit-os/krytis#1145); krytis-runner replaced it on 2026-10-09.
 [Hosts.krytis-build]
+Components = ["beszel-agent"]
+
+[Hosts.krytis-runner]
 Components = ["beszel-agent"]
 
 # bow's LVM data volume — reported as an extra disk by beszel-agent.
