@@ -206,7 +206,7 @@ provisioning/
     flutterina/
       server.toml                # per-server config (type, hetzner/bare_metal settings)
       materia.ign                 # gitignored, rendered by `mise ign`
-    krytis-build/
+    krytis-runner/
       server.toml                # type = "adopted" — no hetzner/bare_metal settings
       bootstrap/                  # gitignored, rendered by `mise server:adopt-render`
   storageboxes/
@@ -1126,11 +1126,12 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   `materia-update.container`, `materia-update.timer`). `server:new --type
   adopted` + `server:adopt-render` render them locally for manual
   `scp`+SSH install instead of baking them into a first-boot Ignition
-  config. Used for `krytis-build` (issue #99) — the krytis repo's
+  config. Used for `krytis-build` (issue #99; Contabo, decommissioned
+  2026-10) and its replacement `krytis-runner` (#144) — the krytis repo's
   self-hosted CI runner VPS (registered there under the `krytis-vps`
   GitHub Actions label), a pre-existing, already-in-service host that can
   never be wiped and reprovisioned the way `bow`/`flutterina` were. The
-  server name is the box's real OS hostname (`krytis-build`), not the
+  server name is the box's real OS hostname (`krytis-runner`), not the
   GitHub Actions runner label — required, not just convention, since
   materia resolves `MANIFEST.toml`'s `Hosts.<name>` against
   `m_facts "hostname"`. Sequencing still matters: land the host +
@@ -1207,7 +1208,7 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 
 ## Provisioning (Butane/Ignition)
 
-Every server except `krytis-build` (see the adoption gotcha above) is
+Every server except the adopted `krytis-runner` (see the adoption gotcha above) is
 provisioned via Butane → Ignition on Flatcar, rendered from one of two
 templates in `provisioning/templates/` based on
 `provisioning/servers/<name>/server.toml`'s `type`. The `.bu` carries only
