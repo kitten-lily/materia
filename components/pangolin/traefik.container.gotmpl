@@ -6,7 +6,7 @@ Requires=app.service
 [Container]
 Pod=pangolin.pod
 ContainerName=traefik
-Image=reg.mini.dev/traefik:v3.7.16@sha256:a36328ca2875b52b7d7e001273ff86b35cee42e238631f9d321ea2cbe849a61d
+Image=reg.mini.dev/traefik:v3.7.16@sha256:736babc18d85b9f202c9608a21ae6fd57559b3bb680aee33f2c76b6e51958da4
 Exec=--configFile=/etc/traefik/traefik_config.yml
 AddCapability=NET_BIND_SERVICE
 Tmpfs=/plugins-storage
