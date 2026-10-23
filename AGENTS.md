@@ -111,9 +111,9 @@ KubeStellar and Pangolin live ABOVE node layer.
   node itself runs Newt not to tunnel external traffic in, but so that
   Pangolin's Health Checks feature can reach standalone containers like
   beszel-hub through the tunnel (by container name on `newt-net`) instead
-  of via local-site resources (which require the podman bridge gateway IP
-  and don't work with Pangolin's arbitrary HTTP health checks). Both
-  flutterina and bow are in `[Roles.tunneled]`.
+  of via local-site resources (Pangolin's docs: local sites support no
+  health checking at all, nor private resources or Docker socket
+  scanning). Both flutterina and bow are in `[Roles.tunneled]`.
 
 ## Repo layout
 
@@ -827,28 +827,40 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   the "install but don't start" complexity of conditional resource
   rendering — materia has no native conditional-rendering mechanism. See
   `specs/plans/issue-20-beszel-monitoring.md`.
-- **Monitoring the monitor: beszel hub liveness is a Pangolin-native health
-  check, not a custom systemd timer.** Beszel is itself the alerting system,
-  so a silently-dead hub would leave the whole fleet blind with no alarm.
-  Pangolin has a built-in [Health Checks](https://docs.pangolin.net/manage/alerting/health-checks)
-  feature (Alerting section) that supports *arbitrary* (standalone) HTTP
-  checks against any address a Pangolin site can reach — not just checks
-  tied to a routable resource target. An arbitrary HTTP check against the
-  hub's pocketbase `/api/health` endpoint, paired with an
+- **Monitoring the monitor: beszel hub-down alerting is a Pangolin alert
+  rule — and Pangolin email alerts go nowhere, because Pangolin has no
+  SMTP server configured.** Beszel is itself the alerting system, so a
+  silently-dead hub leaves the whole fleet blind. The original design
+  (#24) was an *arbitrary* Pangolin
+  [Health Check](https://docs.pangolin.net/manage/alerting/health-checks)
+  on the hub's pocketbase `/api/health`, paired with an
   [Alert Rule](https://docs.pangolin.net/manage/alerting/alert-rules)
-  (email and/or webhook on unhealthy/recovery), replaces what would
-  otherwise be a bespoke systemd timer + healthchecks.io ping — no new
-  IaC, configured entirely in the Pangolin dashboard. The check target
-  address has the same reachability constraint as the local-site resource
-  target (Pangolin's site process cannot use `localhost:8090` for a
-  standalone container — see the gotcha above), so it's set up and
-  verified alongside that local-site resource, tracked in #22. Agent-down
-  alerts, by contrast, are handled *inside* beszel via its native Shoutrrr
-  webhook notifications (configured in the hub UI, Settings > Notifications,
-  not IaC — beszel stores them in its DB). The split is deliberate: the
-  Pangolin health check covers hub-down (which beszel can't self-report),
-  beszel's own webhooks cover agent-down (which Pangolin can't see). Both
-  are deploy-time dashboard configuration, zero component code. See #24.
+  (email and/or webhook), instead of a bespoke systemd timer +
+  healthchecks.io ping. What is live (Pangolin API, 2026-10-23): the probe
+  is the **target-linked** health check on the Beszel resource (flutterina
+  site, `beszel-hub:8090`, path `/api/health`), and the alert rule
+  "Beszel Down" (`health_check_unhealthy` on that check) was only created
+  on 2026-10-23; before that the org had zero alert rules and hub-down
+  alerted nobody. Its only action is an email to the admin user, and
+  **that email is never delivered**: `config.yml.gotmpl` ships
+  `email.smtp_host: ""`. Because the `email:` block exists, Pangolin still
+  builds a nodemailer transport (`server/emails/index.ts`), which falls
+  back to `localhost`, and `sendAlertEmail.ts` logs and **swallows** every
+  per-recipient failure — the rule shows as enabled, nothing errors in
+  the UI, and no mail arrives. Confirmed with a test alert
+  (`POST /api/v1/org/<org>/test-alert-rule`,
+  `{"eventType": "health_check_unhealthy", "userIds": ["<id>"]}`, session
+  cookie + CSRF header as in the site-resource gotcha below): the API
+  answered `success`, and no email was received. Until the rule gets a
+  webhook action (Pangolin's alert rules support webhooks natively) or
+  Pangolin gets real SMTP settings, hub-down is still unmonitored.
+  Re-check delivery with the same test endpoint after any change, not by
+  reading the rule's config. Agent-down alerts, by contrast, are
+  handled *inside* beszel via its native Shoutrrr webhook notifications
+  (hub UI, Settings > Notifications, stored in beszel's DB, not IaC). The
+  split is deliberate: Pangolin covers hub-down (which beszel can't
+  self-report), beszel's own webhooks cover agent-down (which Pangolin
+  can't see).
 - **Beszel agent bootstrap is a two-step, not-automatable deploy — do not
   wire `[Roles.base] Components` until secrets exist.** The hub generates
   `TOKEN` (WebSocket registration) and `KEY` (agent auth) only *after* an
@@ -1585,15 +1597,17 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   copying from upstream's compose doesn't carry over the wrong names.
   The minimus registry is `reg.mini.dev` (auth realm `auth.mini.dev`,
   not Docker Hub / GHCR) — same host as the pinned traefik image.
-- **Pangolin SSO auth is kept ON for grimmory (unlike beszel-agent
-  #23).** Grimmory is a human-facing web UI accessed in a browser —
-  authenticating through Pangolin's default Platform SSO before
-  reaching the app adds a layer, then the user hits Grimmory's own
-  setup wizard / login. Do NOT disable auth on the
-  `grimmory.<baseDomain>` resource. This is the opposite of
-  beszel-agent, where Pangolon's SSO redirect (302 to the login page)
-  broke the headless WebSocket handshake — Grimmory's browser-driven
-  UI completes that flow fine.
+- **Pangolin SSO is OFF for grimmory, audiobookshelf and jellyfin — only
+  Media Manager has it.** Earlier versions of this file said SSO was
+  "kept ON" for the three media apps; the live dashboard (Pangolin API,
+  2026-10-23) has `sso: 0` on every resource except Media Manager, and
+  each app's own login is the only auth layer. Any non-browser client
+  hits the same failure as beszel-agent #23: Pangolin's SSO answers an
+  unauthenticated request with a `302` to its interactive login page,
+  which native apps talking straight to the API (Jellyfin TV/mobile
+  clients, the Audiobookshelf app, OPDS/e-reader sync) cannot follow.
+  Before turning SSO on for a resource, confirm every client of it is a
+  browser; Media Manager is browser-only, which is why it can keep it.
 - **Audiobookshelf: standalone on `newt-net`, only audiobooks +
   podcasts, no ebook library.** Same standalone-container-on-`newt-net`
   pattern as `music`/`grimmory` (no pod — single container, no
@@ -1611,9 +1625,7 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   writes back into it. `/config` and `/metadata` are named volumes (not
   bind mounts) for the same data-dir-drift reason as every other
   app-writable state directory in this repo (see the data-dir-drift
-  gotcha above). Pangolin SSO is kept ON (same reasoning as grimmory,
-  not beszel-agent — it's a browser-driven UI, not a headless
-  WebSocket client).
+  gotcha above). Pangolin SSO is off — see the SSO bullet above.
 - **Jellyfin: standalone on `newt-net`, movies + TV only, HW transcoding
   needs on-host verification.** Same standalone-container-on-`newt-net`
   pattern as `music`/`grimmory`/`audiobookshelf` (no pod). Movies and
@@ -1634,8 +1646,7 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   dashboard-only steps elsewhere in this file). If the device isn't
   present or the boolean isn't set, jellyfin silently falls back to CPU
   transcoding rather than hard-failing, so this is easy to miss unless
-  explicitly checked. Pangolin SSO is kept ON (browser-driven UI, same
-  reasoning as grimmory/audiobookshelf, not beszel-agent).
+  explicitly checked. Pangolin SSO is off — see the SSO bullet above.
 - **Hardlinks can't cross mount points, even on one filesystem — so a
   media manager and its downloads directory need a *single* bind mount.**
   `mediamanager` hardlinks a finished download from `torrent_directory`
