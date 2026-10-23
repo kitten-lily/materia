@@ -906,11 +906,19 @@ shell; see the `env = false` gotcha.
   v1.5.0 → v1.6.1 bump took flutterina down this way (BUG-007), delayed
   until the next `traefik.service` restart because the already-running
   process kept serving with the old plugin loaded. `badgerVersion` is now
-  held at `<=1.5.0` in `renovate.json5` and gated by preflight's
-  `badger-plugin-catalog` job, which fails a PR whose pinned version the
-  catalog rejects. The catalog also returns short bursts of 404 (about 20 s)
-  for accepted versions, so the job retries for about 2 minutes before failing
-  (BUG-011). v1.6+ is only needed for Pangolin >= 1.22's public
+  held at `<=1.5.0` in `renovate.json5` and gated by the `badger-catalog`
+  workflow. It runs only when `components/pangolin/MANIFEST.toml` changes,
+  and fails a PR whose pinned version the catalog rejects. **The catalog's
+  answer depends on which Cloudflare edge you reach.** Each edge caches its
+  own result, sometimes for ~56 days whatever `max-age` says. At the same
+  moment, one CI runner got 404 for v1.5.0 for over 2 minutes and another
+  got 200. A cached 200 for v1.7.0 also exists, from August. The cache
+  can't be bypassed: the origin returns 404 for any query string or
+  trailing slash. So one 404, or one 200, from one edge proves little.
+  The job retries for ~2 min and logs `cf-ray`/`cf-cache-status`/`age` on
+  every attempt (BUG-011, BUG-013). The same applies to production: a
+  traefik restart validates against whichever edge flutterina reaches.
+  v1.6+ is only needed for Pangolin >= 1.22's public
   resource type. To reproduce any plugin question locally without touching
   a host: `podman run --rm --tmpfs /plugins-storage -v <dir>:/etc/traefik:ro,Z
   reg.mini.dev/traefik:<tag> --configFile=/etc/traefik/traefik.yml` — the

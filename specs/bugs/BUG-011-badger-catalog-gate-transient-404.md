@@ -22,6 +22,10 @@ way, between runs at 09:49:59Z and 09:50:33Z that both passed with v1.5.0.
 for an accepted version, for about 20 seconds. The gate retried 3 times, 5 s
 apart, which is shorter than the outage, so all three attempts landed inside it.
 
+**Superseded by BUG-013.** The 404s are not global outages. Each Cloudflare
+edge caches its own answer, and one runner saw 404 for over 2 minutes while
+another got 200 at the same time.
+
 ## Fix
 
 `.github/workflows/preflight.yml`: 6 attempts with 5/10/20/40/60 s backoff
