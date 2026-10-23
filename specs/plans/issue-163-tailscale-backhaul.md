@@ -1,7 +1,7 @@
 # Tailscale: replacing newt as the backhaul, Pangolin kept as the public edge
 
-Status: phase 0 done (2026-10-23) except glimmer's tag swap; phases 1–7
-not started. Tracked in #163.
+Status: phase 0 done (2026-10-23); phases 1–7 not started. Tracked in
+#163.
 
 ## Goal
 
@@ -174,8 +174,8 @@ needs an API token, and the OAuth client below has `auth_keys` scope only.
 | Pool | `100.64.0.0/12` proposed; confirm it in the saved policy file |
 | OAuth client | Token request returns `scope: auth_keys`. The response omits tags, so `tag:server`/`tag:gateway` are first proven when flutterina registers in phase 1 |
 | Vault | `globals.tailscaleAuthKey`, value = client secret + `?ephemeral=false&preauthorized=true` (commit `chore(vault): add tailscaleAuthKey global`). The suffix is stored in the value because `secretEnv` cannot append it; without it OAuth secrets register **ephemeral** nodes, which are deleted when offline and return with a new IP, breaking every T2 target |
-| Stale node | An offline `bow` (`tag:komodo-core` + `tag:server`) from an earlier setup. Remove it before phase 2, or the gateway registers as `bow-1`; then drop the `tag:komodo-core` owner |
-| **Open** | glimmer still carries `tag:server`, so the phase-2 grant would let it reach the bow gateway. Swap it to its own tag (admin console → Edit tags; a tagged device cannot drop its last tag there) |
+| Stale node | An offline `bow` (`tag:komodo-core` + `tag:server`) from an earlier setup — removed, so the gateway can register as `bow`. Drop the `tag:komodo-core` owner from the policy if still present |
+| glimmer | Moved from `tag:server` to `tag:router` (admin console → Edit tags; a tagged device cannot drop its last tag there), so the phase-2 `tag:server → tag:gateway` grant does not reach it |
 
 Grants as written: `autogroup:member → * ip:*` (covers the workstation's
 Buildbarn access and admin SSH everywhere) and `tag:server → tag:gateway`
