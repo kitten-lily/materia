@@ -1,6 +1,7 @@
 # Tailscale: replacing newt as the backhaul, Pangolin kept as the public edge
 
-Status: scoping only, nothing implemented. Tracked in #163.
+Status: phase 0 done (2026-10-23) except glimmer's tag swap; phases 1–7
+not started. Tracked in #163.
 
 ## Goal
 
@@ -139,10 +140,11 @@ Unverified until the POC:
 
 ## Tailnet-side setup (admin console)
 
-1. **`ipPool`** for all nodes, disjoint from Pangolin's ranges, e.g.
-   `100.70.0.0/16`. This makes routing to bow's tailnet IP from the pod netns
-   deterministic: no overlap with Gerbil's `100.89.128.0/20` routes. Renumber
-   any existing nodes; `ipPool` only affects new ones.
+1. **`ipPool`** for all nodes, disjoint from Pangolin's ranges:
+   `100.64.0.0/12` (100.64–100.79). This makes routing to bow's tailnet IP
+   from the pod netns deterministic: no overlap with Gerbil's
+   `100.89.128.0/20` routes. `ipPool` only affects new nodes; no existing
+   node needed renumbering (see phase 0 state below).
 2. Tags `tag:server` and `tag:gateway`. Grants:
    - flutterina → gateway on the app ports
    - krytis-runner and the workstation → gateway `tcp:7981-7982`
@@ -158,6 +160,28 @@ Unverified until the POC:
 Plan limit: Personal is 3 users / 100 devices. Non-Tailscale devices keep
 using the public edge, so they don't count against it.
 
+### Phase 0 state (2026-10-23)
+
+Read from melog with `tailscale status --json` and `tailscale debug
+netmap`. The policy file itself is not readable from the CLI; reading it
+needs an API token, and the OAuth client below has `auth_keys` scope only.
+
+| Item | State |
+|---|---|
+| Tailnet | Personal plan, MagicDNS on, Tailnet Lock off |
+| Existing node IPs | All six outside Pangolin's ranges; none needs renumbering |
+| Grants | Allow-all `* → *` removed. melog's packet filter now accepts only the four user devices; glimmer (`tag:server`) dropped out |
+| Pool | `100.64.0.0/12` proposed; confirm it in the saved policy file |
+| OAuth client | Token request returns `scope: auth_keys`. The response omits tags, so `tag:server`/`tag:gateway` are first proven when flutterina registers in phase 1 |
+| Vault | `globals.tailscaleAuthKey`, value = client secret + `?ephemeral=false&preauthorized=true` (commit `chore(vault): add tailscaleAuthKey global`). The suffix is stored in the value because `secretEnv` cannot append it; without it OAuth secrets register **ephemeral** nodes, which are deleted when offline and return with a new IP, breaking every T2 target |
+| Stale node | An offline `bow` (`tag:komodo-core` + `tag:server`) from an earlier setup. Remove it before phase 2, or the gateway registers as `bow-1`; then drop the `tag:komodo-core` owner |
+| **Open** | glimmer still carries `tag:server`, so the phase-2 grant would let it reach the bow gateway. Swap it to its own tag (admin console → Edit tags; a tagged device cannot drop its last tag there) |
+
+Grants as written: `autogroup:member → * ip:*` (covers the workstation's
+Buildbarn access and admin SSH everywhere) and `tag:server → tag:gateway`
+on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
+`tcp:8123` grant waits for phase 5, when HA joins and gets a tag.
+
 ## Phases (any component failure aborts materia for the whole host)
 
 0. **Tailnet + vault.** Pool, tags, grants, credential.
@@ -166,7 +190,9 @@ using the public edge, so they don't count against it.
    - Verify: no `FATA` in `journalctl -u materia-update.service`.
    - Every public hostname still answers (the CGNAT drop rule is in the host
      netns, Gerbil's tunnels in the pod netns [INFERENCE: no conflict]).
-   - Tailnet SSH to flutterina works.
+   - SSH to flutterina's tailnet IP works. This is host `sshd` reachable
+     via `Network=host`, not Tailscale SSH: `--ssh` in a container opens
+     shells inside the container, not on the host.
 2. **bow `tailscale-gateway`.**
    - Verify from flutterina:
      `curl http://<bow-ts-ip>:8096/health`, `ssh -p 22 <bow-ts-ip>`.
