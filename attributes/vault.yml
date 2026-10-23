@@ -7,6 +7,7 @@ globals:
     hcPingURL: ENC[AES256_GCM,data:BgXaaGvL3EoxjReNJQvDGZ+/QXcBSLQiXJDx1GSCG+7pXNoTVHJaNvjs,iv:jc401OaHui9svBkd3DpQ/GwnmfvJ8ScF3ElqMqCWfN0=,tag:f1N9jY0BeLcF0SR/BOjXPA==,type:str]
     baseDomain: ENC[AES256_GCM,data:JKdKjVZbUFjP,iv:HGfpqDfp14r8bG9P4zOyVgconHCT1htZbszYb4E1IIE=,tag:a+1ojKKU4iELkqb/meSzvw==,type:str]
     beszelHubUrl: ENC[AES256_GCM,data:SsuuI0KP9vyP80kruCE91uVLcQhPLHLz,iv:daORCXQom0LARapB1fw0TdGeb1MSfIw03jStOCsBvRc=,tag:WLVgb/avBW4Ki6NMkJTedQ==,type:str]
+    tailscaleAuthKey: ENC[AES256_GCM,data:AFEjg0GAdzjVkOebWIo8IQince4UcSW48fJSK+GWuZVf9T0LufW1+Ddqez6TdZuWAt+fbBwl1Jc0eVhhchICo1PwHHOkr3pJpZkT7UVliWMXJACSLVzpp1Jj24J+1GhQvb/P,iv:eTihvq4HDp5Xp5Fh7DVDKFOKOeuognWidWsf06UAplA=,tag:ZijDyh1ZK2dKRPAGBsqbsQ==,type:str]
 components:
     pangolin:
         acmeEmail: ENC[AES256_GCM,data:4FmELQpYofabvkrEFvYRJ6Gt,iv:LQKA1s8HOrf3p57dUdHmdNp/Xcwb0VHJsiGDB13iEmg=,tag:8w5bqbBczZ8JCGEg0JjWCw==,type:str]
@@ -23,7 +24,7 @@ sops:
             MDB3Z/G7kjbXEGEmfxMmUw5AaOJcLXD3PJU2sCrpAxkV1GhmouCJHw==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
-    lastmodified: "2026-07-13T15:22:07Z"
-    mac: ENC[AES256_GCM,data:xCvzx9sZOjoSbCn10Fwz16ZisytMiX9bYDkug2f8k2osMXJ2bY04Ks4cz8MwL4myEU/j9WDAJ4hfwgoZPHvX3BxQS8b0bQXICHx/Z+vbP900pJGMHblmsELofkUWiYIaNcOr25Z5TOMH4GiZrRuysyDLMhRdJ1rcWnVvF/SdnVc=,iv:0SHiHT1umqqKncBpHbueTAqnbQfq9FjopKd2iwi7eW4=,tag:vH0JbCL2eeTIh5hhoet8zg==,type:str]
+    lastmodified: "2026-10-23T16:40:05Z"
+    mac: ENC[AES256_GCM,data:RTACvDe+LSG8mV8AO9KRFHebc3x3w3e1b4XN9OUVDmd6luCYk+MrFFo/kB4JPzajoMDV0mdGiNfZjbmyoH6wpLPIdijhsAGh/EqEl0vfmuVO3iGK+nmd0iTeSa7MNY0++/Dw4hajnteMGJbzqUrLv7zfEK6rl25PqC6hVNn9R9c=,iv:PEQ89RhqI9iTUfpmJ1kxt9k029pve226X4lHq3vg2Lw=,tag:qaw1wsZIR2rF8k1GcWjW4w==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.2
