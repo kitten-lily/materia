@@ -171,10 +171,10 @@ needs an API token, and the OAuth client below has `auth_keys` scope only.
 | Tailnet | Personal plan, MagicDNS on, Tailnet Lock off |
 | Existing node IPs | All six outside Pangolin's ranges; none needs renumbering |
 | Grants | Allow-all `* → *` removed. melog's packet filter now accepts only the four user devices; glimmer (`tag:server`) dropped out |
-| Pool | `100.64.0.0/12` proposed; confirm it in the saved policy file |
+| Pool | `100.64.0.0/12`, confirmed in the saved policy file |
 | OAuth client | Token request returns `scope: auth_keys`. The response omits tags, so `tag:server`/`tag:gateway` are first proven when flutterina registers in phase 1 |
 | Vault | `globals.tailscaleAuthKey`, value = client secret + `?ephemeral=false&preauthorized=true` (commit `chore(vault): add tailscaleAuthKey global`). The suffix is stored in the value because `secretEnv` cannot append it; without it OAuth secrets register **ephemeral** nodes, which are deleted when offline and return with a new IP, breaking every T2 target |
-| Stale node | An offline `bow` (`tag:komodo-core` + `tag:server`) from an earlier setup — removed, so the gateway can register as `bow`. Drop the `tag:komodo-core` owner from the policy if still present |
+| Stale node | An offline `bow` (`tag:komodo-core` + `tag:server`) from an earlier setup — removed, so the gateway can register as `bow`. The unused `tag:komodo-core` owner is dropped from the policy |
 | glimmer | Moved from `tag:server` to `tag:router` (admin console → Edit tags; a tagged device cannot drop its last tag there), so the phase-2 `tag:server → tag:gateway` grant does not reach it |
 
 Grants as written: `autogroup:member → * ip:*` (covers the workstation's
