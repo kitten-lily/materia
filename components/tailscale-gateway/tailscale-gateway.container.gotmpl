@@ -1,0 +1,55 @@
+[Unit]
+Description=Tailscale gateway (userspace node on newt-net, serve TCP forwards)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=tailscale-gateway
+Image=docker.io/tailscale/tailscale:v1.104.2@sha256:b11583ad2e93e4671128538c88cf11f460444a5d7e449311dd1933a400ab849d
+
+# The newt analogue (#163): joins newt-net and reaches apps by container
+# name, exactly like newt. Userspace mode: inbound tailnet traffic ends in
+# this container's netstack, so no capabilities, no /dev/net/tun, no
+# PublishPort, and nothing changes in bow's host netns or nftables (only
+# outbound UDP, already allowed from 10.89.0.0/16).
+Network=newt-net
+Environment=TS_USERSPACE=true
+
+# TS_AUTH_ONCE: these flags apply at first login only (later starts run
+# `tailscale set`, which ignores TS_EXTRA_ARGS).
+Environment=TS_EXTRA_ARGS=--advertise-tags=tag:gateway
+Environment=TS_AUTH_ONCE=true
+Environment=TS_HOSTNAME={{ m_facts "hostname" }}
+
+# OAuth client secret with ?ephemeral=false&preauthorized=true stored in the
+# value itself; without that suffix the node registers as ephemeral and is
+# deleted (and later renumbered) whenever it goes offline.
+{{ secretEnv "tailscaleAuthKey" "TS_AUTHKEY" }}
+
+# Node identity and keys. Losing this volume registers a new node with a
+# new tailnet IP, which breaks every Pangolin target that points at it.
+Environment=TS_STATE_DIR=/var/lib/tailscale
+Volume=tailscale-gateway-state.volume:/var/lib/tailscale:Z
+
+# One TCP forward per app, by container name (serve/serve.json). Mounted as
+# a directory: Tailscale's container docs say a single-file bind misses
+# config updates.
+Volume={{ m_dataDir "tailscale-gateway" }}/serve:/config/serve:ro,Z
+Environment=TS_SERVE_CONFIG=/config/serve/serve.json
+
+# /healthz returns 200 once the node has tailnet IPs. Loopback of this
+# container's netns. No HealthOnFailure= — health tracks the control plane,
+# and a coordination outage must not become a restart loop.
+Environment=TS_ENABLE_HEALTH_CHECK=true
+Environment=TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:9002/healthz
+HealthInterval=60s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

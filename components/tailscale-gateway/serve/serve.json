@@ -1,0 +1,13 @@
+{
+  "TCP": {
+    "22": { "TCPForward": "host.containers.internal:22" },
+    "80": { "TCPForward": "audiobookshelf:80" },
+    "4533": { "TCPForward": "navidrome:4533" },
+    "6060": { "TCPForward": "grimmory:6060" },
+    "7981": { "TCPForward": "bb-asset:7981" },
+    "7982": { "TCPForward": "bb-storage:7982" },
+    "8000": { "TCPForward": "mediamanager:8000" },
+    "8080": { "TCPForward": "aonsoku:8080" },
+    "8096": { "TCPForward": "jellyfin:8096" }
+  }
+}

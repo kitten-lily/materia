@@ -1,0 +1,8 @@
+# tailscaleAuthKey lives in vault globals (shared with the tailscale component).
+Secrets = ["tailscaleAuthKey"]
+
+[Defaults]
+
+[[Services]]
+Service = "tailscale-gateway.service"
+RestartedBy = ["tailscale-gateway.container", "serve/serve.json", "tailscale-gateway-state.volume"]
