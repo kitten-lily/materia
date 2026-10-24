@@ -155,6 +155,10 @@ components/
     newt.network                 # named podman network for tunnel-reachable services
     newt-config.volume           # named volume for Newt's provisioned id/secret
     blueprint.gotmpl             # provisioning blueprint (imperative, applied once at first boot)
+  tailscale/                     # host-level Tailscale node, kernel mode (role-assigned, [Roles.tailnet], #163)
+    MANIFEST.toml                # component manifest — Secrets = ["tailscaleAuthKey"] (vault globals), Services
+    tailscale.container.gotmpl   # Network=host, /dev/net/tun, --netfilter-mode=off, health on 127.0.0.1:9002
+    tailscale-state.volume       # named volume for node identity (losing it = new node, new tailnet IP)
   music/                        # Navidrome music server + Aonsoku web client (standalone, bow-only)
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
     navidrome.container.gotmpl    # Navidrome server, joins newt-net, read-only /music bind, navidrome.<baseDomain>
@@ -1146,6 +1150,36 @@ shell; see the `env = false` gotcha.
   Reaching the host this way also depends on the bare-metal nftables
   `input` chain accepting the port from the podman subnets (SSH is already
   covered by its blanket `tcp dport 22 accept`; another service is not).
+- **A Tailscale OAuth client issues auth keys only for tags it owns one by
+  one, not for each tag it was created with.** The `tailscaleAuthKey`
+  client was first created with `tag:server` + `tag:gateway`. Its token
+  request returned `scope: auth_keys`, which looked fine, but a node
+  registering with *one* tag got `requested tags [tag:server] are invalid
+  or not permitted`. The endpoint only accepted the exact pair (#163,
+  phase 1). In a container that is a crash loop, so on materia it aborts
+  the whole host. Fix: one owner tag (`tag:tailnet-provisioner`) listed in
+  `tagOwners` for every node tag, and the client created with that tag
+  only. Set or rotate the secret with `mise tailscale:set-auth-key`. It
+  probes each tag alone and leaves the vault alone unless all pass. The
+  stored value carries `?ephemeral=false&preauthorized=true`: an OAuth
+  secret defaults to *ephemeral* nodes, which are deleted while offline
+  and come back with a new IP.
+- **The `tailscale` component runs `--netfilter-mode=off`, and flutterina
+  has a Hetzner Cloud firewall the repo does not manage.** netavark on
+  flutterina drives iptables over nf_tables. The tailscale image's
+  `iptables` is iptables-legacy, and Tailscale's nftables mode writes into
+  the `ip filter`/`ip nat` tables iptables-nft owns. Either mode mixes
+  backends. With no host firewall, netfilter-off costs only Tailscale's
+  100.64.0.0/10 anti-spoof drop. Separately, the Hetzner firewall
+  `Pangolin` is applied to flutterina (`hcloud firewall describe`):
+  inbound tcp/443, udp/51820+21820, tcp/7981-7982, icmp, and tcp/22 from
+  an allowlist only. It is the reason "flutterina has no host firewall"
+  does not mean "every port is open". It blocks Tailscale's UDP, and
+  `tailscaled` in the container picks a random port anyway, so a peer
+  behind a hard NAT reaches flutterina over DERP only. SSH to flutterina's
+  tailnet IP bypasses the tcp/22 allowlist: inside the tunnel, the
+  tailnet grants decide. See
+  `specs/plans/issue-163-phase1-tailscale-flutterina.md`.
 - **Newt provisioning keys are consumed once.** The `spk_...` key in the
   vault is exchanged for a unique `id` + `secret` on first boot, which
   Newt persists to `newt-config.volume`. On subsequent boots, Newt reads
