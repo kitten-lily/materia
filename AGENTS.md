@@ -1202,8 +1202,9 @@ shell; see the `env = false` gotcha.
   backends. With no host firewall, netfilter-off costs only Tailscale's
   100.64.0.0/10 anti-spoof drop. Separately, the Hetzner firewall
   `Pangolin` (label selector, so a rebuilt server gets it too) is applied
-  to flutterina (`hcloud firewall describe`). Inbound: tcp/443, udp/51820
-  and udp/21820 (Gerbil), tcp/7981-7982 (Buildbarn raw resources),
+  to flutterina (`hcloud firewall describe`). Inbound: tcp/443 and udp/443
+  (Traefik HTTPS and HTTP/3), udp/51820 and udp/21820 (Gerbil),
+  tcp/7981-7982 (Buildbarn raw resources),
   udp/40000 (Tailscale peer relay, #163 phase 1b), and icmp, each with a
   description. **There is no tcp/22 rule** (removed 2026-10-24): SSH to
   flutterina goes over the tailnet only (`core@<flutterina-ts-ip>`, host
