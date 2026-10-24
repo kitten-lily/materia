@@ -273,6 +273,19 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
    - Before Jellyfin, run a remote 4K stream (or iperf through the gateway)
      on both paths and compare.
    - Rollback = flip the target back to site bow + container name.
+   - How to verify a retarget without the Pangolin API: Traefik's config
+     (`curl http://localhost:3001/api/v1/traefik-config` inside the `app`
+     container) shows the service URL on flutterina's site endpoint
+     (Beszel's `100.89.128.x`) instead of bow's; the app's access log on
+     bow shows the Pangolin health probe arriving from the gateway's
+     `newt-net` address.
+   - **Media Manager: moved 2026-10-24.** Service on flutterina's site;
+     target health check `GET /api/v1/health` (MediaManager's image has no
+     `HEALTHCHECK`, and this endpoint was the only probe-able path; it
+     answers `{"message":"Hello World!",...}`, so it proves the backend
+     serves, not that the DB is up). MediaManager logs the probe from
+     `tailscale-gateway` (`10.89.0.13`) every ~5 s with 200; the public
+     hostname still answers its SSO `401`.
 4. **Buildbarn off Pangolin entirely.**
    - krytis-runner joins via `Roles = ["tailnet"]` (adopted, non-Flatcar:
      confirm `/dev/net/tun` and its local firewall). The workstation
