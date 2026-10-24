@@ -1,7 +1,7 @@
 # Tailscale: replacing newt as the backhaul, Pangolin kept as the public edge
 
-Status: phases 0–3 done (all bow HTTP resources on the tailnet, 2026-10-24);
-phases 4–7 not started. Tracked in #163.
+Status: phases 0–4 done (Buildbarn is Tailscale Service svc:bst-cache,
+2026-10-24); phases 5–7 not started. Tracked in #163.
 
 ## Goal
 
@@ -324,7 +324,9 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
      The worst run (12.6 MB/s ≈ 100 Mbit/s) is still ~4× one 25 Mbps
      stream. Kept T2 for its health checks; T1 (local site, no newt hop,
      no health checks) stays the fallback if real streams stutter.
-4. **Buildbarn off Pangolin entirely.**
+4. **Buildbarn off Pangolin entirely.** Done as a Tailscale Service
+   (`svc:bst-cache`) instead of a public DNS name; plan and results:
+   `specs/plans/issue-163-phase4-buildbarn-tailscale-service.md`.
    - krytis-runner joins via `Roles = ["tailnet"]` (adopted, non-Flatcar:
      confirm `/dev/net/tun` and its local firewall). The workstation
      installs Tailscale manually.

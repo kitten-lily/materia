@@ -162,7 +162,8 @@ components/
   tailscale-gateway/             # userspace Tailscale node on newt-net, bow-only (the newt analogue, #163)
     MANIFEST.toml                # component manifest — Secrets = ["tailscaleAuthKey"] (vault globals), Services
     tailscale-gateway.container.gotmpl # tag:gateway, no caps/PublishPort, TS_SERVE_CONFIG from the serve/ dir
-    serve/serve.json             # TCP forwards by container name (one tailnet port per app) + 22 → host sshd
+    serve/serve.json             # TCP forwards by container name (one tailnet port per app) + 22 → host sshd; Services block hosts svc:bst-cache
+    advertise-services           # ExecStartPost helper: re-advertises every svc: in serve.json (containerboot bug workaround)
     tailscale-gateway-state.volume # named volume for node identity (losing it = new node, new tailnet IP)
   music/                        # Navidrome music server + Aonsoku web client (standalone, bow-only)
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
@@ -193,15 +194,14 @@ components/
     config.toml.gotmpl            # templated backend config, mounted read-only via CONFIG_DIR (see gotchas)
     mediamanager-db.volume        # named volume for /var/lib/postgresql/data (root-owned, entrypoint chowns it)
     mediamanager-images.volume    # named volume for the poster cache at /images (UID 1000)
-  buildbarn/                     # BuildStream cache server for krytis (standalone, bow-only, issue #28)
+  buildbarn/                     # BuildStream cache server for krytis (standalone, bow-only, issue #28); clients reach it as Tailscale Service svc:bst-cache (#163)
     MANIFEST.toml                # component manifest — Secrets (jwtJwks, serverKeyPem), Services
     bb-storage.container.gotmpl   # CAS + ActionCache + FSAC, joins newt-net, bind mounts from LVM data disk
     bb-asset.container.gotmpl     # remote-asset index, joins newt-net, reaches bb-storage by container name
     config/common.libsonnet       # shared JWT auth policy + authorizers (push/pull role claim)
     config/storage.jsonnet        # bb-storage config — 150G CAS quota / 10-block layout, see BUG-006
     config/asset.jsonnet          # bb-asset config — 'error' fetcher (pure cache, never fetches on its own)
-    certs/server.crt              # self-signed server TLS cert (public; key is a materia Secret)
-    blueprint-resources.yaml      # raw TCP resource declarations — pasted into Pangolin dashboard manually, see file header
+    certs/server.crt              # self-signed server TLS cert, SAN bst-cache.<tailnet>.ts.net (public; key is a materia Secret; krytis pins a copy)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
@@ -1243,7 +1243,6 @@ shell; see the `env = false` gotcha.
   `Pangolin` (label selector, so a rebuilt server gets it too) is applied
   to flutterina (`hcloud firewall describe`). Inbound: tcp/443 and udp/443
   (Traefik HTTPS and HTTP/3), udp/51820 and udp/21820 (Gerbil),
-  tcp/7981-7982 (Buildbarn raw resources),
   udp/40000 (Tailscale peer relay, #163 phase 1b), and icmp, each with a
   description. **There is no tcp/22 rule** (removed 2026-10-24): SSH to
   flutterina goes over the tailnet only (`core@<flutterina-ts-ip>`, host
@@ -1287,21 +1286,27 @@ shell; see the `env = false` gotcha.
   relay (udp/40000) keeps it off DERP. Add a forward by editing
   `components/tailscale-gateway/serve/serve.json`; materia restarts the
   gateway (`RestartedBy`), which briefly drops every forwarded connection.
-- **containerboot (tailscale image v1.104.2) only advertises a Tailscale
-  Service at startup. A serve-config change that adds one needs a second
-  restart.** `TS_SERVE_CONFIG` with a `Services` block is applied
-  (`tailscale serve status` lists the Service and the node gets the
-  `service-host` cap with the TailVIP), but `tailscale debug prefs` shows
-  `AdvertiseServices: null`. Control then never adds the TailVIP to the
-  host's `AllowedIPs`, and clients resolve the name but cannot connect.
-  Cause: in `cmd/containerboot/serve.go` `watchServeConfigChanges`,
-  `sc, err := readServeConfig(...)` inside the `if` shadows the outer
-  `var sc`, so the later `refreshAdvertiseServices(ctx, sc, ...)` always
-  gets `nil`. The startup path (`main.go`, auto-advertisement from the
-  persisted serve config) works. So after materia restarts the gateway
-  with a new Service, `systemctl restart tailscale-gateway.service` once
-  more and confirm `AdvertiseServices: ["svc:..."]`. Later restarts
-  (Renovate bumps) re-advertise on their own. Not reported upstream.
+- **containerboot (tailscale image v1.104.2) drops a Tailscale Service's
+  advertisement on every restart, and only sometimes restores it.** Two
+  upstream behaviours combine: (1) on shutdown it unadvertises every
+  Service (`EnsureServicesNotAdvertised`, `main.go:491`, a graceful drain),
+  which persists in the state volume; (2) on start, its serve-config watch
+  loop never re-advertises (`sc, err := readServeConfig(...)` in
+  `serve.go` shadows the outer `sc`, so `refreshAdvertiseServices` gets
+  `nil`), and the startup path only catches the config if another netmap
+  notification arrives after the file config lands. Symptom:
+  `tailscale serve status` lists the Service and the node holds the
+  `service-host` cap, but `tailscale debug prefs` shows
+  `AdvertiseServices: null`, control drops the TailVIP from the host's
+  `AllowedIPs`, and clients resolve the name but cannot connect. It took
+  svc:bst-cache down for ~2 min after an ordinary materia restart on
+  2026-10-24; a manual restart "fixing" it earlier was luck.
+  Fix: `tailscale-gateway`'s `ExecStartPost` runs `advertise-services`,
+  which calls `tailscale serve advertise` for every `svc:` in `serve.json`
+  until the prefs show them (verified across 3 consecutive restarts). It is
+  non-fatal, so check the unit journal for `advertised:` / `failed to
+  advertise`. Any other containerized Service host needs the same. Not
+  reported upstream.
 - **Retargeting a Pangolin resource to the tailnet means changing the
   target's Site *and* host. Changing only the host takes the resource
   down.** With T2 (#163 phase 3) every bow app's target is site
@@ -1387,6 +1392,23 @@ shell; see the `env = false` gotcha.
   vault) and `mise buildbarn:mint-token` signs with
   `openssl pkeyutl -sign -rawin` (Ed25519 is one-shot, not
   hash-then-sign).
+- **Rotating Buildbarn's server cert is a two-repo change, and the order is
+  fixed.** Clients dial the Tailscale Service name
+  `bst-cache.<tailnet>.ts.net` (#163 phase 4) and verify the server
+  against krytis's pinned copy (`quadlet/buildbarn/certs/bow-server.crt`).
+  So the cert's SAN must be exactly that name, and a new cert breaks every
+  krytis cache step until krytis carries it. Procedure: open the krytis PR
+  (cert + any URL change) first; then in materia `sops unset
+  attributes/bow.yml '["components"]["buildbarn"]["serverKeyPem"]'`,
+  `mise buildbarn:server-cert-init --hostname bst-cache.<tailnet>.ts.net`,
+  push, run materia on bow; check that `podman secret inspect --showsecret
+  materia-serverKeyPem` matches the new cert (it did not on 2026-10-24, see
+  the stale-secret gotcha), and that `openssl s_client -verify_hostname`
+  from krytis-runner passes; then merge the krytis PR. `certs/server.crt` is
+  in both services' `RestartedBy`, so the restart is automatic. krytis's
+  PR CI (`build-changed`) skips building when `project.conf` changes, so it
+  is no proof: run `scripts/bow-artifact-check.py --probe` with a real
+  token, or a `cache-warm` dispatch.
 - **Buildbarn's local CAS backend has a per-blob size ceiling completely
   independent of `maximumMessageSizeBytes` — don't assume raising the
   gRPC message-size limit alone fixes a large-blob push failure.**
