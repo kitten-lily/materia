@@ -13,6 +13,10 @@ if [[ -z "$_ip" ]]; then
   gum style --foreground 1 "error: no server named '$_server_name'"
   exit 1
 fi
+# SSH over the tailnet when the server is an online peer: flutterina's
+# Hetzner firewall has no public tcp/22 (#163).
+_tip=$(mise hz:_tailnet-ip --server-name "$_server_name" 2>/dev/null || true)
+_ip="${_tip:-$_ip}"
 
 _ssh=(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 

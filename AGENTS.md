@@ -1201,20 +1201,31 @@ shell; see the `env = false` gotcha.
   the `ip filter`/`ip nat` tables iptables-nft owns. Either mode mixes
   backends. With no host firewall, netfilter-off costs only Tailscale's
   100.64.0.0/10 anti-spoof drop. Separately, the Hetzner firewall
-  `Pangolin` is applied to flutterina (`hcloud firewall describe`):
-  inbound tcp/443, udp/51820+21820, tcp/7981-7982, udp/40000 (Tailscale
-  peer relay, #163 phase 1b), icmp, and tcp/22 from an allowlist only. It
-  is the reason "flutterina has no host firewall" does not mean "every port
-  is open". It blocks `tailscaled`'s own UDP port, which is random in the
-  container anyway, so a peer behind a hard NAT cannot reach flutterina
-  directly. Instead flutterina is a peer relay on udp/40000 (set once with
-  `tailscale set --relay-server-port=40000`, stored in the state volume;
-  the `tailscale.com/cap/relay` grant lives in the tailnet policy, not in
-  this repo). Any rule added there is invisible to the repo:
-  re-provisioning flutterina keeps the firewall, but the relay setting
-  must be re-applied. SSH to flutterina's tailnet IP bypasses the tcp/22
-  allowlist: inside the tunnel, the tailnet grants decide. See
-  `specs/plans/issue-163-phase1-tailscale-flutterina.md`.
+  `Pangolin` (label selector, so a rebuilt server gets it too) is applied
+  to flutterina (`hcloud firewall describe`). Inbound: tcp/443, udp/51820
+  and udp/21820 (Gerbil), tcp/7981-7982 (Buildbarn raw resources),
+  udp/40000 (Tailscale peer relay, #163 phase 1b), and icmp, each with a
+  description. **There is no tcp/22 rule** (removed 2026-10-24): SSH to
+  flutterina goes over the tailnet only (`core@<flutterina-ts-ip>`, host
+  sshd via `Network=host`; tailnet grants decide who may connect), with the
+  Hetzner web console as the fallback. `hz:ssh`, `hz:pull-config`,
+  `hz:push-config` and `hz:podman-gateway` use the tailnet IP whenever the
+  server is an online peer of the workstation (`hz:_tailnet-ip`) and fall
+  back to the public IP otherwise. **A rebuild has no SSH at all** until
+  materia-update has run and the new node has joined the tailnet (and with
+  a fresh state volume it joins as a new node with a new IP; delete the old
+  `flutterina` device first so the name is reused). For `hz:push-config`
+  right after `hz:rebuild`, add a temporary tcp/22 rule for your own IP and
+  remove it afterwards. The firewall is also why "flutterina has no host
+  firewall" does not mean "every port is open": it blocks `tailscaled`'s
+  own UDP port, which is random in the container anyway, so a peer behind a
+  hard NAT cannot reach flutterina directly. Instead flutterina is a peer
+  relay on udp/40000 (set once with `tailscale set
+  --relay-server-port=40000`, stored in the state volume; the
+  `tailscale.com/cap/relay` grant targets `tag:relay` in the tailnet
+  policy, not in this repo). Firewall rules are invisible to the repo:
+  re-provisioning flutterina keeps them, but the relay setting must be
+  re-applied. See `specs/plans/issue-163-phase1-tailscale-flutterina.md`.
 - **Newt provisioning keys are consumed once.** The `spk_...` key in the
   vault is exchanged for a unique `id` + `secret` on first boot, which
   Newt persists to `newt-config.volume`. On subsequent boots, Newt reads
@@ -1519,7 +1530,7 @@ var or default.
 | `mise hz:create` | Create server from snapshot + Ignition |
 | `mise hz:delete` | Delete server (`--confirm` required) |
 | `mise hz:rebuild` | Rebuild server in-place with latest snapshot + Ignition |
-| `mise hz:ssh` | SSH into server as `core@<ip>` |
+| `mise hz:ssh` | SSH into server as `core@<ip>`: tailnet IP when it is an online peer, else public IP (flutterina has no public tcp/22) |
 | `mise hz:pull-config` | Backup pangolin runtime volumes to a local tarball (before rebuild) |
 | `mise hz:push-config` | Restore tarball into pangolin runtime volumes (after rebuild) |
 | `mise hz:podman-gateway` | Print a server's podman bridge gateway IP (for Pangolin local-site resource targets pointing at standalone containers like beszel-hub) |

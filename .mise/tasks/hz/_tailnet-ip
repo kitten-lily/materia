@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Internal: print a server's tailnet IPv4 if it is an online peer of this workstation (hidden helper)"
+#MISE hide=true
+
+#USAGE flag "--server-name <name>" help="Server name"
+set -euo pipefail
+
+_server_name="${usage_server_name:?server name required, use --server-name}"
+
+# Prints nothing (exit 0) when tailscale is missing, down, or the server is
+# not an online peer. Callers then fall back to the public IP. flutterina's
+# Hetzner firewall has no tcp/22 rule (#163), so its SSH goes over the tailnet.
+command -v tailscale >/dev/null 2>&1 || exit 0
+tailscale status --json 2>/dev/null \
+  | jq -r --arg h "$_server_name" \
+      'first(.Peer[]? | select(.HostName == $h and .Online) | .TailscaleIPs[0]) // empty'
