@@ -132,13 +132,17 @@ func main() {
 	os.Exit(exitCode)
 }
 
-// runJob runs the backup job (ensureRepo -> backup -> forget) and returns
-// the combined exit code. Separated from main so pingEnd always runs after
-// it, regardless of the exit path (os.Exit skips defers).
+// runJob runs the backup job (unlock -> ensureRepo -> backup -> forget) and
+// returns the combined exit code. Separated from main so pingEnd always runs
+// after it, regardless of the exit path (os.Exit skips defers).
 func runJob(c config) int {
-	if err := ensureRepo(c); err != nil {
-		log.Printf("ensureRepo failed: %v", err)
-		return 1
+	if code := removeStaleLocks(); code != 0 && code != exitRepoMissing {
+		log.Printf("restic unlock failed: exit %d", code)
+		return code
+	}
+	if code := ensureRepo(); code != 0 {
+		log.Printf("ensureRepo failed: exit %d", code)
+		return code
 	}
 	backupExit := runBackup(c)
 	forgetExit := runForget(c)
@@ -148,6 +152,12 @@ func runJob(c config) int {
 	log.Printf("backup exit %d, forget exit %d", backupExit, forgetExit)
 	return backupExit | forgetExit
 }
+
+// restic exit codes (restic >= 0.17, "Scripting" docs).
+const (
+	exitRepoMissing = 10
+	exitLockFailed  = 11
+)
 
 // resticCmd builds an exec.Command for restic with the wrapper's env
 // (so RESTIC_REPOSITORY, RESTIC_PASSWORD, etc. propagate) and stdout/stderr
@@ -161,15 +171,49 @@ func resticCmd(args ...string) *exec.Cmd {
 	return cmd
 }
 
-// ensureRepo runs `restic cat config`; if it exits non-zero, runs `restic init`.
-// This makes the first run on a fresh Storage Box self-bootstrapping — no
-// manual init step.
-func ensureRepo(c config) error {
-	if err := resticCmd("cat", "config").Run(); err != nil {
-		log.Printf("restic cat config failed (%v), initializing repository", err)
-		return resticCmd("init").Run()
+// runRestic runs restic with args and returns its exit code (1 if it could
+// not be started at all).
+func runRestic(args ...string) int {
+	if err := resticCmd(args...).Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		log.Printf("restic %s: %v", args[0], err)
+		return 1
 	}
-	return nil
+	return 0
+}
+
+// removeStaleLocks runs `restic unlock`, which (without --remove-all) only
+// deletes locks whose owner is gone: live restic processes refresh their lock
+// every 5 minutes, so a lock untouched for 30 minutes is stale. A run killed
+// mid-operation (systemd TimeoutStartSec) leaves its lock behind, and restic
+// never skips a stale lock on its own, so without this every later run fails
+// (BUG-012). Safe here: each host has its own repository and one timer, so no
+// live job can be holding a lock from another container. Exit 10 on a fresh
+// Storage Box is expected; ensureRepo initializes it next.
+func removeStaleLocks() int {
+	return runRestic("unlock")
+}
+
+// ensureRepo runs `restic cat config` and initializes the repository only
+// when restic reports it does not exist (exit 10). This keeps the first run on
+// a fresh Storage Box self-bootstrapping, without turning a lock, password or
+// network failure into a misleading `restic init` error (BUG-012).
+func ensureRepo() int {
+	switch code := runRestic("cat", "config"); code {
+	case 0:
+		return 0
+	case exitRepoMissing:
+		log.Printf("repository does not exist, initializing")
+		return runRestic("init")
+	case exitLockFailed:
+		log.Printf("restic cat config: repository is locked (exit %d)", code)
+		return code
+	default:
+		log.Printf("restic cat config failed: exit %d", code)
+		return code
+	}
 }
 
 // runBackup runs `restic backup <paths> --tag <hostname> --host <hostname>`
@@ -177,30 +221,16 @@ func ensureRepo(c config) error {
 func runBackup(c config) int {
 	args := append([]string{"backup"}, c.backupPaths...)
 	args = append(args, "--tag", c.hostname, "--host", c.hostname)
-	cmd := resticCmd(args...)
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode()
-		}
-		return 1
-	}
-	return 0
+	return runRestic(args...)
 }
 
 // runForget runs `restic forget --prune --keep-daily N --keep-weekly N
 // --keep-monthly N` and returns the restic exit code.
 func runForget(c config) int {
-	cmd := resticCmd(
+	return runRestic(
 		"forget", "--prune",
 		"--keep-daily", strconv.Itoa(c.keepDaily),
 		"--keep-weekly", strconv.Itoa(c.keepWeekly),
 		"--keep-monthly", strconv.Itoa(c.keepMonthly),
 	)
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode()
-		}
-		return 1
-	}
-	return 0
 }
