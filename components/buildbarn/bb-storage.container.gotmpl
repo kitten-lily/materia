@@ -6,9 +6,9 @@ After=network-online.target
 [Container]
 Image=ghcr.io/buildbarn/bb-storage@sha256:155fa806de0933e6222681353e2e9fe2f51bd2a78f88dd254ae0b5989fb8e585
 ContainerName=bb-storage
-# Join newt-net so Newt reaches it by container name for the raw TCP
-# resource target (same pattern as every other tunneled component here) —
-# unlike krytis's own rootless local test, which used Network=host to
+# Join newt-net so bow's tailscale-gateway reaches it by container name for
+# svc:bst-cache (#163) and bb-asset reaches it as bb-storage:7982 — unlike
+# krytis's own rootless local test, which used Network=host to
 # sidestep rootless bridge networking needing nft/iptables NAT that wasn't
 # guaranteed available on that dev box. bow is a rootful bare-metal
 # Flatcar host; the standard newt-net bridge applies here.

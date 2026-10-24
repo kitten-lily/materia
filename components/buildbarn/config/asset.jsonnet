@@ -4,8 +4,8 @@ local common = import 'common.libsonnet';
   contentAddressableStorage: {
     // newt-net container-name reachability, not localhost — unlike
     // krytis's rootless local test (Network=host, same netns as
-    // bb-storage), this deployment joins the newt-net bridge network like
-    // every other tunneled component here.
+    // bb-storage), this deployment joins the newt-net bridge network,
+    // where bow's tailscale-gateway also reaches both services.
     grpc: { client: { address: 'bb-storage:7982' } },
   },
   assetCache: {

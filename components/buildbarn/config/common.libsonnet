@@ -3,10 +3,9 @@
 // Auth: JWT bearer token (EdDSA / Ed25519), not mTLS — see
 // specs/plans/issue-28-bst-cache-krytis.md for the full "why" (mTLS was
 // krytis's original local-test design; switched here because it drops the
-// CA/client-cert distribution entirely, at the cost of not unlocking
-// HTTP-resource exposure the way it was hoped to — Pangolin's raw TCP
-// resource is still what's in front of this, blocked upstream on h2c
-// support, fosrl/pangolin#115).
+// CA/client-cert distribution entirely). Clients reach this as the
+// Tailscale Service svc:bst-cache (#163); before that it sat behind
+// Pangolin raw TCP resources.
 //
 // Originally HS256 (symmetric, one shared secret), but buildbarn's JWT
 // validator only accepts asymmetric keys — go-jose v3's Valid() returns
@@ -18,8 +17,9 @@
 // and mise buildbarn:mint-token signs with `openssl pkeyutl -sign -rawin`.
 //
 // Buildbarn still terminates its own TLS (server-only — no client cert
-// required) for confidentiality through the Newt/Pangolin tunnel; the
-// JWKS below is what verifies the bearer token's signature.
+// required), so clients pin server.crt end to end through the tailnet and
+// bow's tailscale-gateway (a raw TCP forward); the JWKS below is what
+// verifies the bearer token's signature.
 //
 // jwt-jwks.json / server.key are materia Secrets (see MANIFEST.toml),
 // mounted at deploy time — nothing sensitive is committed to this repo.
