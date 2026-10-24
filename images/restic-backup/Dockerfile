@@ -1,7 +1,8 @@
 # images/restic-backup/Dockerfile
 # syntax=docker/dockerfile:1
 
-ARG GO_IMAGE=docker.io/library/golang:1.23-alpine@sha256:383395b794dffa5b53012a212365d40c8e37109a626ca30d6151c8348d380b5f
+# restic >= 0.19 needs Go >= 1.25.8 to build.
+ARG GO_IMAGE=docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59
 
 FROM ${GO_IMAGE} AS builder
 ARG resticVersion=v0.19.1
