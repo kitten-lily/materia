@@ -1,7 +1,7 @@
 # Tailscale: replacing newt as the backhaul, Pangolin kept as the public edge
 
-Status: phase 0 done (2026-10-23); phases 1–7 not started. Tracked in
-#163.
+Status: phases 0–1 done (phase 1 deployed 2026-10-24); phases 2–7 not
+started. Tracked in #163.
 
 ## Goal
 
@@ -197,13 +197,56 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
    - SSH to flutterina's tailnet IP works. This is host `sshd` reachable
      via `Network=host`, not Tailscale SSH: `--ssh` in a container opens
      shells inside the container, not on the host.
+1b. **flutterina as a Tailscale peer relay.** Phase 1 showed melog →
+   flutterina falls back to DERP: melog's NAT varies its mapping per
+   destination, and the Hetzner firewall drops unsolicited inbound UDP to
+   flutterina's random `tailscaled` port. A peer relay
+   ([docs](https://tailscale.com/docs/features/peer-relay), Tailscale ≥1.86;
+   the image is 1.104.2) is a UDP relay on a fixed port that tailnet nodes
+   try before DERP, without DERP's throughput limits. flutterina is
+   well suited: public IP on eth0, no NAT, and Helsinki is close to bow.
+   - **Port.** `udp/40000` on all interfaces. Add an inbound rule to the
+     Hetzner firewall `Pangolin` (`0.0.0.0/0`, `::/0`). Nothing else binds
+     40000 on flutterina (`ss -lunp`), and the container is
+     `Network=host`, so no `PublishPort` is needed.
+   - **Enable it on the node.** `--relay-server-port` exists only on
+     `tailscale set`, not on `tailscale up` (`up.go` only maps it for the
+     "flags you didn't repeat" check), so `TS_EXTRA_ARGS` cannot carry it.
+     Run once on the host:
+     `sudo podman exec tailscale tailscale set --relay-server-port=40000`.
+     The pref is stored in `tailscale-state.volume` and survives restarts
+     and image bumps. A re-provision (new state volume) needs the command
+     again; record that in a quadlet comment next to `TS_AUTH_ONCE`.
+   - **Grant.** The `tailscale.com/cap/relay` app capability. `src` lists the
+     nodes that may be *reached through* the relay; `dst` is the relay. The
+     docs warn against `src: ["*"]`, so list the stable server tags only:
+     ```hujson
+     "hosts": {"flutterina": "<flutterina-ts-ip>"},
+     "grants": [
+       {"src": ["tag:server", "tag:gateway"], "dst": ["flutterina"],
+        "app": {"tailscale.com/cap/relay": []}},
+     ],
+     ```
+     A `hosts` alias is used rather than `tag:server` as `dst`, so
+     krytis-runner (also `tag:server`, phase 4) is not picked as a relay
+     candidate. Because flutterina is itself `tag:server`, this also covers
+     the docs' "self as peer relay" case: peers that cannot reach flutterina's
+     `tailscaled` port directly reach it through its own relay port. That
+     removes the need to pin `--port=41641` and open a second UDP port.
+     Add HA's tag to `src` in phase 5.
+   - **Verify.** On flutterina:
+     `tailscale debug peer-relay-sessions` lists sessions while traffic runs.
+     From melog: `tailscale ping <flutterina-ts-ip>` no longer says
+     `via DERP`, and `tailscale status` shows `peer-relay
+     <ip>:40000:vni:<n>` for flutterina. After phase 2, the same for bow.
+   - **Rollback.** `tailscale set --relay-server-port=""`, remove the grant
+     and the firewall rule.
 2. **bow `tailscale-gateway`.**
    - Verify from flutterina:
      `curl http://<bow-ts-ip>:8096/health`, `ssh -p 22 <bow-ts-ip>`.
-   - `tailscale ping` from flutterina shows a direct path, not DERP.
-     flutterina's Hetzner Cloud firewall (`Pangolin`) does **not** allow
-     41641/udp; NAT traversal should still punch through its stateful,
-     non-NAT filter. Add a udp/41641 rule only if the path shows DERP.
+   - `tailscale ping` from flutterina shows `direct` or `peer-relay`, never
+     DERP. The phase-3 Jellyfin throughput comparison must name which of
+     the two paths it measured.
 3. **Retarget resources one at a time** in Pangolin (T2: site =
    flutterina, target = `<bow-ts-ip>:<port>`).
    - Order: Media Manager → Grimmory → Audiobookshelf → Navidrome +
