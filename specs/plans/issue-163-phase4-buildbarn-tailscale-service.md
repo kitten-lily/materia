@@ -136,6 +136,16 @@ new name.
 
 ## Rollback
 
-Until step 5, the Pangolin raw resources still work for the old cert.
-After step 3, rolling back means restoring the old `serverKeyPem` (git
-history of `attributes/bow.yml`) and the old cert.
+Until step 3, the old path (Pangolin raw resources + old cert) is
+untouched. After step 3, rolling back means restoring the old
+`serverKeyPem` (git history of `attributes/bow.yml`) and the old cert;
+the raw resources then work again until step 5 removes them.
+
+## Results (2026-10-24)
+
+| Step | Result |
+|---|---|
+| 1. krytis-runner joins | `Result=success`; node `krytis-runner`, `tag:server`; tailscaled used `*dns.resolvedManager`; the **host** resolves `bow.<tailnet>.ts.net`; krytis-runner ↔ bow is **direct** (runner has an easy NAT). flutterina's tailscale was not restarted (template block trims to identical output) |
+| 2. Service | Gateway applied the `Services` block, got the `service-host` cap with TailVIP `100.112.231.57` (outside the node `ipPool`, which Services don't use; clear of Pangolin's ranges), but `AdvertiseServices: null`: containerboot's watch loop shadows `sc` and never advertises (AGENTS.md gotcha). One more gateway restart → advertised, TailVIP in bow's `AllowedIPs`, krytis-runner reached 7981/7982 by name |
+| 3. Cert | New cert SAN `DNS:bst-cache.<tailnet>.ts.net`, valid to 2029-01-26. materia logged the secret update but the podman secret kept the **old** key → bb-storage/bb-asset `tls: private key does not match public key`, `start-limit-hit`, materia `FATA` on bow (~1 min). `podman secret rm materia-serverKeyPem` + rerun fixed it. From krytis-runner both ports verify against the new cert with hostname check; krytis's own `bow-artifact-check.py --probe` (JWT auth) passes from the PR worktree |
+| krytis | starlit-os/krytis#1410 (cert + URLs + docs). Its PR CI skipped building (touches `project.conf`), so the probe above is the end-to-end proof |

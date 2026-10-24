@@ -358,7 +358,15 @@ shell; see the `env = false` gotcha.
   detect that a secret's *value* changed (vs. its *name*). After rotating a
   secret value in the vault, if the container still sees the old value,
   `sudo podman secret rm materia-<name>` the stale one and re-run
-  `materia-update` to force recreation (BUG-003, layer 3).
+  `materia-update` to force recreation (BUG-003, layer 3). **It happened
+  again on 2026-10-24 (#163 phase 4), and the run log looks fine:**
+  materia logged `Update PodmanSecret serverKeyPem` and the secret's
+  `UpdatedAt` moved, yet `podman secret inspect --showsecret` still held
+  the old key. bb-storage/bb-asset then died with `tls: private key does
+  not match public key` against the new cert, crash-looped to
+  `start-limit-hit`, and materia aborted on bow. After rotating any secret,
+  compare what podman holds with the vault (`--showsecret | openssl pkey
+  -pubout | sha256sum` against the cert/vault) before trusting the run.
 - **Systemd unit inline comments are literal values.**
   `PublishPort=443:443/udp  # HTTP/3` passes the full string including comment
   to Podman. The `/3` in `HTTP/3` triggered "protocol can only be specified
@@ -1279,6 +1287,21 @@ shell; see the `env = false` gotcha.
   relay (udp/40000) keeps it off DERP. Add a forward by editing
   `components/tailscale-gateway/serve/serve.json`; materia restarts the
   gateway (`RestartedBy`), which briefly drops every forwarded connection.
+- **containerboot (tailscale image v1.104.2) only advertises a Tailscale
+  Service at startup. A serve-config change that adds one needs a second
+  restart.** `TS_SERVE_CONFIG` with a `Services` block is applied
+  (`tailscale serve status` lists the Service and the node gets the
+  `service-host` cap with the TailVIP), but `tailscale debug prefs` shows
+  `AdvertiseServices: null`. Control then never adds the TailVIP to the
+  host's `AllowedIPs`, and clients resolve the name but cannot connect.
+  Cause: in `cmd/containerboot/serve.go` `watchServeConfigChanges`,
+  `sc, err := readServeConfig(...)` inside the `if` shadows the outer
+  `var sc`, so the later `refreshAdvertiseServices(ctx, sc, ...)` always
+  gets `nil`. The startup path (`main.go`, auto-advertisement from the
+  persisted serve config) works. So after materia restarts the gateway
+  with a new Service, `systemctl restart tailscale-gateway.service` once
+  more and confirm `AdvertiseServices: ["svc:..."]`. Later restarts
+  (Renovate bumps) re-advertise on their own. Not reported upstream.
 - **Retargeting a Pangolin resource to the tailnet means changing the
   target's Site *and* host. Changing only the host takes the resource
   down.** With T2 (#163 phase 3) every bow app's target is site
