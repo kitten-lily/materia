@@ -494,6 +494,29 @@ shell; see the `env = false` gotcha.
 - **Containers reach each other over localhost.** In a pod, all containers
   share one network namespace. Traefik/Gerbil configs reference `localhost:3001`,
   not `app:3001`. The `server.internal_hostname` in `config.yml` is `localhost`.
+- **HTTP/3 on the edge needs three switches, and Pangolin ships the first
+  two commented out.** Pangolin's manual-install docs
+  ([podman quadlets](https://docs.pangolin.net/self-host/manual/podman-quadlets),
+  [docker compose](https://docs.pangolin.net/self-host/manual/docker-compose))
+  have `# PublishPort=443:443/udp` in the pod and `# http3: advertisedPort:
+  443` under Traefik's `websecure`, each saying the other must be enabled
+  too. This repo had only the first (`pangolin.pod` publishes `443/udp`),
+  and the Hetzner firewall `Pangolin` had no udp/443 rule. So QUIC was dead
+  end to end while looking half-configured: no `Alt-Svc` header, every
+  client on HTTP/2. Enabled 2026-10-24: `http3: {}` in
+  `traefik_config.yml.gotmpl` plus the firewall rule "Traefik HTTP/3
+  (QUIC): Pangolin public edge". `{}` instead of upstream's
+  `advertisedPort: 443` is equivalent: Traefik advertises the entrypoint's
+  own port when it is unset (live `alt-svc: h3=":443"; ma=2592000`).
+  Verify with `curl --http3-only -sI https://<host>/` (needs a curl built
+  with HTTP3), which must return the same status as plain HTTPS. All 9
+  hostnames did. Dropping any one of the three silently falls back to
+  HTTP/2, so nothing breaks visibly. **One divergence from that same
+  upstream block is still open:** it sets
+  `http.encodedCharacters.allowEncodedSlash` and
+  `allowEncodedQuestionMark` on `websecure`, and this repo does not. If an
+  app behind the edge starts rejecting URLs containing `%2F` or `%3F`,
+  check that first.
 - **Gerbil is the networking edge.** In the official architecture, Traefik
   shares Gerbil's network namespace (docker-compose uses
   `network_mode: service:gerbil`). A pod achieves the same: all containers share
