@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#MISE description="Check a Tailscale OAuth client secret can issue every node tag, then write it to globals.tailscaleAuthKey"
+
+#USAGE flag "--tags <tags>" help="Comma-separated tags every node registers with; the client must issue keys for each one alone" default="tag:server,tag:gateway"
+
+set -euo pipefail
+
+_vault="attributes/vault.yml"
+IFS=',' read -r -a _tags <<<"${usage_tags:-tag:server,tag:gateway}"
+
+# The secret comes from a hidden prompt (or stdin when not a terminal), and
+# reaches curl and sops on stdin only, so it never appears in argv / `ps`.
+if [[ -t 0 ]]; then
+  _secret=$(gum input --password --placeholder "tskey-client-..." --header "Tailscale OAuth client secret")
+else
+  # $(cat), not `read`: piped input often lacks a trailing newline, and a
+  # failed `read` would exit silently under set -e.
+  _secret=$(cat)
+fi
+# Tolerate a pasted value that already carries the query suffix.
+_secret="${_secret%%\?*}"
+
+if [[ "$_secret" != tskey-client-* ]]; then
+  gum style --foreground 1 "error: expected an OAuth client secret (tskey-client-...), not an auth key"
+  exit 1
+fi
+
+# Each node registers with ONE tag, and the client only issues keys for tags
+# it owns individually. A client created with tag:server + tag:gateway issues
+# keys for that exact pair only, so every single-tag request fails with
+# "requested tags [...] are invalid or not permitted" (#163, phase 1). Probe
+# the token endpoint per tag before touching the vault.
+_failed=0
+for _tag in "${_tags[@]}"; do
+  _resp=$(printf 'client_id=unused&client_secret=%s' "$_secret" \
+    | curl -sS --data @- --data-urlencode "tags=${_tag}" https://api.tailscale.com/api/v2/oauth/token)
+  if jq -e '.access_token and (.scope | split(" ") | index("auth_keys"))' >/dev/null 2>&1 <<<"$_resp"; then
+    gum style --foreground 2 "==> ${_tag}: auth_keys OK"
+  else
+    gum style --foreground 1 "==> ${_tag}: $(jq -r '.message // .error_description // .error // "no auth_keys scope"' <<<"$_resp" 2>/dev/null || echo "$_resp")"
+    _failed=1
+  fi
+done
+if (( _failed )); then
+  gum style --foreground 1 "error: vault unchanged. Give the client one owner tag that owns all of: ${_tags[*]}"
+  gum style --foreground 1 "       (tagOwners: \"tag:tailnet-provisioner\": [\"autogroup:admin\"], \"<tag>\": [..., \"tag:tailnet-provisioner\"])"
+  exit 1
+fi
+
+# fnox.toml sets env = false, so sops needs the age key fetched explicitly.
+SOPS_AGE_KEY="${SOPS_AGE_KEY:-$(fnox get SOPS_AGE_KEY)}"
+export SOPS_AGE_KEY
+
+# The suffix is part of the stored value: secretEnv cannot append it, and an
+# OAuth secret without ephemeral=false registers an ephemeral node, which is
+# deleted when offline and comes back with a new tailnet IP.
+jq -Rn --arg s "${_secret}?ephemeral=false&preauthorized=true" '$s' \
+  | sops set --value-stdin "$_vault" '["globals"]["tailscaleAuthKey"]'
+unset _secret
+
+_stored=$(sops -d --extract '["globals"]["tailscaleAuthKey"]' "$_vault")
+if [[ "$_stored" != tskey-client-*'?ephemeral=false&preauthorized=true' ]]; then
+  gum style --foreground 1 "error: read-back of globals.tailscaleAuthKey has an unexpected shape"
+  exit 1
+fi
+unset _stored
+
+gum style --foreground 2 "==> globals.tailscaleAuthKey written to $_vault. Commit it:"
+gum style --foreground 2 "    git commit -m 'chore(vault): rotate tailscaleAuthKey' -- $_vault"
+gum style --foreground 8 "    Running nodes are unaffected (TS_AUTH_ONCE: the key is only read at first login)."
