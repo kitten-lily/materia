@@ -536,6 +536,36 @@ shell; see the `env = false` gotcha.
   directory" on the temp pack path unless the `.container.gotmpl` adds
   `Tmpfs=/tmp` (quadlet's tmpfs-mount directive — ephemeral, not part of any
   materia-managed path, so it doesn't trip the data-dir-drift gotcha above).
+- **A restic run killed by a unit timeout leaves its repository lock behind,
+  and restic never skips a stale lock on its own, so every later run fails
+  (BUG-012).** `restic-backup` ran with `TimeoutStartSec=900`. On bow
+  (2026-10-13) a backup ran past it and left a *shared* lock. Later
+  backups could share that lock and kept saving snapshots, but `forget
+  --prune` needs the lock exclusively and failed (exit 11) every night, so
+  retention stopped. On flutterina (2026-10-15) the kill landed 2 s after
+  prune printed `done`, leaving an *exclusive* lock. That blocks every
+  command, including the wrapper's `restic cat config`. The old wrapper
+  read any non-zero exit there as "no repository" and ran `restic init`,
+  which failed with a misleading `config file already exists`. Result: no
+  backup for 9 days, and `systemctl --failed` was the only on-host sign.
+  healthchecks.io received the `/fail` pings, but nobody acted on them.
+  Fixes: the wrapper runs `restic unlock` before every job (without
+  `--remove-all` this removes only locks not refreshed for 30 min, or
+  same-host locks whose PID is gone; live restic refreshes every 5 min).
+  It runs `restic init` only on exit 10 ("repository does not exist").
+  The unit now has `TimeoutStartSec=4h`. The same-host PID rule rarely
+  applies here: every container gets a random hostname, so in practice
+  the 30-minute age is what makes a lock stale. Inspect a repo with the
+  job's own credentials by running the image with `--entrypoint restic`
+  and the same `Secret=`/`Volume=` lines (`list locks --no-lock`,
+  `cat lock <id> --no-lock` show the owner and age).
+- **The restic-backup workflow must not pass `resticVersion`/
+  `opensshVersion` build-args.** It hardcoded `resticVersion=v0.18.0` in
+  both build steps, overriding the Dockerfile `ARG` that Renovate bumps, so
+  the v0.19.1 bump (#18) never reached an image (`restic version` in the
+  deployed image said 0.18.0). The override also hid that restic 0.19
+  needs Go ≥ 1.25.8, which the old `golang:1.23-alpine` builder couldn't
+  provide. The Dockerfile is now the only version source (BUG-012).
 - **The Proton Drive CLI's "musl" build is dynamically linked — it cannot
   go in a `scratch` image, and its flags are not what the docs imply**
   (issue #103 POC, CLI 0.8.0, harness:

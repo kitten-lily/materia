@@ -76,3 +76,10 @@ bugs:
     found: 2026-10-12
     epic: ci
     file: specs/bugs/BUG-011-badger-catalog-gate-transient-404.md
+  - id: BUG-012
+    title: "restic jobs killed at TimeoutStartSec leave stale locks: flutterina no backup since 2026-10-15, bow prune failing"
+    status: fixed
+    severity: P1
+    found: 2026-10-24
+    epic: restic-backup
+    file: specs/bugs/BUG-012-restic-backup-stale-lock-after-timeout-kill.md
