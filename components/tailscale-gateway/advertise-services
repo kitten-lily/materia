@@ -1,0 +1,34 @@
+#!/bin/sh
+# Re-advertise every Tailscale Service named in serve.json after the gateway
+# starts. containerboot (tailscale image v1.104.2) unadvertises all Services
+# on shutdown (EnsureServicesNotAdvertised, a graceful drain) and only
+# re-advertises them on startup by luck: its serve-config watch loop shadows
+# `sc` and never advertises, and the startup path only catches the config if
+# a later netmap notification arrives (#163 phase 4). Without this, a restart
+# can leave svc:* unadvertised and every client of it unable to connect.
+#
+# Usage: advertise-services <serve.json>   (run by ExecStartPost)
+set -u
+cfg="$1"
+svcs=$(grep -o '"svc:[a-z0-9-]*"' "$cfg" | tr -d '"' | sort -u)
+[ -n "$svcs" ] || exit 0
+
+i=0
+while [ "$i" -lt 60 ]; do
+	i=$((i + 1))
+	prefs=$(podman exec tailscale-gateway tailscale debug prefs 2>/dev/null) || { sleep 2; continue; }
+	missing=""
+	for s in $svcs; do
+		printf '%s' "$prefs" | grep -q "\"$s\"" || missing="$missing $s"
+	done
+	if [ -z "$missing" ]; then
+		echo "advertised:" $svcs
+		exit 0
+	fi
+	for s in $missing; do
+		podman exec tailscale-gateway tailscale serve advertise "$s" >/dev/null 2>&1
+	done
+	sleep 2
+done
+echo "failed to advertise:$missing" >&2
+exit 1

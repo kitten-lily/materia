@@ -50,6 +50,12 @@ HealthStartPeriod=60s
 
 [Service]
 Restart=always
+# containerboot unadvertises Services on shutdown and may not re-advertise
+# them on start (see advertise-services). Non-fatal (`-`): a failure is
+# logged in this unit's journal instead of failing it and aborting materia
+# for the whole host. The helper is a data file (no .sh, so materia keeps
+# it in the component's data dir) run through /bin/sh, so its mode is moot.
+ExecStartPost=-/bin/sh {{ m_dataDir "tailscale-gateway" }}/advertise-services {{ m_dataDir "tailscale-gateway" }}/serve/serve.json
 
 [Install]
 WantedBy=multi-user.target default.target
