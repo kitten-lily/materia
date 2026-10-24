@@ -6,6 +6,7 @@
 bow component, BUG-010's blast radius). No existing traffic moves in this
 phase: Pangolin keeps routing through newt until phase 3.
 **epic:** #163
+**status:** deployed and verified 2026-10-24 (commit `206e483`)
 
 ## Summary
 
@@ -94,3 +95,18 @@ The databases (`grimmory-mariadb`, `mediamanager-postgres`) get no forward.
 
 Remove `tailscale-gateway` from bow's `Components` and push. If materia is
 aborting on it, `sudo systemctl stop tailscale-gateway.service` first.
+
+## Results (2026-10-24)
+
+| Check | Result |
+|---|---|
+| materia-update (bow) | `success`, 0 `FATA`; installed the serve dir, file, volume, container, secret; started the unit |
+| Unit / health | `active`, healthy (the first probe while `starting` left a transient failed unit, as on flutterina) |
+| Node | `bow`, `tag:gateway`, IPv4 inside `100.64.0.0/12` |
+| `tailscale serve status` | all 9 forwards listed |
+| flutterina → bow from a throwaway container on `newt-net` (newt's phase-3 path) | `8096/health` 200, `4533/ping` 200, `6060/` 200, `8000/` 307 (MediaManager redirect), `8080/` 200, `80/healthcheck` 200; tcp 7981 and 7982 open |
+| flutterina → bow:22 | refused by the gateway netstack (`punt!`): the grants give `tag:server` no tcp/22, as intended |
+| melog → bow:22 via gateway | `ssh core@<bow-ts-ip>` lands on host sshd as `10.89.0.13 → 10.89.0.1` |
+| Path flutterina ↔ bow | `peer-relay` through flutterina's relay, 26 ms. bow shares melog's home NAT (`MappingVariesByDestIP: true`), so direct is impossible without a port forward; without phase 1b this would be DERP |
+| Path melog ↔ bow | direct over the LAN |
+| Public hostnames | all 9 unchanged |

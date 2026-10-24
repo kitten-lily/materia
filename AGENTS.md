@@ -159,6 +159,11 @@ components/
     MANIFEST.toml                # component manifest — Secrets = ["tailscaleAuthKey"] (vault globals), Services
     tailscale.container.gotmpl   # Network=host, /dev/net/tun, --netfilter-mode=off, health on 127.0.0.1:9002
     tailscale-state.volume       # named volume for node identity (losing it = new node, new tailnet IP)
+  tailscale-gateway/             # userspace Tailscale node on newt-net, bow-only (the newt analogue, #163)
+    MANIFEST.toml                # component manifest — Secrets = ["tailscaleAuthKey"] (vault globals), Services
+    tailscale-gateway.container.gotmpl # tag:gateway, no caps/PublishPort, TS_SERVE_CONFIG from the serve/ dir
+    serve/serve.json             # TCP forwards by container name (one tailnet port per app) + 22 → host sshd
+    tailscale-gateway-state.volume # named volume for node identity (losing it = new node, new tailnet IP)
   music/                        # Navidrome music server + Aonsoku web client (standalone, bow-only)
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
     navidrome.container.gotmpl    # Navidrome server, joins newt-net, read-only /music bind, navidrome.<baseDomain>
@@ -1250,6 +1255,27 @@ shell; see the `env = false` gotcha.
   policy, not in this repo). Firewall rules are invisible to the repo:
   re-provisioning flutterina keeps them, but the relay setting must be
   re-applied. See `specs/plans/issue-163-phase1-tailscale-flutterina.md`.
+- **`tailscale-gateway` forwards to container names through a serve config
+  file, which materia manages.** `TS_SERVE_CONFIG` is loaded as is, and
+  `TCPForward` is dialled with a plain system dial
+  (`ipn/ipnlocal/serve.go`, `b.dialer.SystemDial`). So `"8096":
+  {"TCPForward": "jellyfin:8096"}` resolves through the container's
+  resolver (aardvark-dns on `newt-net`), exactly as newt does. Confirmed by
+  a local POC and live on bow (#163 phase 2). The current CLI would also
+  accept it (`tcp://jellyfin:8096`; a remote target needs the scheme, and
+  only the legacy CLI was localhost-only), but CLI changes live in the
+  state volume, outside git. Three things that look like
+  faults but are not: (1) a port the tailnet grants do not allow is
+  refused inside the gateway's netstack, so a client sees the connection
+  closed at once (busybox `nc` prints `punt!`). flutterina → bow:22 does
+  exactly that, because `tag:server` has no tcp/22 grant; (2) SSH via the
+  gateway arrives at bow's sshd from the gateway container's `newt-net`
+  address (`10.89.0.x → 10.89.0.1`), not from the client's tailnet IP;
+  (3) flutterina ↔ bow is `peer-relay`, never `direct`: bow sits behind a
+  hard home NAT (`MappingVariesByDestIP: true`), and only flutterina's
+  relay (udp/40000) keeps it off DERP. Add a forward by editing
+  `components/tailscale-gateway/serve/serve.json`; materia restarts the
+  gateway (`RestartedBy`), which briefly drops every forwarded connection.
 - **Newt provisioning keys are consumed once.** The `spk_...` key in the
   vault is exchanged for a unique `id` + `secret` on first boot, which
   Newt persists to `newt-config.volume`. On subsequent boots, Newt reads

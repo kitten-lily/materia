@@ -1,6 +1,6 @@
 # Tailscale: replacing newt as the backhaul, Pangolin kept as the public edge
 
-Status: phases 0–1 done (phase 1 deployed 2026-10-24); phases 2–7 not
+Status: phases 0–2 done (phase 2 deployed 2026-10-24); phases 3–7 not
 started. Tracked in #163.
 
 ## Goal
@@ -258,12 +258,14 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
      next allocation completed. Don't judge the path in that window.
      flutterina's own leg uses a local podman-bridge address
      (`10.89.0.1:40000`), which is fine for self-relay on one host.
-2. **bow `tailscale-gateway`.**
+2. **bow `tailscale-gateway`.** Implementation plan and results:
+   `specs/plans/issue-163-phase2-tailscale-gateway-bow.md`.
    - Verify from flutterina:
      `curl http://<bow-ts-ip>:8096/health`, `ssh -p 22 <bow-ts-ip>`.
    - `tailscale ping` from flutterina shows `direct` or `peer-relay`, never
-     DERP. The phase-3 Jellyfin throughput comparison must name which of
-     the two paths it measured.
+     DERP. Result: `peer-relay` (bow is behind a hard home NAT). The
+     phase-3 Jellyfin throughput comparison therefore measures newt vs
+     **peer-relay**, not newt vs direct.
 3. **Retarget resources one at a time** in Pangolin (T2: site =
    flutterina, target = `<bow-ts-ip>:<port>`).
    - Order: Media Manager → Grimmory → Audiobookshelf → Navidrome +
