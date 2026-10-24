@@ -17,7 +17,7 @@ Components = ["restic-backup", "beszel-agent"]
 [Roles.tunneled]
 Components = ["newt"]
 
-# Host-level Tailscale node, kernel mode (#163). krytis-runner joins in phase 4.
+# Host-level Tailscale node, kernel mode (#163).
 [Roles.tailnet]
 Components = ["tailscale"]
 
@@ -27,6 +27,12 @@ Roles = ["base", "tunneled"]
 
 [Hosts.krytis-runner]
 Components = ["beszel-agent"]
+Roles = ["tailnet"]
+
+# Host-side MagicDNS so krytis CI resolves svc:bst-cache's
+# bst-cache.<tailnet>.ts.net (#163 phase 4). Debian, systemd-resolved stub.
+[Hosts.krytis-runner.Extensions.tailscale.Defaults]
+tailscaleMagicDns = true
 
 # bow's LVM data volume — reported as an extra disk by beszel-agent.
 [Hosts.bow.Extensions.beszel-agent.Defaults]

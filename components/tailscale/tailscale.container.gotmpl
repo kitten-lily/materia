@@ -35,6 +35,21 @@ AddCapability=NET_ADMIN NET_RAW
 Environment="TS_EXTRA_ARGS=--advertise-tags={{ m_default "tailscaleTags" "tag:server" }} --netfilter-mode=off"
 Environment=TS_AUTH_ONCE=true
 Environment=TS_HOSTNAME={{ m_facts "hostname" }}
+{{- if exists "tailscaleMagicDns" }}
+
+# Opt-in per host (tailscaleMagicDns in MANIFEST.toml): MagicDNS on the
+# HOST, via systemd-resolved over D-Bus, so the host resolves *.ts.net
+# names (e.g. Tailscale Services). Both binds are needed: with only the
+# D-Bus socket, tailscaled sees podman's rewritten resolv.conf (no resolved
+# stub marker), picks "direct" mode and edits only the container's file.
+# The host's stub file makes it choose "systemd-resolved" mode; in the host
+# netns 127.0.0.53 is still the host's resolver. A missing bind source
+# fails the unit, so hosts without systemd-resolved must not opt in.
+# TS_ACCEPT_DNS is re-applied by `tailscale set` on every start.
+Environment=TS_ACCEPT_DNS=true
+Volume=/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+Volume=/run/systemd/resolve/stub-resolv.conf:/etc/resolv.conf:ro
+{{- end }}
 
 # OAuth client secret with ?ephemeral=false&preauthorized=true stored in the
 # value itself; without that suffix the node registers as ephemeral and is
