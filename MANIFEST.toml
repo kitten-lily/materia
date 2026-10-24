@@ -6,6 +6,11 @@ Roles = ["base", "tunneled", "tailnet"]
 [Hosts.flutterina.Extensions.beszel-agent.Defaults]
 beszelHideBtrfsPools = true
 
+# Peer relay (#163 phase 1b): tag:relay is the dst of the policy's
+# tailscale.com/cap/relay grant. Applied at first login only (TS_AUTH_ONCE).
+[Hosts.flutterina.Extensions.tailscale.Defaults]
+tailscaleTags = "tag:server,tag:relay"
+
 [Roles.base]
 Components = ["restic-backup", "beszel-agent"]
 

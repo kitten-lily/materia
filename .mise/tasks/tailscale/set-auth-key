@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #MISE description="Check a Tailscale OAuth client secret can issue every node tag, then write it to globals.tailscaleAuthKey"
 
-#USAGE flag "--tags <tags>" help="Comma-separated tags every node registers with; the client must issue keys for each one alone" default="tag:server,tag:gateway"
+#USAGE flag "--tags <tags>" help="Comma-separated tags every node registers with; the client must issue keys for each one alone" default="tag:server,tag:gateway,tag:relay"
 
 set -euo pipefail
 
 _vault="attributes/vault.yml"
-IFS=',' read -r -a _tags <<<"${usage_tags:-tag:server,tag:gateway}"
+IFS=',' read -r -a _tags <<<"${usage_tags:-tag:server,tag:gateway,tag:relay}"
 
 # The secret comes from a hidden prompt (or stdin when not a terminal), and
 # reaches curl and sops on stdin only, so it never appears in argv / `ps`.

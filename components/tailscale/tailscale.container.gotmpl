@@ -25,12 +25,14 @@ AddCapability=NET_ADMIN NET_RAW
 # TS_AUTH_ONCE: these flags apply at first login only (later starts run
 # `tailscale set`, which ignores TS_EXTRA_ARGS). Change them on a live node
 # with `podman exec tailscale tailscale set ...`.
-# flutterina is also a peer relay (#163 phase 1b): `--relay-server-port`
-# exists only on `tailscale set`, so it was applied once by hand,
+# flutterina is also a peer relay (#163 phase 1b). Its tags come from
+# tailscaleTags in MANIFEST.toml (tag:relay is the relay grant's dst, so the
+# policy names no IP). `--relay-server-port` exists only on `tailscale set`,
+# so it was applied once by hand,
 #   sudo podman exec tailscale tailscale set --relay-server-port=40000
 # and lives in tailscale-state.volume. A re-provision (new volume) needs it
 # again, plus the udp/40000 rule on the Hetzner firewall.
-Environment="TS_EXTRA_ARGS=--advertise-tags=tag:server --netfilter-mode=off"
+Environment="TS_EXTRA_ARGS=--advertise-tags={{ m_default "tailscaleTags" "tag:server" }} --netfilter-mode=off"
 Environment=TS_AUTH_ONCE=true
 Environment=TS_HOSTNAME={{ m_facts "hostname" }}
 

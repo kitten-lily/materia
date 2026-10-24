@@ -221,15 +221,21 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
      nodes that may be *reached through* the relay; `dst` is the relay. The
      docs warn against `src: ["*"]`, so list the stable server tags only:
      ```hujson
-     "hosts": {"flutterina": "<flutterina-ts-ip>"},
+     "tagOwners": {
+       "tag:relay": ["autogroup:admin", "tag:tailnet-provisioner"],
+     },
      "grants": [
-       {"src": ["tag:server", "tag:gateway"], "dst": ["flutterina"],
+       {"src": ["tag:server", "tag:gateway"], "dst": ["tag:relay"],
         "app": {"tailscale.com/cap/relay": []}},
      ],
      ```
-     A `hosts` alias is used rather than `tag:server` as `dst`, so
-     krytis-runner (also `tag:server`, phase 4) is not picked as a relay
-     candidate. Because flutterina is itself `tag:server`, this also covers
+     `dst` is a dedicated `tag:relay`, not an IP alias and not `tag:server`:
+     the policy holds no address, and krytis-runner (also `tag:server`,
+     phase 4) is not picked as a relay candidate. flutterina registers with
+     `tag:server,tag:relay` from the per-host `tailscaleTags` default in
+     `MANIFEST.toml` (first login only, `TS_AUTH_ONCE`); the live node got
+     `tag:relay` via admin console → Edit tags, which keeps its IP and needs
+     no re-auth. Because flutterina is itself `tag:server`, this also covers
      the docs' "self as peer relay" case: peers that cannot reach flutterina's
      `tailscaled` port directly reach it through its own relay port. That
      removes the need to pin `--port=41641` and open a second UDP port.
