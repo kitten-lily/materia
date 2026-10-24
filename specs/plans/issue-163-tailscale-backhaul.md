@@ -1,7 +1,7 @@
 # Tailscale: replacing newt as the backhaul, Pangolin kept as the public edge
 
-Status: phases 0–2 done (phase 2 deployed 2026-10-24); phases 3–7 not
-started. Tracked in #163.
+Status: phases 0–3 done (all bow HTTP resources on the tailnet, 2026-10-24);
+phases 4–7 not started. Tracked in #163.
 
 ## Goal
 
@@ -286,6 +286,44 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
      serves, not that the DB is up). MediaManager logs the probe from
      `tailscale-gateway` (`10.89.0.13`) every ~5 s with 200; the public
      hostname still answers its SSO `401`.
+   - **Grimmory: moved 2026-10-24.** Service on flutterina's site;
+     Grimmory logs no requests, so verified from flutterina instead:
+     `nsenter -t <newt-pid> -n ss -tn dst <bow-ts-ip>:6060` shows newt's
+     established connections; `books.<baseDomain>` 200.
+   - **Audiobookshelf: moved 2026-10-24.** The first save changed the
+     target but left the site on `bow` (Traefik URL still on bow's `.8`
+     endpoint, new newt port): check the **Site** field, not just the host.
+     Corrected save moved it to flutterina's site; traffic burst showed
+     newt → `<bow-ts-ip>:80` established; `abs.<baseDomain>` 200
+     throughout, including the half-edited state.
+   - **Navidrome + Aonsoku: moved 2026-10-24.** Both on flutterina's site;
+     a traffic burst showed newt → `<bow-ts-ip>:4533` and `:8080`
+     established; `navidrome.<baseDomain>` 302, `/ping` 200,
+     `music.<baseDomain>` 200, same as before.
+   - **Jellyfin: moved 2026-10-24.** The first save again left the site on
+     `bow` with host `<bow-ts-ip>`, and that state is an **outage**
+     (`503` on every request): bow's newt cannot route to tailnet IPs,
+     because only the gateway container is on the tailnet. Audiobookshelf
+     survived the same half-edit only because its host had not changed
+     yet. Corrected to flutterina's site: `/health` 200, `/` 302.
+   - **Throughput** (melog → `jellyfin.<baseDomain>` → bow, 500 MB range
+     of a 25 Mbps / 22 GB file, `Authorization: MediaBrowser
+     Token="<key>"`; Jellyfin 12 rejects the legacy `X-Emby-Token` header
+     with 401):
+
+     | Path | Runs (MB/s) |
+     |---|---|
+     | newt (before) | 19.4 cold, 41.9, 36.1 |
+     | T2: flutterina newt → tailnet → peer relay → gateway | 26.2, 24.9, 16.0, 12.6 |
+     | Tailnet leg only (flutterina host → `<bow-ts-ip>:8096`) | 23.6 cold, 63.8 |
+
+     The tailnet leg itself beats newt. T2's full path is slower because
+     of the extra same-host hop (Traefik → Gerbil → flutterina's newt,
+     userspace WireGuard, ~31% CPU → host → `tailscale0`), plus variance
+     on the home line. flutterina was 58% idle, so it is not CPU-bound.
+     The worst run (12.6 MB/s ≈ 100 Mbit/s) is still ~4× one 25 Mbps
+     stream. Kept T2 for its health checks; T1 (local site, no newt hop,
+     no health checks) stays the fallback if real streams stutter.
 4. **Buildbarn off Pangolin entirely.**
    - krytis-runner joins via `Roles = ["tailnet"]` (adopted, non-Flatcar:
      confirm `/dev/net/tun` and its local firewall). The workstation

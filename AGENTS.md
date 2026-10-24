@@ -1279,6 +1279,18 @@ shell; see the `env = false` gotcha.
   relay (udp/40000) keeps it off DERP. Add a forward by editing
   `components/tailscale-gateway/serve/serve.json`; materia restarts the
   gateway (`RestartedBy`), which briefly drops every forwarded connection.
+- **Retargeting a Pangolin resource to the tailnet means changing the
+  target's Site *and* host. Changing only the host takes the resource
+  down.** With T2 (#163 phase 3) every bow app's target is site
+  `flutterina`, host `<bow-ts-ip>:<port>`. Twice the dashboard save
+  changed the host but left Site on `bow`. That makes bow's newt dial a
+  tailnet IP it cannot route (bow's host is not on the tailnet, only the
+  `tailscale-gateway` container is), and Jellyfin answered `503` until the
+  site was fixed. Check after every retarget: in the `app` container,
+  `curl -s http://localhost:3001/api/v1/traefik-config` must show the
+  service URL on flutterina's site endpoint (the same `100.89.128.x` as
+  Beszel), not bow's. The public hostname alone is not proof: while only
+  the port or health check changed, the old route still answered 200.
 - **Newt provisioning keys are consumed once.** The `spk_...` key in the
   vault is exchanged for a unique `id` + `secret` on first boot, which
   Newt persists to `newt-config.volume`. On subsequent boots, Newt reads
