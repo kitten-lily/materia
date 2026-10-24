@@ -1202,13 +1202,18 @@ shell; see the `env = false` gotcha.
   backends. With no host firewall, netfilter-off costs only Tailscale's
   100.64.0.0/10 anti-spoof drop. Separately, the Hetzner firewall
   `Pangolin` is applied to flutterina (`hcloud firewall describe`):
-  inbound tcp/443, udp/51820+21820, tcp/7981-7982, icmp, and tcp/22 from
-  an allowlist only. It is the reason "flutterina has no host firewall"
-  does not mean "every port is open". It blocks Tailscale's UDP, and
-  `tailscaled` in the container picks a random port anyway, so a peer
-  behind a hard NAT reaches flutterina over DERP only. SSH to flutterina's
-  tailnet IP bypasses the tcp/22 allowlist: inside the tunnel, the
-  tailnet grants decide. See
+  inbound tcp/443, udp/51820+21820, tcp/7981-7982, udp/40000 (Tailscale
+  peer relay, #163 phase 1b), icmp, and tcp/22 from an allowlist only. It
+  is the reason "flutterina has no host firewall" does not mean "every port
+  is open". It blocks `tailscaled`'s own UDP port, which is random in the
+  container anyway, so a peer behind a hard NAT cannot reach flutterina
+  directly. Instead flutterina is a peer relay on udp/40000 (set once with
+  `tailscale set --relay-server-port=40000`, stored in the state volume;
+  the `tailscale.com/cap/relay` grant lives in the tailnet policy, not in
+  this repo). Any rule added there is invisible to the repo:
+  re-provisioning flutterina keeps the firewall, but the relay setting
+  must be re-applied. SSH to flutterina's tailnet IP bypasses the tcp/22
+  allowlist: inside the tunnel, the tailnet grants decide. See
   `specs/plans/issue-163-phase1-tailscale-flutterina.md`.
 - **Newt provisioning keys are consumed once.** The `spk_...` key in the
   vault is exchanged for a unique `id` + `secret` on first boot, which
