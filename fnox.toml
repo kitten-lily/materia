@@ -1,5 +1,4 @@
-# fnox secret injection config — non-secret, committed to git.
-# fnox resolves secrets from Proton Pass at task runtime.
+# fnox secret config — non-secret, committed to git.
 # Docs: https://fnox.jdx.dev/providers/proton-pass.html
 #
 # Prereqs:
@@ -14,6 +13,17 @@
 #      the slug-mode base ping URL (https://hc-ping.com/<ping-key> — project
 #      ping key, NO trailing slash, no slug). Per-server slugs are derived
 #      from the server name at transpile time (materia-update-<server>).
+
+# Never inject these into a shell. Every caller reads a secret explicitly with
+# `fnox get NAME`, which ignores this setting. The only consumer of the default
+# `env = true` is the `fnox activate fish` prompt hook, which resolved all five
+# secrets as concurrent pass-cli calls on every prompt inside the checkout:
+# that corrupts a logged-out pass-cli state (concurrent first-time init writes
+# a db the stored local key can't open: "hmac check failed"), and it exported
+# the age private key and Hetzner token into every interactive shell. It also
+# drops them from `fnox exec`, which is why no task uses it any more.
+# Same fix as krytis (starlit-os/krytis#987, docs/skills/mise.md there).
+env = false
 
 [providers.protonpass]
 type = "proton-pass"

@@ -4,7 +4,7 @@
 [tools]
 age                 = "latest"  # age key generation + encryption (SOPS backend)
 sops                = "latest"  # SOPS — encryption for attributes vaults (age backend)
-fnox                = "latest"  # secret injection for hz:* tasks (reads fnox.toml)
+fnox                = "latest"  # `fnox get` secret retrieval for tasks (reads fnox.toml)
 gum                 = "latest"  # TUI prompts for setup tasks
 jq                  = "latest"  # JSON query tool
 yq                  = "latest"  # YAML/TOML query tool (reads provisioning/servers/*/server.toml)

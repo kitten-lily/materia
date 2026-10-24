@@ -23,6 +23,11 @@ fi
 
 _ign_file="${usage_ign_file:-provisioning/servers/${_server_name}/materia.ign}"
 
+# fnox.toml sets env = false, so fetch the token explicitly. Exported so the
+# nested `mise hz:*` calls below reuse it instead of calling pass-cli again.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
 IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 
 if [[ -n "$_id" ]]; then
@@ -38,7 +43,7 @@ if [[ -n "$_id" ]]; then
 
   gum spin --spinner dot \
     --title "rebuilding server: $_server_name (snapshot $_snap_id)" \
-    -- fnox exec -- hcloud server rebuild \
+    -- hcloud server rebuild \
       --image "$_snap_id" \
       --user-data-from-file "$_ign_file" $_id || true
 

@@ -15,8 +15,13 @@ set -euo pipefail
 # All diagnostic output goes to stderr — stdout carries only the resulting snapshot id
 # (callers do `_snap_id=$(mise hz:ensure-image)`).
 
+# fnox.toml sets env = false, so fetch the token explicitly. Exported so the
+# nested `mise hz:upload-image` reuses it instead of calling pass-cli again.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
 _query() {
-    fnox exec -- hcloud image list \
+    hcloud image list \
         --type snapshot \
         --selector os=flatcar,flatcar-channel=stable \
         --architecture "${usage_arch?}" \
@@ -54,7 +59,7 @@ if [[ -z "$_id" || "$_stale" -eq 1 ]]; then
   if [[ -n "$_old_id" && "$_old_id" != "$_id" ]]; then
     gum style --foreground 8 "==> deleting stale snapshot id=$_old_id" >&2
 
-    fnox exec -- hcloud image delete "$_old_id" >/dev/null 2>&1 || true
+    hcloud image delete "$_old_id" >/dev/null 2>&1 || true
   fi
 fi
 

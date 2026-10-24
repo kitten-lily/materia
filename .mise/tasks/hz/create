@@ -30,6 +30,11 @@ _ign_file="${usage_ign_file:-provisioning/servers/${_server_name}/materia.ign}"
 
 _verbose="${usage_verbose:-}"
 
+# fnox.toml sets env = false, so fetch the token explicitly. Exported so the
+# nested `mise hz:*` calls below reuse it instead of calling pass-cli again.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
 # Ensures a snapshot exists and isn't too old.
 _snap_id=$(mise hz:ensure-image)
 [[ -n "$_verbose" ]] && gum style --foreground 8 "==> using Flatcar snapshot id=$_snap_id"
@@ -47,7 +52,7 @@ trap 'rm -rf "$_tmpdir"' EXIT
 
 gum spin --spinner dot \
   --title "creating server: $_server_name ($_server_type @ $_server_location, snapshot $_snap_id)" \
-  -- fnox exec -- hcloud server create --output json \
+  -- hcloud server create --output json \
     --name "$_server_name" \
     --type "$_server_type" \
     --image "$_snap_id" \

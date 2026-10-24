@@ -266,7 +266,9 @@ SOPS encrypts all values in the vault by default (keys/structure visible,
 values ciphertext). The age private key is baked into Ignition at
 provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
 (`age`, `sops`) managed via `mise.toml`. Edit vaults with
-`sops edit attributes/vault.yml`.
+`env SOPS_AGE_KEY="$(fnox get SOPS_AGE_KEY)" sops edit attributes/vault.yml`
+(same line works in bash and fish) — `fnox.toml` never puts the key in your
+shell; see the `env = false` gotcha.
 
 ## Gotchas / hard-won constraints
 
@@ -414,6 +416,28 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   risk) piped into `sops --set '["path"]["to"]["key"] <json>' vault.yml`
   — decrypts, sets, and re-encrypts in place, no human ever retypes the
   value.
+- **`fnox.toml` sets `env = false`: no secret reaches a shell, so every
+  caller reads one with `fnox get NAME`.** The workstation's fish config
+  runs `fnox activate fish`, whose hook (`--on-event fish_prompt` plus
+  `--on-variable PWD`) resolves every env-enabled secret on every prompt
+  inside the checkout, as concurrent `pass-cli` calls — five here. Against
+  a live session that is waste plus the age private key and Hetzner token
+  sitting in every interactive shell. Against a logged-out or cleared
+  pass-cli state it is corruption: concurrent first-time initialisation
+  writes a `pass-cli.db` the stored local key cannot open
+  (`hmac check failed` … `file is not a database`), and the next prompt
+  re-breaks it before `pass-cli login` can run. Measured and fixed in
+  krytis first (starlit-os/krytis#987, its `docs/skills/mise.md`
+  § Switching the backend under a live session). `env = false` stops the
+  hook resolving anything; `fnox get` ignores the mode. It also empties
+  `fnox exec` (`fnox exec --help`: "`env = false` secrets are not [set],
+  and are removed if the parent environment has them"), so no task uses
+  it: tasks do `VAR="${VAR:-$(fnox get VAR)}"; export VAR`, exported so
+  nested `mise hz:*` calls reuse it — one sequential `pass-cli` call per
+  secret, never a concurrent batch. To recover a logged-out pass-cli, log
+  in from `bash` (`export PROTON_PASS_LINUX_KEYRING=dbus; pass-cli login`):
+  bash carries no fnox hook, and a fish prompt in a worktree on an older
+  branch still reads that branch's `env = true` `fnox.toml`.
 - **OpenSSH private keys need a trailing newline after the END marker.**
   `ssh`'s `ssh_config` `IdentityFile` loader fails with `error in libcrypto`
   on an ed25519 key whose final line (`-----END OPENSSH PRIVATE KEY-----`)
@@ -462,7 +486,7 @@ provision time and lives at `/etc/materia/key.txt` on the target host. Toolchain
   not just beszel-hub. Fix: any value used by more than one component
   belongs in top-level `globals` (`sops --set '["globals"]["key"] "value"'`
   + `sops unset attributes/vault.yml '["components"]["old-owner"]["key"]'`
-  via `fnox exec --`), not duplicated per-component.
+  with `SOPS_AGE_KEY` from `fnox get`), not duplicated per-component.
 - **Containers reach each other over localhost.** In a pod, all containers
   share one network namespace. Traefik/Gerbil configs reference `localhost:3001`,
   not `app:3001`. The `server.internal_hostname` in `config.yml` is `localhost`.
@@ -1414,9 +1438,10 @@ see `provisioning/BARE-METAL.md`.
 
 ### Hetzner tasks
 
-All `hz:*` tasks use the `hcloud` CLI (not raw HTTP), resolve `HCLOUD_TOKEN`
-via `fnox exec`, and require `--server-name` explicitly — there is no global
-server-name env var or default.
+All `hz:*` tasks use the `hcloud` CLI (not raw HTTP), fetch `HCLOUD_TOKEN`
+with `fnox get` (exported, so nested `mise hz:*` calls reuse it), and
+require `--server-name` explicitly — there is no global server-name env
+var or default.
 
 | Task | Description |
 |---|---|
@@ -1537,7 +1562,7 @@ root-anchored (`/bench/`) — an unanchored `bench/` also swallows
 
 `hz:storagebox:*` provisions the Hetzner Storage Box that the
 `restic-backup` component (#2) backs up to. Same conventions as `hz:*`:
-`hcloud` via `fnox exec`, explicit name flags, config committed as
+`hcloud` with a `fnox get` token, explicit name flags, config committed as
 `provisioning/storageboxes/<name>/storagebox.toml`.
 
 | Task | Description |

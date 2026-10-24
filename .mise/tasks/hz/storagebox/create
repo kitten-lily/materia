@@ -31,9 +31,13 @@ _password="${_pw_b64}#9Xa!"
 _tmpdir=$(mktemp -d)
 trap 'rm -rf "$_tmpdir"' EXIT
 
+# fnox.toml sets env = false, so fetch the token explicitly.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
 gum spin --spinner dot \
   --title "creating storage box: $_box_name ($_type @ $_location)" \
-  -- fnox exec -- hcloud storage-box create --output json \
+  -- hcloud storage-box create --output json \
     --name "$_box_name" \
     --type "$_type" \
     --location "$_location" \
@@ -49,13 +53,13 @@ if [[ -z "$_resp" ]] || echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
   exit 1
 fi
 
-fnox exec -- hcloud storage-box enable-snapshot-plan "$_box_name" \
+hcloud storage-box enable-snapshot-plan "$_box_name" \
   --hour "$_snap_hour" --minute "$_snap_minute" --max-snapshots "$_snap_max"
 
 # username/server are populated asynchronously — poll describe until set.
 _desc=""
 for _ in $(seq 1 24); do
-  _desc=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json)
+  _desc=$(hcloud storage-box describe "$_box_name" --output json)
   [[ "$(echo "$_desc" | jq -r '.username // empty')" != "" ]] && break
   sleep 5
 done

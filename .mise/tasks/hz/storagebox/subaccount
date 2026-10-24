@@ -10,7 +10,11 @@ _box_name="${usage_box_name:?box name required, use --box-name}"
 _server_name="${usage_server_name:?server name required, use --server-name}"
 _home="backups/${_server_name}"
 
-_existing=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json \
+# fnox.toml sets env = false, so fetch the token explicitly.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
+_existing=$(hcloud storage-box subaccount list "$_box_name" --output json \
   | jq -r --arg h "$_home" '.[] | select(.home_directory == $h) | .username' | head -1)
 if [[ -n "$_existing" ]]; then
   gum style --foreground 1 "error: subaccount for home '$_home' already exists: $_existing"
@@ -29,7 +33,7 @@ trap 'rm -rf "$_tmpdir"' EXIT
 
 gum spin --spinner dot \
   --title "creating subaccount for $_server_name on $_box_name" \
-  -- fnox exec -- hcloud storage-box subaccount create "$_box_name" --output json \
+  -- hcloud storage-box subaccount create "$_box_name" --output json \
     --name "$_server_name" \
     --home-directory "$_home" \
     --password "$_password" \
@@ -44,7 +48,7 @@ if [[ -z "$_resp" ]] || echo "$_resp" | jq -e '.error' >/dev/null 2>&1; then
   exit 1
 fi
 
-_sub=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json \
+_sub=$(hcloud storage-box subaccount list "$_box_name" --output json \
   | jq --arg h "$_home" '[.[] | select(.home_directory == $h)] | first')
 echo "$_sub" | jq '{username, home_directory, server}'
 

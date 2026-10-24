@@ -13,7 +13,11 @@ if [[ ! -d "provisioning/storageboxes/${_box_name}" ]]; then
   exit 1
 fi
 
-_server=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json 2>/dev/null | jq -r '.server // empty' || true)
+# fnox.toml sets env = false, so fetch the token explicitly.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
+_server=$(hcloud storage-box describe "$_box_name" --output json 2>/dev/null | jq -r '.server // empty' || true)
 if [[ -z "$_server" ]]; then
   gum style --foreground 1 "error: no storage box named '$_box_name' (or it has no server hostname yet)"
   exit 1
@@ -23,7 +27,7 @@ fi
 # derived from the subaccount username — distinct from the primary box hostname.
 # Pin both the primary host and every subaccount host, or install-key / restic's
 # sftp backend will fail StrictHostKeyChecking against the subaccount host.
-mapfile -t _sub_servers < <(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json 2>/dev/null \
+mapfile -t _sub_servers < <(hcloud storage-box subaccount list "$_box_name" --output json 2>/dev/null \
   | jq -r '.[].server // empty' | sort -u)
 
 # Port 22 is SFTP-only; port 23 is the full SSH service that install-ssh-key

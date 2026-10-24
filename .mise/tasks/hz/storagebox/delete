@@ -9,7 +9,11 @@ set -euo pipefail
 
 _box_name="${usage_box_name:?box name required, use --box-name}"
 
-_resp=$(fnox exec -- hcloud storage-box describe "$_box_name" --output json 2>/dev/null || true)
+# fnox.toml sets env = false, so fetch the token explicitly.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
+_resp=$(hcloud storage-box describe "$_box_name" --output json 2>/dev/null || true)
 _id=$(echo "$_resp" | jq -r '.id // empty' 2>/dev/null || true)
 
 if [[ -z "$_id" ]]; then
@@ -27,10 +31,10 @@ if [[ "$(echo "$_resp" | jq -r '.protection.delete // false')" == "true" ]]; the
     gum style --foreground 1 "error: $_box_name is delete-protected — pass --disable-protection as well"
     exit 1
   fi
-  fnox exec -- hcloud storage-box disable-protection "$_id" delete
+  hcloud storage-box disable-protection "$_id" delete
 fi
 
 gum spin --spinner dot --title "deleting $_box_name..." -- \
-  fnox exec -- hcloud storage-box delete "$_id"
+  hcloud storage-box delete "$_id"
 
 gum style --foreground 2 "==> deleted: $_box_name (id=$_id)"

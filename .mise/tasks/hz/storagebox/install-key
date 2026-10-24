@@ -22,7 +22,13 @@ if [[ ! -f "$_vault" ]]; then
   exit 1
 fi
 
-_sub=$(fnox exec -- hcloud storage-box subaccount list "$_box_name" --output json \
+# fnox.toml sets env = false, so fetch both secrets explicitly (one pass-cli
+# call at a time): the token for hcloud, the age key for the sops --set below.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+SOPS_AGE_KEY="${SOPS_AGE_KEY:-$(fnox get SOPS_AGE_KEY)}"
+export HCLOUD_TOKEN SOPS_AGE_KEY
+
+_sub=$(hcloud storage-box subaccount list "$_box_name" --output json \
   | jq --arg h "$_home" '[.[] | select(.home_directory == $h)] | first // empty')
 _sub_user=$(echo "$_sub" | jq -r '.username // empty')
 _server=$(echo "$_sub" | jq -r '.server // empty')

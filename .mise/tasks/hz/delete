@@ -7,6 +7,11 @@ set -euo pipefail
 
 _server_name="${usage_server_name:?server name required, use --server-name}"
 
+# fnox.toml sets env = false, so fetch the token explicitly. Exported so the
+# nested `mise hz:_server-id` reuses it instead of calling pass-cli again.
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
 IFS=$'\t' read -r _id _ip < <(mise hz:_server-id --server-name "$_server_name" 2>/dev/null)
 
 if [[ -z "$_id" ]]; then
@@ -23,6 +28,6 @@ fi
 gum style --foreground 8 "==> deleting server: $_server_name (id=$_id, ip=$_ip)"
 
 gum spin --spinner dot --title "deleting $_server_name..." -- \
-  fnox exec -- hcloud server delete $_id || true
+  hcloud server delete $_id || true
 
 gum style --foreground 2 "==> deleted: $_server_name (id=$_id)"

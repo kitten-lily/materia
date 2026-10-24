@@ -14,10 +14,14 @@ CHANNEL="${usage_channel?}"
 VERSION="${usage_version?}"
 ARCH="${usage_arch?}"
 
+# fnox.toml sets env = false, so fetch the token explicitly (a caller's
+# exported HCLOUD_TOKEN wins, e.g. from hz:ensure-image).
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
 
 gum style --foreground 8 "==> uploading Flatcar $CHANNEL/$VERSION to Hetzner (this takes a few minutes)..."
 
-fnox exec -- hcloud-upload-image upload \
+hcloud-upload-image upload \
   --architecture="${ARCH}" \
   --compression=bz2 \
   --image-url="https://${CHANNEL}.release.flatcar-linux.net/amd64-usr/${VERSION}/flatcar_production_hetzner_image.bin.bz2" \
