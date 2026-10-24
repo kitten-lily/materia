@@ -105,10 +105,10 @@ Assigned via a new `[Roles.tailnet]`.
   `TS_LOCAL_ADDR_PORT=127.0.0.1:9002`. Never the default `[::]:9002`: with
   `Network=host` and no host firewall on flutterina, that would be a public
   port. Check with `HealthCmd=wget -qO- http://127.0.0.1:9002/healthz`.
-- Firewall backend: match podman/netavark's driver on each host
-  (`TS_DEBUG_FIREWALL_MODE=nftables|iptables`). Mixing iptables-legacy and
-  nft rules is a known source of silent breakage. Check
-  `podman info` → network backend / firewall driver first.
+- Firewall: `--netfilter-mode=off`. Neither Tailscale mode can match
+  netavark's iptables-over-nft driver from this image (its `iptables` is
+  legacy; nftables mode writes into iptables-nft's own tables). See
+  `specs/plans/issue-163-phase1-tailscale-flutterina.md`, decision 2.
 
 ### `tailscale-gateway` — bow, the newt analogue
 
@@ -153,7 +153,10 @@ Unverified until the POC:
    - nothing from tagged nodes to personal devices
 3. OAuth client secret (`?ephemeral=false&preauthorized=true`) as
    `tailscaleAuthKey`. This avoids the ≤90-day expiry of plain auth keys on
-   re-provision. Tagged nodes get node-key expiry disabled.
+   re-provision. Tagged nodes get node-key expiry disabled. The client must
+   carry one owner tag (`tag:tailnet-provisioner`) that owns both
+   `tag:server` and `tag:gateway`: a client created with both tags directly
+   only issues keys for the exact pair (found in phase 1).
 4. Optional: tailnet login through the existing Zitadel (Tailscale custom
    OIDC needs WebFinger on the domain).
 
@@ -172,7 +175,7 @@ needs an API token, and the OAuth client below has `auth_keys` scope only.
 | Existing node IPs | All six outside Pangolin's ranges; none needs renumbering |
 | Grants | Allow-all `* → *` removed. melog's packet filter now accepts only the four user devices; glimmer (`tag:server`) dropped out |
 | Pool | `100.64.0.0/12`, confirmed in the saved policy file |
-| OAuth client | Token request returns `scope: auth_keys`. The response omits tags, so `tag:server`/`tag:gateway` are first proven when flutterina registers in phase 1 |
+| OAuth client | Token request returns `scope: auth_keys`. **Wrong shape, found in phase 1:** the client was created with `tag:server` + `tag:gateway` and only issues keys for that exact pair, so neither node can register. Replace it with a `tag:tailnet-provisioner` client (phase 1 plan, precondition) |
 | Vault | `globals.tailscaleAuthKey`, value = client secret + `?ephemeral=false&preauthorized=true` (commit `chore(vault): add tailscaleAuthKey global`). The suffix is stored in the value because `secretEnv` cannot append it; without it OAuth secrets register **ephemeral** nodes, which are deleted when offline and return with a new IP, breaking every T2 target |
 | Stale node | An offline `bow` (`tag:komodo-core` + `tag:server`) from an earlier setup — removed, so the gateway can register as `bow`. The unused `tag:komodo-core` owner is dropped from the policy |
 | glimmer | Moved from `tag:server` to `tag:router` (admin console → Edit tags; a tagged device cannot drop its last tag there), so the phase-2 `tag:server → tag:gateway` grant does not reach it |
@@ -186,7 +189,8 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
 
 0. **Tailnet + vault.** Pool, tags, grants, credential.
    `globals.tailscaleAuthKey` must be in the vault before any assignment.
-1. **flutterina `tailscale`** (Hetzner console as fallback).
+1. **flutterina `tailscale`** (Hetzner console as fallback). Implementation
+   plan: `specs/plans/issue-163-phase1-tailscale-flutterina.md`.
    - Verify: no `FATA` in `journalctl -u materia-update.service`.
    - Every public hostname still answers (the CGNAT drop rule is in the host
      netns, Gerbil's tunnels in the pod netns [INFERENCE: no conflict]).
@@ -197,7 +201,9 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
    - Verify from flutterina:
      `curl http://<bow-ts-ip>:8096/health`, `ssh -p 22 <bow-ts-ip>`.
    - `tailscale ping` from flutterina shows a direct path, not DERP.
-     flutterina has no host firewall, so 41641/udp is open.
+     flutterina's Hetzner Cloud firewall (`Pangolin`) does **not** allow
+     41641/udp; NAT traversal should still punch through its stateful,
+     non-NAT filter. Add a udp/41641 rule only if the path shows DERP.
 3. **Retarget resources one at a time** in Pangolin (T2: site =
    flutterina, target = `<bow-ts-ip>:<port>`).
    - Order: Media Manager → Grimmory → Audiobookshelf → Navidrome +
@@ -243,7 +249,7 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
   config typo) blocks every bow component. Land each phase alone and check
   for `FATA` after each one.
 - **Firewall-backend mismatch on flutterina** between Tailscale and netavark.
-  See the component notes.
+  Avoided with `--netfilter-mode=off` (phase 1 plan, decision 2).
 - **Tailscale control-plane dependency.** Established tunnels survive a
   control-plane outage, but new auth and key rotation do not. Newt stays
   available as a rollback path until phase 6.
