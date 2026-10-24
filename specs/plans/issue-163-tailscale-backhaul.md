@@ -247,6 +247,17 @@ on `tcp:80,4533,6060,8000,8080,8096,7981,7982`. The flutterina → HA
      <ip>:40000:vni:<n>` for flutterina. After phase 2, the same for bow.
    - **Rollback.** `tailscale set --relay-server-port=""`, remove the grant
      and the firewall rule.
+   - **Done 2026-10-24.** Hetzner rule `udp/40000` added; `tailscale set
+     --relay-server-port=40000` survives a `tailscale.service` restart;
+     flutterina carries `tag:relay` + `tag:server`. melog → flutterina:
+     `tailscale ping` → `via peer-relay(<flutterina-public-ip>:40000:vni:2)
+     in 26ms` (DERP was 55 ms); ICMP average 26.8 ms; `peer-relay-sessions`
+     shows both legs handshaked. The first ~30 s after the grant landed,
+     `tailscale ping` timed out entirely (data traffic still flowed over
+     DERP) and the first allocation (VNI 1) showed `<no handshake>`; the
+     next allocation completed. Don't judge the path in that window.
+     flutterina's own leg uses a local podman-bridge address
+     (`10.89.0.1:40000`), which is fine for self-relay on one host.
 2. **bow `tailscale-gateway`.**
    - Verify from flutterina:
      `curl http://<bow-ts-ip>:8096/health`, `ssh -p 22 <bow-ts-ip>`.
