@@ -4,8 +4,8 @@ Secrets = ["jwtJwks", "serverKeyPem"]
 
 [[Services]]
 Service = "bb-storage.service"
-RestartedBy = ["bb-storage.container", "config/storage.jsonnet", "config/common.libsonnet"]
+RestartedBy = ["bb-storage.container", "config/storage.jsonnet", "config/common.libsonnet", "certs/server.crt"]
 
 [[Services]]
 Service = "bb-asset.service"
-RestartedBy = ["bb-asset.container", "config/asset.jsonnet", "config/common.libsonnet"]
+RestartedBy = ["bb-asset.container", "config/asset.jsonnet", "config/common.libsonnet", "certs/server.crt"]

@@ -2,12 +2,12 @@
 #MISE description="Generate Buildbarn's self-signed server TLS cert (server-only — see mint-token for actual access control) and write the private key to a server's vault"
 
 #USAGE flag "--server-name <name>" help="Server whose vault gets the private key" default="bow"
-#USAGE flag "--hostname <hostname>" help="Cert SAN — must resolve via DNS to wherever the raw TCP resource is actually reachable, e.g. bst-cache.<baseDomain>"
+#USAGE flag "--hostname <hostname>" help="Cert SAN: the name clients dial, i.e. the Tailscale Service bst-cache.<tailnet>.ts.net (svc:bst-cache on bow's tailscale-gateway)"
 
 set -euo pipefail
 
 _server_name="${usage_server_name:-bow}"
-_hostname="${usage_hostname:?hostname required, use --hostname (e.g. bst-cache.example.com)}"
+_hostname="${usage_hostname:?hostname required, use --hostname (e.g. bst-cache.<tailnet>.ts.net)}"
 _vault="attributes/${_server_name}.yml"
 _cert_dir="components/buildbarn/certs"
 
@@ -33,9 +33,9 @@ trap 'rm -rf "$_tmpdir"' EXIT
 
 # Self-signed — no CA needed. Unlike krytis's own local mTLS design, there
 # is no second (client) cert to sign here: the JWT bearer token is the
-# actual authorization mechanism (see mint-token). This cert exists purely
-# for transport confidentiality through the tunnel — "server-only TLS" in
-# specs/plans/issue-28-bst-cache-krytis.md.
+# actual authorization mechanism (see mint-token). This cert gives clients
+# a pinned server identity end to end; the tailnet already encrypts the
+# path, and the gateway forwards the TLS stream untouched.
 openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
   -keyout "$_tmpdir/server.key" \
   -out "$_tmpdir/server.crt" \
@@ -50,5 +50,7 @@ cp "$_tmpdir/server.crt" "$_cert_dir/server.crt"
 gum style --foreground 2 "==> private key written to $_vault: components.buildbarn.serverKeyPem"
 gum style --foreground 2 "==> public cert written to $_cert_dir/server.crt (commit this — it's public, non-secret)"
 gum style --foreground 3 ""
-gum style --foreground 3 "Wildcard DNS to flutterina already covers ${_hostname} — no separate record needed."
-gum style --foreground 3 "Next: point krytis's project.conf auth.server-cert at a copy of $_cert_dir/server.crt."
+gum style --foreground 3 "No DNS record needed: ${_hostname} is the Tailscale Service's MagicDNS name."
+gum style --foreground 3 "bb-storage/bb-asset restart on the cert change (RestartedBy). If they still serve the"
+gum style --foreground 3 "old cert, the podman secret went stale: podman secret rm materia-serverKeyPem, rerun materia."
+gum style --foreground 3 "Next: copy $_cert_dir/server.crt to krytis quadlet/buildbarn/certs/bow-server.crt."
