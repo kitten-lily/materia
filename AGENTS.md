@@ -316,8 +316,11 @@ shell; see the `env = false` gotcha.
 - **Podman healthcheck mechanics (issue #113).** Four things that are easy
   to get wrong: (1) **podman DOES inherit an image's `HEALTHCHECK`** — a
   container with no `HealthCmd=` still reports `healthy`/`unhealthy` if
-  the image declares one (verified), so jellyfin/grimmory/mediamanager are
-  already probed; restating `HealthCmd=` in the quadlet is only needed to
+  the image declares one (verified). Of the three apps this was assumed
+  for, only jellyfin's image declares one; grimmory's and mediamanager's
+  have none (`podman inspect` → `Config.Healthcheck` null, 2026-10-24), so
+  podman never probes them. Restating `HealthCmd=` in the quadlet is needed
+  for those, and elsewhere only to
   control `HealthInterval=`/`HealthRetries=`/`HealthStartPeriod=`, which
   otherwise take podman's defaults. (2) **`podman build` in the default
   OCI format silently DROPS `HEALTHCHECK`** (it is a Docker-schema field) —
