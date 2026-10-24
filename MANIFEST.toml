@@ -1,6 +1,6 @@
 [Hosts.flutterina]
 Components = ["pangolin", "beszel-hub"]
-Roles = ["base", "tunneled"]
+Roles = ["base", "tunneled", "tailnet"]
 
 # Flatcar's btrfs OEM partitions are noise in beszel's storage pools.
 [Hosts.flutterina.Extensions.beszel-agent.Defaults]
@@ -11,6 +11,10 @@ Components = ["restic-backup", "beszel-agent"]
 
 [Roles.tunneled]
 Components = ["newt"]
+
+# Host-level Tailscale node, kernel mode (#163). krytis-runner joins in phase 4.
+[Roles.tailnet]
+Components = ["tailscale"]
 
 [Hosts.bow]
 Components = ["music", "grimmory", "audiobookshelf", "jellyfin", "buildbarn", "mediamanager"]

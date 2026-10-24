@@ -1,0 +1,58 @@
+[Unit]
+Description=Tailscale node (kernel mode, host network namespace)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=tailscale
+Image=docker.io/tailscale/tailscale:v1.104.2@sha256:b11583ad2e93e4671128538c88cf11f460444a5d7e449311dd1933a400ab849d
+
+# Kernel mode in the host netns: tailscale0 and its routes land on the host,
+# so containers on podman networks (flutterina's newt, for Pangolin T2
+# targets) can route to tailnet IPs. Userspace mode would only make the
+# tailnet reachable from inside this container.
+Network=host
+Environment=TS_USERSPACE=false
+AddDevice=/dev/net/tun
+AddCapability=NET_ADMIN NET_RAW
+
+# No firewall rules from Tailscale. netavark drives iptables-nft
+# ("table ip filter is managed by iptables-nft, do not touch!"), while
+# this image's `iptables` is iptables-legacy and Tailscale's nftables mode
+# writes native rules into those same ip filter/nat tables. Both mix
+# backends. With no host firewall the rules would only add Tailscale's
+# 100.64.0.0/10 anti-spoof drop on non-tailscale0 interfaces.
+# TS_AUTH_ONCE: these flags apply at first login only (later starts run
+# `tailscale set`, which ignores TS_EXTRA_ARGS). Change them on a live node
+# with `podman exec tailscale tailscale set ...`.
+Environment="TS_EXTRA_ARGS=--advertise-tags=tag:server --netfilter-mode=off"
+Environment=TS_AUTH_ONCE=true
+Environment=TS_HOSTNAME={{ m_facts "hostname" }}
+
+# OAuth client secret with ?ephemeral=false&preauthorized=true stored in the
+# value itself; without that suffix the node registers as ephemeral and is
+# deleted (and later renumbered) whenever it goes offline.
+{{ secretEnv "tailscaleAuthKey" "TS_AUTHKEY" }}
+
+# Node identity and keys. Losing this volume registers a new node with a
+# new tailnet IP, which breaks every Pangolin target that points at it.
+Environment=TS_STATE_DIR=/var/lib/tailscale
+Volume=tailscale-state.volume:/var/lib/tailscale:Z
+
+# /healthz returns 200 once the node has tailnet IPs. Bound to loopback:
+# with Network=host the default [::]:9002 would listen on the public
+# interface. No HealthOnFailure= — health tracks the control plane, and a
+# coordination outage must not become a restart loop.
+Environment=TS_ENABLE_HEALTH_CHECK=true
+Environment=TS_LOCAL_ADDR_PORT=127.0.0.1:9002
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:9002/healthz
+HealthInterval=60s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target
