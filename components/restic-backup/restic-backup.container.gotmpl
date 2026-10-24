@@ -5,7 +5,7 @@ After=network-online.target
 
 [Container]
 ContainerName=restic-backup
-Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:c0e7bccebdf040d69717c19935d232a72113965ee6746bebad3b8e9aed362622
+Image=ghcr.io/kitten-lily/materia/restic-backup@sha256:21670b45e7c542be444dfec2d3d17a2379aad1ab5e26dccaa2cd1bfe48acf38e
 Tmpfs=/tmp
 Volume=/var/lib/materia/components:/var/lib/materia/components:ro
 Volume=/var/lib/containers/storage/volumes:/var/lib/containers/storage/volumes:ro
@@ -29,4 +29,8 @@ Environment="BACKUP_PATHS=/var/lib/materia/components /var/lib/containers/storag
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-TimeoutStartSec=900
+# A unit timeout kills restic mid-run and leaves its repository lock behind
+# (BUG-012: 900s killed a backup on bow and a prune on flutterina). The
+# wrapper now clears stale locks, but a healthy long run should not be killed
+# at all; the daily timer leaves plenty of room.
+TimeoutStartSec=4h
