@@ -6,7 +6,7 @@ Requires=app.service
 [Container]
 Pod=pangolin.pod
 ContainerName=gerbil
-Image=docker.io/fosrl/gerbil:1.5.2@sha256:1f6e64eaba7997282c7067ba19922fc7e46b5f73e1a27add3dd66a591d50512f
+Image=docker.io/fosrl/gerbil:1.6.0@sha256:420f5210b6d1a6d3035f15c3938b5289fee5aeff51ffdcb9b217838338908885
 AddCapability=NET_ADMIN SYS_MODULE
 Exec=--reachableAt=http://127.0.0.1:3003 --generateAndSaveKeyTo=/var/config/key --remoteConfig=http://localhost:3001/api/v1/gerbil/get-config --reportBandwidthTo=http://localhost:3001/api/v1/gerbil/receive-bandwidth
 Volume=pangolin-config.volume:/var/config
