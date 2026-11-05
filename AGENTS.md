@@ -202,6 +202,10 @@ components/
     config/storage.jsonnet        # bb-storage config — 150G CAS quota / 10-block layout, see BUG-006
     config/asset.jsonnet          # bb-asset config — 'error' fetcher (pure cache, never fetches on its own)
     certs/server.crt              # self-signed server TLS cert, SAN bst-cache.<tailnet>.ts.net (public; key is a materia Secret; krytis pins a copy)
+  usb-drive/                     # LUKS2 USB drive, TPM2 auto-unlock + mount at /mnt/usb on hotplug (bow-only, issue #86)
+    MANIFEST.toml                # [[Services]] Static+Stopped+Oneshot: enabled, never started/health-checked by materia
+    usb-drive-unlock.service     # WantedBy= the drive's by-label device unit; systemd-cryptsetup attach, tpm2-device=auto,headless
+    mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
@@ -228,7 +232,7 @@ mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, but
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, clean)
 ```
 
 ## Multi-server model
@@ -682,6 +686,44 @@ shell; see the `env = false` gotcha.
   update`) ever starts it. Pair with `Oneshot = true` ("prevents materia
   from checking if this service started successfully") for jobs that don't
   stay running.
+- **A materia unit that starts on hotplug: `Static` + `Stopped` +
+  `Oneshot`, then one extra `daemon-reload`.** The `usb-drive` component
+  (#86) needs `usb-drive-unlock.service` *enabled* (its
+  `WantedBy=dev-disk-by\x2dlabel-usbbackup.device` is what starts it when
+  the drive is plugged in) but never started or health-checked by
+  materia. A failed check while the drive is absent would fail
+  `materia-update` for every component on bow. Confirmed in materia
+  source (v0.8.0 / master):
+  - only `Static = true` makes materia enable a plain unit
+    (`EnableUnitFiles`, honours `[Install]`);
+  - without `Static`, a listed unit that something else enabled is
+    actively *disabled* on the next run;
+  - `Stopped`/`Oneshot` give a wildcard desired state, so there is no
+    start/stop action and therefore no health check.
+
+  Two catches:
+  - materia enables *after* the plan's only daemon-reload, so systemd
+    doesn't see the new `.device.wants/` link until another reload or a
+    reboot. `mise usb-drive:enroll` runs the reload.
+  - Templates have no string-replace function, so a UUID can't be turned
+    into the `\x2d`-escaped device unit name. Match the drive by a
+    dash-free LUKS2 label instead (`cryptsetup config --label`); udev
+    creates `by-label` links for `crypto` devices too.
+
+  **A mount pulled in by a service must carry `Options=nofail`.** A
+  `.mount` unit otherwise gets an implicit `Before=local-fs.target`, and
+  the service it is ordered after has the default `After=sysinit.target`.
+  With the drive attached at boot that is a cycle, and systemd resolves it
+  by deleting boot jobs, `local-fs.target` among them.
+  `systemd-analyze verify` on the two unit files shows it locally before
+  any deploy.
+
+  Keys for such drives: a TPM2 token with **no PCRs**
+  (`--tpm2-pcrs=`). On Flatcar, PCR 7 changes with shim SBAT and dbx
+  updates, and with Secure Boot off it protects almost nothing. Never
+  bind-mount `/mnt/usb` into a container: an absent drive makes podman
+  fail the container (BUG-005 class) and blocks `materia-update` on the
+  whole host.
 - **Materia's oneshot final-state wait is currently broken upstream —
   don't pair `Oneshot = true` with `RestartedBy`.** Confirmed against
   `stryan/materia` source (`pkg/services/service_state.go`): the

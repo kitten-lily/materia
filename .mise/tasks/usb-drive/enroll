@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#MISE description="One-time host setup for the usb-drive component: TPM2-enroll the LUKS drive, label it, verify it unlocks and mounts"
+
+#USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
+#USAGE flag "--device <device>" required=#true help="the drive's whole-disk path on the host, e.g. /dev/disk/by-id/usb-<vendor>_<model>_<serial>-0:0"
+
+# The usb-drive component's units can't do this part: the TPM seal and the
+# LUKS label live in the drive's header, not in the repo. Run it once per
+# drive, after materia has installed the component on the host. Safe to
+# re-run: a working enrollment is left alone.
+#
+#   - Enrolls a systemd-tpm2 token bound to this TPM with NO PCRs, and
+#     wipes every other TPM2 slot. The password slot is never touched.
+#     No PCRs because PCR 7/14 move with shim SBAT and dbx updates on
+#     Flatcar and add almost nothing with Secure Boot off.
+#   - Sets the LUKS2 label the units match on (usbbackup).
+#   - Runs daemon-reload: materia enables the unit after its own reload.
+#
+# See specs/plans/issue-86-usb-drive-automount.md.
+
+set -euo pipefail
+
+_target="${usage_target:?--target is required}"
+_device="${usage_device:?--device is required}"
+
+# Runs as root on the host. ssh -t keeps a tty for cryptenroll's password
+# prompt.
+read -r -d '' _payload <<'PAYLOAD_EOF' || true
+set -euo pipefail
+# Must match components/usb-drive/*.
+LABEL=usbbackup
+UNIT=usb-drive-unlock.service
+MAPPER=/dev/mapper/usb
+MNT=/mnt/usb
+
+step() { echo "==> $*"; }
+fail() { echo "error: $*" >&2; exit 1; }
+
+tpm2_tokens() { cryptsetup luksDump "$DEVICE" | grep -c 'systemd-tpm2' || true; }
+# One line per tpm2 token, holding its PCR list ("" = not PCR-bound).
+tpm2_pcrs() { cryptsetup luksDump "$DEVICE" | awk -F: '/tpm2-hash-pcrs:/ { gsub(/[ \t]/, "", $2); print $2 }'; }
+token_unlocks() { cryptsetup open --test-passphrase --token-only "$DEVICE" >/dev/null 2>&1; }
+mounted() { findmnt -n -S "$MAPPER" "$MNT" >/dev/null 2>&1; }
+
+[[ -b "$DEVICE" ]] || fail "not a block device: $DEVICE"
+cryptsetup isLuks --type luks2 "$DEVICE" || fail "not a LUKS2 device: $DEVICE"
+systemctl cat "$UNIT" >/dev/null 2>&1 \
+  || fail "$UNIT is not installed. Assign the usb-drive component to this host and let materia-update run first."
+[[ "$(systemctl is-enabled "$UNIT" 2>/dev/null)" == enabled ]] \
+  || fail "$UNIT is installed but not enabled. Check: journalctl -u materia-update.service"
+
+step "daemon-reload (materia enables the unit after its own reload)"
+systemctl daemon-reload
+
+if [[ "$(tpm2_tokens)" == 1 && -z "$(tpm2_pcrs)" ]] && token_unlocks; then
+  step "TPM2 token already enrolled (no PCRs) and unlocks; skipping enrollment"
+else
+  step "Enrolling TPM2 token (no PCRs), wiping all other TPM2 slots"
+  echo "    Enter the drive's password when prompted."
+  systemd-cryptenroll "$DEVICE" --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=
+fi
+
+if [[ "$(blkid -s LABEL -o value "$DEVICE" || true)" != "$LABEL" ]]; then
+  step "Setting LUKS2 label: $LABEL"
+  cryptsetup config --label "$LABEL" "$DEVICE"
+fi
+# The new by-label link is a new device unit; its plug-in pulls in $UNIT.
+udevadm trigger --action=change --settle "$DEVICE"
+
+step "Waiting for the hotplug unlock + mount"
+for _ in $(seq 30); do mounted && break; sleep 1; done
+if ! mounted; then
+  echo "    not mounted after 30s; starting $UNIT directly"
+  systemctl start "$UNIT" || { systemctl status --no-pager "$UNIT" || true; fail "$UNIT failed to start"; }
+  sleep 2
+fi
+
+step "Verifying"
+rc=0
+check() { if "$@"; then echo "    ok    $DESC"; else echo "    FAIL  $DESC"; rc=1; fi; }
+DESC="TPM2 token unlocks the drive" check token_unlocks
+DESC="exactly one TPM2 token" check test "$(tpm2_tokens)" = 1
+DESC="TPM2 token bound to no PCRs" check test -z "$(tpm2_pcrs)"
+DESC="password keyslot 0 still present" check sh -c "cryptsetup luksDump '$DEVICE' | grep -qE '^  0: luks2'"
+DESC="$UNIT is wanted by the drive's device unit" check sh -c "systemctl show -p WantedBy --value '$UNIT' | grep -qF 'dev-disk-by\\x2dlabel-$LABEL.device'"
+DESC="$MAPPER mounted at $MNT" check mounted
+[[ $rc == 0 ]] || fail "verification failed"
+findmnt "$MNT"
+PAYLOAD_EOF
+
+echo "==> $_target: enrolling $_device (ssh may wait for a security-key touch)"
+_script="DEVICE=$(printf %q "$_device")"$'\n'"$_payload"
+# shellcheck disable=SC2029 # expanded locally on purpose
+ssh -t "$_target" "sudo bash -c $(printf %q "$_script")"

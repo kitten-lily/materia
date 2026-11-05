@@ -1,0 +1,18 @@
+[Unit]
+Description=Unlock USB backup drive (LUKS2, TPM2 token)
+# The drive is matched by its LUKS2 label, set by `mise usb-drive:enroll`.
+# A label keeps the device unit name free of template escaping: materia
+# templates cannot turn a UUID's dashes into \x2d.
+BindsTo=dev-disk-by\x2dlabel-usbbackup.device
+After=dev-disk-by\x2dlabel-usbbackup.device
+Wants=mnt-usb.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# headless: fail instead of waiting on a password prompt nobody can answer.
+ExecStart=/usr/lib/systemd/systemd-cryptsetup attach usb /dev/disk/by-label/usbbackup - tpm2-device=auto,headless=true
+ExecStop=/usr/lib/systemd/systemd-cryptsetup detach usb
+
+[Install]
+WantedBy=dev-disk-by\x2dlabel-usbbackup.device

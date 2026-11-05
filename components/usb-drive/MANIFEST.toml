@@ -1,0 +1,15 @@
+# External LUKS2 USB drive: unlocked with a TPM2 token and mounted at
+# /mnt/usb whenever it is plugged in. One-time host setup (TPM enrollment +
+# the LUKS label the units match on): `mise usb-drive:enroll`.
+# See specs/plans/issue-86-usb-drive-automount.md.
+
+[[Services]]
+Service = "usb-drive-unlock.service"
+# Static: materia enables the unit, which honours its WantedBy= on the
+# drive's device unit, so plugging the drive in starts it.
+# Stopped + Oneshot: materia never starts, stops or health-checks it. An
+# absent drive or a failed unlock must not fail materia-update, which
+# would block every component on the host.
+Static = true
+Stopped = true
+Oneshot = true

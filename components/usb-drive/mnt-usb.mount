@@ -1,0 +1,14 @@
+[Unit]
+Description=USB backup drive
+# Pulled in by usb-drive-unlock.service; stopped with it on unplug.
+BindsTo=usb-drive-unlock.service
+After=usb-drive-unlock.service
+
+[Mount]
+What=/dev/mapper/usb
+# nofail drops the implicit Before=local-fs.target. Without it, a drive
+# attached at boot creates an ordering cycle (local-fs.target -> this mount
+# -> unlock service -> sysinit.target -> local-fs.target), and systemd
+# breaks it by deleting boot jobs such as local-fs.target.
+Options=nofail
+Where=/mnt/usb
