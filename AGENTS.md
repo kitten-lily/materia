@@ -686,25 +686,39 @@ shell; see the `env = false` gotcha.
   update`) ever starts it. Pair with `Oneshot = true` ("prevents materia
   from checking if this service started successfully") for jobs that don't
   stay running.
-- **Check the materia version a host actually runs, not the template's
-  pin, before relying on materia behaviour.** Both `.bu` templates pin
-  `ghcr.io/stryan/materia:v0.8.0@sha256:…` (#105, Renovate #168). But
-  bow's live `/etc/containers/systemd/materia-update.container` still says
-  `ghcr.io/stryan/materia:stable`, and the image under that tag was pulled
-  2026-06-16, which is **v0.7.0**. Butane changes don't reach a running
-  host, and nothing re-pulls `:stable`. Check with
-  `sudo podman image inspect ghcr.io/stryan/materia:stable --format
-  '{{.Created}}'` and match the date against the release tags. Caught by
-  #86 (2026-11-05): the usb-drive design was checked against v0.8.0
-  source, and its first deploy aborted bow's whole `materia-update` with
-  `FATA unsupported resource type: Unknown`. The plan began with a
-  zero-valued `(<parent>) Unknown Unknown` step. v0.7.0's
-  `coalesceServices` (`pkg/plan/plan.go`) emits that phantom action for
-  any service whose only planned step is Enable or Disable. Upstream
-  fixed it in v0.7.1 (`f1e7425`). On v0.7.0, then, `Static = true` on a
-  unit that is never started (`Stopped`/`Oneshot`) breaks every run that
-  has to enable it. Recovery was unassigning the component (0/7 steps
-  had run, so nothing to undo).
+- **Upgrading materia on a running host is a state migration, not an image-line
+  edit.** The two `.bu` templates and `server:adopt-render` pin
+  `ghcr.io/stryan/materia:v0.8.0@sha256:…` (#105, #173), and Renovate updates
+  all three, but Butane/adopt-render changes never reach an already-installed
+  quadlet. Run `mise materia:sync-image --target <user@host>` first, inspect
+  the v0.8 plan, then repeat with `--apply`; it reads the repository pin,
+  rejects `Unknown`/`Disable` plans, updates the live quadlet and verifies the
+  new run, digest and failed-unit set.
+
+  Two independent migration traps made a direct v0.7 → v0.8 edit destructive
+  (#173, BUG-015/BUG-016). First, v0.7's
+  `/var/lib/materia/output/lastrun.toml` stores `plan` as an array, while v0.8
+  facts unmarshal it as a structured table; every v0.8 command aborts with
+  `plan.Plan: expected table but found []any`. Upstream's v0.8 release notes
+  require removing old last-run files. The sync task overlays an empty output
+  directory for its read-only plan, then removes the exact legacy
+  `lastrun.toml`/`lastplan.toml` paths only on apply.
+
+  Second, both provisioning templates accidentally said literal
+  `HostName=%q`. `mise ign` substitutes `${SERVER_NAME}`, not `printf` tokens,
+  so `%q` reached the live quadlet unchanged. v0.7's old facts still found the
+  host; v0.8 found no matching `[Hosts.<name>]` and planned to stop and remove
+  **every installed component**. The guarded plan caught it before mutation.
+  Templates now use `HostName=${SERVER_NAME}`; the sync task plans with the
+  target's actual OS hostname and rewrites the live `HostName=` on apply.
+
+  This drift was first caught by #86: bow's stale `:stable` image was v0.7.0
+  (pulled 2026-06-16), whose `coalesceServices` emitted a zero-valued
+  `(<parent>) Unknown Unknown` action when a service's only planned step was
+  Enable or Disable. The usb-drive deploy therefore aborted the whole host.
+  Upstream fixed that planner bug in v0.7.1 (`f1e7425`). Never infer live
+  materia behavior from the template pin; use the sync task's plan and live
+  evidence.
 - **A unit that starts on hotplug: install it with materia, enable it
   outside materia.** `usb-drive-unlock.service` (#86) has
   `WantedBy=dev-disk-by\x2dlabel-usbbackup.device`, so plugging the drive
@@ -1400,6 +1414,16 @@ shell; see the `env = false` gotcha.
   wiped (`podman volume rm`), Newt can't re-provision with the same key —
   create a new key in the Pangolin dashboard and update the vault. The
   key has a max usage count set at creation time; each host consumes one.
+
+  The inverse failure is equally permanent: if the Pangolin-side Newt record
+  is deleted while the volume survives, Newt retries token exchange every
+  three seconds with `400 "No newt found with that newtId"` and its
+  `/tmp/newt-health` probe stays unhealthy forever. The stored provisioning
+  key is ignored and cannot repair that ID. Caught on bow during #173
+  (BUG-017; failing streak 2319). Either remove Newt from the host if its site
+  was intentionally retired, or create a fresh provisioning key/site and
+  remove `newt-config.volume` so it provisions a new identity. Resetting the
+  transient failed healthcheck unit alone is a one-minute cosmetic fix.
 - **`DOCKER_ENFORCE_NETWORK_VALIDATION=true` only filters container
   *discovery* — it does not gate proxying.** The flag reaches exactly one
   place in newt's source (`docker.ListContainers`, called from

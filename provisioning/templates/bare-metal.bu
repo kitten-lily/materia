@@ -139,7 +139,7 @@ storage:
           Environment=SOPS_AGE_KEY_FILE=/etc/materia/key.txt
 
           SecurityLabelDisable=true
-          HostName=%q
+          HostName=${SERVER_NAME}
           Network=host
 
           Volume=/etc/materia:/etc/materia

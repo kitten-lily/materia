@@ -106,15 +106,18 @@
       datasourceTemplate: "github-tags",
     },
     {
-      // materia image pin in the Butane provisioning templates (#105).
-      // Not a *.container[.gotmpl] file, so the quadlet manager never sees
-      // it — this is the only image in the repo not covered by
-      // docker:pinDigests via a native manager. Was a floating :stable tag
-      // (no digest, no Renovate tracking, no reviewable diff on bump);
-      // now pinned like every other component image.
+      // materia image pins in the Butane provisioning templates and adopted-
+      // host renderer (#105, #173). These aren't *.container[.gotmpl] files,
+      // so the quadlet manager never sees them. Keep every installer on one
+      // digest-pinned release and update all three sources in one Renovate PR.
+      // Running hosts still require `mise materia:sync-image`; Ignition and
+      // adopt-render only affect new installations.
       customType: "regex",
-      description: "materia image pin in Butane provisioning templates",
-      managerFilePatterns: ["/(^|/)provisioning/templates/.+\\.bu$/"],
+      description: "materia image pin in host installers",
+      managerFilePatterns: [
+        "/(^|/)provisioning/templates/.+\\.bu$/",
+        "/(^|/)\\.mise/tasks/server/adopt-render$/",
+      ],
       matchStrings: [
         "Image=ghcr\\.io/stryan/materia:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-fA-F0-9]+)",
       ],

@@ -97,3 +97,24 @@ bugs:
     found: 2026-11-05
     epic: ci
     file: specs/bugs/BUG-014-badger-catalog-gate-missing-plugin-hash.md
+  - id: BUG-015
+    title: "materia v0.8.0 cannot read v0.7 lastrun.toml, blocking every plan and update"
+    status: fixed
+    severity: P1
+    found: 2026-11-05
+    epic: issue-173-materia-upgrade
+    file: specs/bugs/BUG-015-materia-v080-legacy-lastrun-incompatible.md
+  - id: BUG-016
+    title: "provisioned materia quadlets use literal HostName=%q; v0.8 plans full-host removal"
+    status: fixed
+    severity: P0
+    found: 2026-11-05
+    epic: issue-173-materia-upgrade
+    file: specs/bugs/BUG-016-materia-quadlet-literal-percent-q-hostname.md
+  - id: BUG-017
+    title: "bow Newt credentials reference a deleted server record; tunnel unhealthy"
+    status: open
+    severity: P1
+    found: 2026-11-05
+    epic: newt
+    file: specs/bugs/BUG-017-bow-newt-credentials-no-longer-exist.md

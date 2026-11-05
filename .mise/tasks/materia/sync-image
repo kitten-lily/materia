@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+#MISE description="Plan or apply the pinned materia image to an existing host"
+#USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
+#USAGE flag "--apply" help="Rewrite the live quadlet and run materia-update after a successful plan"
+
+set -euo pipefail
+
+_target="${usage_target:?--target is required}"
+if [[ -n "${usage_apply:-}" ]]; then _apply=1; else _apply=0; fi
+_pin_sources=(
+  provisioning/templates/hetzner.bu
+  provisioning/templates/bare-metal.bu
+  .mise/tasks/server/adopt-render
+)
+_pinned_image=""
+for _source in "${_pin_sources[@]}"; do
+  _source_image=""
+  _source_image_lines=0
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    case "$_line" in
+      *Image=ghcr.io/stryan/materia:*)
+        _source_image="${_line#*Image=}"
+        ((_source_image_lines += 1))
+        ;;
+    esac
+  done < "$_source"
+  if [[ "$_source_image_lines" -ne 1 ]]; then
+    echo "error: expected exactly one materia Image= line in $_source; found $_source_image_lines" >&2
+    exit 1
+  fi
+  if [[ -z "$_pinned_image" ]]; then
+    _pinned_image="$_source_image"
+  elif [[ "$_source_image" != "$_pinned_image" ]]; then
+    echo "error: materia image pins differ between repository installers" >&2
+    printf '       expected: %s\n       %s: %s\n' "$_pinned_image" "$_source" "$_source_image" >&2
+    exit 1
+  fi
+done
+
+read -r -d '' _payload <<'PAYLOAD_EOF' || true
+set -euo pipefail
+
+_quadlet=/etc/containers/systemd/materia-update.container
+_pinned_image="${PINNED_IMAGE:?PINNED_IMAGE is required}"
+_apply="${APPLY:-0}"
+
+if [[ ! -f "$_quadlet" ]]; then
+  echo "error: $_quadlet not found" >&2
+  exit 1
+fi
+
+_live_image=""
+_image_lines=0
+_hostname=""
+_hostname_lines=0
+_network=""
+_security_label_disable="false"
+_env_args=()
+_volume_args=()
+
+while IFS= read -r _line || [[ -n "$_line" ]]; do
+  case "$_line" in
+    Image=ghcr.io/stryan/materia:*)
+      _live_image="${_line#Image=}"
+      ((_image_lines += 1))
+      ;;
+    Environment=*)
+      _env="${_line#Environment=}"
+      _env_name="${_env%%=*}"
+      _env_value="${_env#*=}"
+      if [[ "$_env_value" == \"*\" && "$_env_value" == *\" ]]; then
+        _env_value="${_env_value:1:${#_env_value}-2}"
+      fi
+      _env_args+=(--env "${_env_name}=${_env_value}")
+      ;;
+    HostName=*)
+      _hostname="${_line#HostName=}"
+      ((_hostname_lines += 1))
+      ;;
+    Network=*)
+      _network="${_line#Network=}"
+      ;;
+    SecurityLabelDisable=true)
+      _security_label_disable="true"
+      ;;
+    Volume=*)
+      _volume_args+=(--volume "${_line#Volume=}")
+      ;;
+  esac
+done < "$_quadlet"
+
+if [[ "$_image_lines" -ne 1 ]]; then
+  echo "error: expected exactly one materia Image= line in $_quadlet; found $_image_lines" >&2
+  exit 1
+fi
+if [[ "$_hostname_lines" -ne 1 ]]; then
+  echo "error: expected exactly one HostName= line in $_quadlet; found $_hostname_lines" >&2
+  exit 1
+fi
+if [[ -z "$_network" || "${#_env_args[@]}" -eq 0 || "${#_volume_args[@]}" -eq 0 ]]; then
+  echo "error: live quadlet is missing Network, Environment, or Volume settings" >&2
+  exit 1
+fi
+if [[ "$_security_label_disable" != "true" ]]; then
+  echo "error: live quadlet does not set SecurityLabelDisable=true" >&2
+  exit 1
+fi
+_actual_hostname=$(hostname)
+if [[ -z "$_actual_hostname" ]]; then
+  echo "error: host returned an empty hostname" >&2
+  exit 1
+fi
+
+
+printf 'live Image=%s\n' "$_live_image"
+printf 'pinned Image=%s\n' "$_pinned_image"
+printf 'live HostName=%s\n' "$_hostname"
+printf 'host OS hostname=%s\n' "$_actual_hostname"
+
+_container_image_id=$(podman container inspect materia --format '{{.Image}}' 2>/dev/null || true)
+if [[ -n "$_container_image_id" ]]; then
+  _container_image_created=$(podman image inspect "$_container_image_id" --format '{{.Created}}')
+  printf 'materia container image ID=%s\n' "$_container_image_id"
+  printf 'materia container image created=%s\n' "$_container_image_created"
+else
+  echo "materia container: not present"
+fi
+
+echo "==> planning with pinned materia image"
+_plan_log=$(mktemp)
+_plan_output=$(mktemp -d)
+_failed_before=""
+_journal_log=""
+_rewritten=""
+_cleanup() {
+  rm -f "$_plan_log"
+  rm -rf "$_plan_output"
+  [[ -z "$_failed_before" ]] || rm -f "$_failed_before"
+  [[ -z "$_journal_log" ]] || rm -f "$_journal_log"
+  [[ -z "$_rewritten" ]] || rm -f "$_rewritten"
+}
+trap _cleanup EXIT
+
+_plan_args=(
+  podman run --rm
+  --security-opt label=disable
+  --hostname "$_actual_hostname"
+  --network "$_network"
+)
+_plan_args+=("${_env_args[@]}")
+_plan_args+=("${_volume_args[@]}")
+_plan_args+=(--volume "$_plan_output:/var/lib/materia/output")
+_plan_args+=("$_pinned_image" plan)
+
+if ! "${_plan_args[@]}" 2>&1 | tee "$_plan_log"; then
+  echo "error: pinned materia plan failed; live quadlet was not changed" >&2
+  exit 1
+fi
+
+if grep -Eq '(^|[[:space:]])Unknown([[:space:]]|$)' "$_plan_log"; then
+  echo "error: plan contains an Unknown action; live quadlet was not changed" >&2
+  exit 1
+fi
+if grep -Eq '(^|[[:space:]])Disable([[:space:]]|$)' "$_plan_log"; then
+  echo "error: plan contains a Disable action; live quadlet was not changed" >&2
+  exit 1
+fi
+
+if [[ "$_apply" != "1" ]]; then
+  echo "==> dry run complete; re-run with --apply after reviewing the plan"
+  exit 0
+fi
+
+echo "==> applying pinned image to live quadlet"
+
+_failed_before=$(mktemp)
+systemctl --failed --no-legend --plain --no-pager > "$_failed_before"
+
+_rewritten=$(mktemp "$(dirname "$_quadlet")/.materia-update.container.XXXXXX")
+_replaced=0
+_hostname_replaced=0
+while IFS= read -r _line || [[ -n "$_line" ]]; do
+  case "$_line" in
+    Image=ghcr.io/stryan/materia:*)
+      printf 'Image=%s\n' "$_pinned_image"
+      ((_replaced += 1))
+      ;;
+    HostName=*)
+      printf 'HostName=%s\n' "$_actual_hostname"
+      ((_hostname_replaced += 1))
+      ;;
+    *)
+      printf '%s\n' "$_line"
+      ;;
+  esac
+done < "$_quadlet" > "$_rewritten"
+
+if [[ "$_replaced" -ne 1 || "$_hostname_replaced" -ne 1 ]]; then
+  echo "error: quadlet changed while planning; expected one image and one hostname replacement" >&2
+  echo "       image replacements: $_replaced; hostname replacements: $_hostname_replaced" >&2
+  exit 1
+fi
+chown --reference="$_quadlet" "$_rewritten"
+chmod --reference="$_quadlet" "$_rewritten"
+mv "$_rewritten" "$_quadlet"
+_rewritten=""
+_legacy_output_is_v07() {
+  local _line
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    case "$_line" in
+      "plan = ["*) return 0 ;;
+    esac
+  done < "$1"
+  return 1
+}
+for _legacy_output in \
+  /var/lib/materia/output/lastrun.toml \
+  /var/lib/materia/output/lastplan.toml
+do
+  if [[ -f "$_legacy_output" ]] && _legacy_output_is_v07 "$_legacy_output"; then
+    echo "removing v0.7 output incompatible with v0.8: $_legacy_output"
+    rm -f "$_legacy_output"
+  fi
+done
+
+
+_apply_since=$(date --iso-8601=seconds)
+systemctl daemon-reload
+if ! systemctl start materia-update.service; then
+  journalctl -u materia-update.service --since "$_apply_since" --no-pager || true
+  echo "error: materia-update.service failed after the image update" >&2
+  exit 1
+fi
+
+_journal_log=$(mktemp)
+journalctl -u materia-update.service --since "$_apply_since" --no-pager | tee "$_journal_log"
+if grep -Fq 'FATA' "$_journal_log"; then
+  echo "error: materia-update journal contains FATA" >&2
+  exit 1
+fi
+
+_expected_digest="${_pinned_image##*@}"
+_local_digest=$(podman image inspect "$_pinned_image" --format '{{.Digest}}')
+if [[ "$_local_digest" != "$_expected_digest" ]]; then
+  echo "error: locally pulled materia digest does not match the repository pin" >&2
+  echo "       local:    $_local_digest" >&2
+  echo "       expected: $_expected_digest" >&2
+  exit 1
+fi
+printf 'verified local materia digest=%s\n' "$_local_digest"
+
+_service_exec=$(systemctl show materia-update.service --property=ExecStart --value)
+if [[ "$_service_exec" != *"$_pinned_image"* ]]; then
+  echo "error: generated materia-update.service does not execute the pinned image" >&2
+  exit 1
+fi
+echo "verified generated service executes the pinned image"
+
+_container_image_id=$(podman container inspect materia --format '{{.Image}}' 2>/dev/null || true)
+if [[ -n "$_container_image_id" ]]; then
+  _pinned_image_id=$(podman image inspect "$_pinned_image" --format '{{.Id}}')
+  if [[ "$_container_image_id" != "$_pinned_image_id" ]]; then
+    echo "error: materia container image does not match the pinned image" >&2
+    echo "       container: $_container_image_id" >&2
+    echo "       pinned:    $_pinned_image_id" >&2
+    exit 1
+  fi
+  printf 'verified materia container image ID=%s\n' "$_container_image_id"
+fi
+
+_failed_after=$(mktemp)
+trap 'rm -f "$_failed_after"; _cleanup' EXIT
+systemctl --failed --no-legend --plain --no-pager > "$_failed_after"
+if ! cmp -s "$_failed_before" "$_failed_after"; then
+  echo "error: systemctl --failed changed during the upgrade" >&2
+  diff -u "$_failed_before" "$_failed_after" || true
+  exit 1
+fi
+
+echo "verified systemctl --failed is unchanged"
+echo "==> pinned materia image applied successfully"
+PAYLOAD_EOF
+
+_script="PINNED_IMAGE=$(printf %q "$_pinned_image")"$'\n'"APPLY=$(printf %q "$_apply")"$'\n'"$_payload"
+_ssh_log=$(mktemp)
+trap 'rm -f "$_ssh_log"' EXIT
+_max_attempts=1
+[[ "$_apply" == "1" ]] && _max_attempts=6
+
+for ((_attempt = 1; _attempt <= _max_attempts; _attempt++)); do
+  echo "==> $_target (ssh may wait for a security-key touch)"
+  set +e
+  # shellcheck disable=SC2029 # expanded locally on purpose
+  ssh -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+    "$_target" "sudo bash -c $(printf %q "$_script")" 2>&1 | tee "$_ssh_log"
+  _ssh_status=${PIPESTATUS[0]}
+  set -e
+  [[ "$_ssh_status" -eq 0 ]] && exit 0
+  if [[ "$_ssh_status" -ne 255 ]] ||
+     ! grep -Fq '==> applying pinned image to live quadlet' "$_ssh_log" ||
+     [[ "$_attempt" -eq "$_max_attempts" ]]; then
+    exit "$_ssh_status"
+  fi
+  echo "==> SSH path dropped during apply; reconnecting for idempotent verification"
+  sleep 10
+  : > "$_ssh_log"
+done
