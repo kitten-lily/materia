@@ -1,9 +1,8 @@
 # .github/workflows/badger-catalog.yml
 name: badger-catalog
 
-# Only changes that can move the pinned badger version run this gate. The
-# catalog answer depends on which Cloudflare edge serves the request
-# (BUG-013), so running it on every push turned unrelated commits red.
+# Only changes that can move the pinned badger version run this gate, so a
+# catalog hiccup can't turn unrelated commits red (BUG-013).
 on:
   push:
     branches: [main]
@@ -32,10 +31,16 @@ jobs:
       # check, which invalidates every router referencing the badger
       # middleware and makes the edge node answer 404 for every hostname —
       # dashboard included (BUG-007; Renovate PR #52 bumped badger v1.5.0 ->
-      # v1.6.1 and did exactly that). Traefik's check is
-      # `GET plugins.traefik.io/public/validate/<module>/<version>`; anything
-      # other than 200 fails the load. Gate the pinned version on it here so a
-      # bump can't reach a host before we know the catalog accepts it.
+      # v1.6.1 and did exactly that). Gate the pinned version on the same
+      # check so a bump can't reach a host before we know the catalog
+      # accepts it.
+      #
+      # This mirrors traefik's own check (pkg/plugins/downloader.go +
+      # manager.go's computeHash): download the archive, then
+      # `GET plugins.traefik.io/public/validate/<module>/<version>` with
+      # `X-Plugin-Hash: <hex sha256 of the archive>`. Anything other than 200
+      # fails the load. The header is required: without it, or with a wrong
+      # hash, the catalog answers 404 for every plugin and version (BUG-014).
       - name: badger catalog validate check
         run: |
           set -euo pipefail
@@ -47,16 +52,30 @@ jobs:
           fi
           echo "pinned badger version: $version"
 
-          url="https://plugins.traefik.io/public/validate/github.com/fosrl/badger/$version"
-          # The catalog sits behind Cloudflare, and each edge caches its own
-          # answer (BUG-011, BUG-013). A 404 can persist at one edge for minutes
-          # while another serves 200. Retry for ~2 min with backoff and log the
-          # edge (cf-ray suffix), cache status and age of every answer. A real
-          # rejection (BUG-007) is a steady 404 and still fails, just later.
+          base="https://plugins.traefik.io/public"
+          module="github.com/fosrl/badger"
+          archive="$(mktemp)"
+          if ! dl="$(curl -sS -o "$archive" --max-time 60 --retry 3 --retry-all-errors \
+              -w '%{http_code}' "$base/download/$module/$version")"; then
+            echo "::warning::could not reach the traefik plugin catalog — skipping"
+            exit 0
+          fi
+          if [[ "$dl" != "200" ]]; then
+            echo "::error::traefik plugin catalog has no archive for badger $version (HTTP $dl)"
+            exit 1
+          fi
+          hash="$(sha256sum "$archive" | cut -d' ' -f1)"
+          echo "archive sha256: $hash"
+
+          # Retry for ~2 min with backoff to ride out origin blips (BUG-011),
+          # logging the Cloudflare edge (cf-ray suffix), cache status and age
+          # of every answer (BUG-013). A real rejection (BUG-007) is a steady
+          # non-200 and still fails, just later.
           code=""
           for delay in 5 10 20 40 60 0; do
-            if out="$(curl -sS -o /dev/null --max-time 30 \
-                -w '%{http_code} %header{cf-ray} %header{cf-cache-status} %header{age}' "$url")"; then
+            if out="$(curl -sS -o /dev/null --max-time 30 -H "X-Plugin-Hash: $hash" \
+                -w '%{http_code} %header{cf-ray} %header{cf-cache-status} %header{age}' \
+                "$base/validate/$module/$version")"; then
               read -r code ray cache age <<<"$out"
               echo "catalog answered HTTP $code (cf-ray=${ray:-?} cache=${cache:-?} age=${age:-?})"
               [[ "$code" == "200" ]] && break
@@ -79,7 +98,5 @@ jobs:
           echo "::error::traefik plugin catalog rejects badger $version (HTTP $code)"
           echo "traefik would disable ALL plugins on startup, dropping every"
           echo "badger-referencing router and returning 404 for every host."
-          echo "see specs/bugs/BUG-007, fosrl/badger#31, traefik/piceus#156."
-          echo "a 404 from one Cloudflare edge alone is not proof (BUG-013):"
-          echo "re-run, and curl the URL from elsewhere before acting on it."
+          echo "see specs/bugs/BUG-007, BUG-014, fosrl/badger#31, traefik/piceus#156."
           exit 1

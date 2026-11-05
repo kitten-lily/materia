@@ -26,6 +26,10 @@ apart, which is shorter than the outage, so all three attempts landed inside it.
 edge caches its own answer, and one runner saw 404 for over 2 minutes while
 another got 200 at the same time.
 
+**See also BUG-014.** The gate never sent traefik's `X-Plugin-Hash` header,
+and the catalog answers 404 to any validate request without the right hash.
+[INFERENCE] The 404s here were probably hashless answers cached at the edge.
+
 ## Fix
 
 `.github/workflows/preflight.yml`: 6 attempts with 5/10/20/40/60 s backoff

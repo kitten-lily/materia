@@ -66,6 +66,13 @@ the `X-Plugin-Hash` header entirely for a plugin it *does* know
 catalog-side and version-scoped, not a hash mismatch, not a corrupt
 download, not a CDN edge, not our network.
 
+**Superseded 2026-11-05 (BUG-014):** the catalog now *enforces*
+`X-Plugin-Hash`. A missing or wrong hash gets 404 and the right hash gets
+200. It has also re-published v1.6.1 (archive sha256 is now
+`9a5a926900ab…`, not `33bcd3d7…`). With the right hash, v1.6.0, v1.6.1 and
+v1.7.0 all validate. The hold below stays until a local traefik run
+confirms it.
+
 Upstream has the same finding: fosrl/badger#31 (Pangolin maintainer:
 "We must have previously accidentally tagged a version v1.6.0 that the
 Traefik plugin catalog indexed without us knowing… Please keep using

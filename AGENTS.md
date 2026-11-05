@@ -887,9 +887,11 @@ shell; see the `env = false` gotcha.
   and no obvious symptom. Any component that needs the podman socket
   must run as root until the socket is given a shared group.
 - **A bad `badgerVersion` bump is a total edge outage, and it looks like a
-  routing bug.** Traefik validates every remote plugin against its catalog
-  (`GET plugins.traefik.io/public/validate/<module>/<version>`,
-  `pkg/plugins/downloader.go`'s `RegistryDownloader.Check`); a non-200
+  routing bug.** Traefik validates every remote plugin against its catalog:
+  it downloads the archive, then calls
+  `GET plugins.traefik.io/public/validate/<module>/<version>` with
+  `X-Plugin-Hash: <hex sha256 of the archive>` (`pkg/plugins/downloader.go`
+  `RegistryDownloader.Check`, `manager.go` `computeHash`). A non-200
   disables **all** plugins, and since every router — this repo's
   `dynamic_config.yml` ones *and* every resource router Pangolin generates
   through the HTTP provider — references the `badger` middleware, Traefik
@@ -898,26 +900,28 @@ shell; see the `env = false` gotcha.
   (running)`, materia's run is green, and nothing is in `--failed`: the only
   evidence is `journalctl -u traefik.service` (`Plugins are disabled because
   an error has occurred` + one `invalid middleware "badger@…"` line per
-  router). badger v1.6.0/v1.6.1/v1.7.0 all return 404 from that endpoint
-  while v1.5.0 returns 200 — a catalog-side breakage (fosrl/badger#31,
-  traefik/piceus#156), not a corrupt download: the download endpoint still
-  serves a valid, byte-identical zip, and the endpoint ignores
-  `X-Plugin-Hash` entirely for plugins it knows. Renovate PR #52's
-  v1.5.0 → v1.6.1 bump took flutterina down this way (BUG-007), delayed
-  until the next `traefik.service` restart because the already-running
-  process kept serving with the old plugin loaded. `badgerVersion` is now
-  held at `<=1.5.0` in `renovate.json5` and gated by the `badger-catalog`
-  workflow. It runs only when `components/pangolin/MANIFEST.toml` changes,
-  and fails a PR whose pinned version the catalog rejects. **The catalog's
-  answer depends on which Cloudflare edge you reach.** Each edge caches its
-  own result, sometimes for ~56 days whatever `max-age` says. At the same
-  moment, one CI runner got 404 for v1.5.0 for over 2 minutes and another
-  got 200. A cached 200 for v1.7.0 also exists, from August. The cache
-  can't be bypassed: the origin returns 404 for any query string or
-  trailing slash. So one 404, or one 200, from one edge proves little.
-  The job retries for ~2 min and logs `cf-ray`/`cf-cache-status`/`age` on
-  every attempt (BUG-011, BUG-013). The same applies to production: a
-  traefik restart validates against whichever edge flutterina reaches.
+  router). In September (BUG-007), badger v1.6.0/v1.6.1/v1.7.0 got 404
+  from that endpoint while v1.5.0 got 200. That was recorded as a
+  catalog-side breakage (fosrl/badger#31, traefik/piceus#156) with the
+  endpoint "ignoring `X-Plugin-Hash`". **The catalog has changed since:
+  as of 2026-11-05 it enforces the hash** (BUG-014), and it has
+  re-published the v1.6.1 archive (new sha256). For every badger version and for
+  `traefik/plugindemo`, a missing, empty or wrong hash gets 404 and the
+  right hash gets 200, all uncached (`cf-cache-status: DYNAMIC`). v1.6.x and
+  v1.7.0 now validate. So **never probe `validate` with a bare `curl`**: it
+  always says 404. Send the hash the way traefik does, as the
+  `badger-catalog` workflow does. [INFERENCE] Cloudflare caches by URL, not
+  by that header, so a cached hashless 404 explains BUG-011/BUG-013's
+  per-edge disagreements. It could also reach a real traefik startup.
+  Renovate PR #52's v1.5.0 → v1.6.1 bump took flutterina down this way
+  (BUG-007). The outage waited for the next `traefik.service` restart,
+  because the running process kept serving with the old plugin loaded.
+  `badgerVersion` is still held at `<=1.5.0` in `renovate.json5`. Lifting
+  the hold is a separate decision: test it with the local reproduction
+  below first. The `badger-catalog` workflow gates the pin. It runs only
+  when `components/pangolin/MANIFEST.toml` (or the workflow) changes,
+  retries for ~2 min, and logs `cf-ray`/`cf-cache-status`/`age` on every
+  attempt.
   v1.6+ is only needed for Pangolin >= 1.22's public
   resource type. To reproduce any plugin question locally without touching
   a host: `podman run --rm --tmpfs /plugins-storage -v <dir>:/etc/traefik:ro,Z

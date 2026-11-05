@@ -41,6 +41,13 @@ fact.
 The gate also ran on every push. A commit that cannot change `badgerVersion`
 paid for a third-party cache's state.
 
+**Revised by BUG-014.** The gate sent no `X-Plugin-Hash`. The catalog
+answers 404 to every validate request without the right hash and 200 with
+it, for every badger version. [INFERENCE] Cloudflare caches by URL, not
+by that header, so each edge kept whichever answer it cached first: a 200
+from a hashed traefik request or a 404 from a hashless probe. That would
+explain the per-edge disagreement above.
+
 ## Fix
 
 - Move the job out of `preflight.yml` into `.github/workflows/badger-catalog.yml`.

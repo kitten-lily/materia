@@ -90,3 +90,10 @@ bugs:
     found: 2026-10-23
     epic: ci
     file: specs/bugs/BUG-013-badger-catalog-gate-per-edge-404.md
+  - id: BUG-014
+    title: "badger catalog gate validates without X-Plugin-Hash: catalog 404s every plugin and version"
+    status: fixed
+    severity: P3
+    found: 2026-11-05
+    epic: ci
+    file: specs/bugs/BUG-014-badger-catalog-gate-missing-plugin-hash.md

@@ -55,7 +55,10 @@
       // for every hostname, dashboard included. PR #52 bumped v1.5.0 -> v1.6.1
       // and took the edge node down at the next traefik restart.
       // Lift this once traefik/piceus#156 / fosrl/badger#31 are resolved AND
-      // the validate endpoint returns 200 for the target version.
+      // the validate endpoint returns 200 for the target version — probed WITH
+      // traefik's X-Plugin-Hash (sha256 of the archive); a bare curl always
+      // gets 404 (BUG-014). As of 2026-11-05 v1.6.0–v1.7.0 do validate with
+      // the hash; confirm with a local traefik run before lifting.
       matchPackageNames: ["fosrl/badger"],
       allowedVersions: "<=1.5.0",
     },
