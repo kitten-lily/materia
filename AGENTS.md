@@ -916,14 +916,18 @@ shell; see the `env = false` gotcha.
   Renovate PR #52's v1.5.0 → v1.6.1 bump took flutterina down this way
   (BUG-007). The outage waited for the next `traefik.service` restart,
   because the running process kept serving with the old plugin loaded.
-  `badgerVersion` is still held at `<=1.5.0` in `renovate.json5`. Lifting
-  the hold is a separate decision: test it with the local reproduction
-  below first. The `badger-catalog` workflow gates the pin. It runs only
-  when `components/pangolin/MANIFEST.toml` (or the workflow) changes,
-  retries for ~2 min, and logs `cf-ray`/`cf-cache-status`/`age` on every
-  attempt.
-  v1.6+ is only needed for Pangolin >= 1.22's public
-  resource type. To reproduce any plugin question locally without touching
+  The `<=1.5.0` hold was lifted on 2026-11-05. Upstream says v1.6.0–v1.7.0
+  were re-released after a plugin-registry outage that Traefik fixed on
+  2026-08-27 (traefik/traefik#13771). badger is now `v1.8.0`, after it
+  passed the hash check and loaded in a local traefik run (upstream
+  v3.7.16 and minimus v3.7.13, with a `v9.9.9` control that reproduces the
+  outage). Badger bumps are **never automerged** (`renovate.json5`): the
+  global automerge rule sets `ignoreTests`, so it would not wait for the
+  `badger-catalog` workflow. That workflow gates the pin. It runs only when
+  `components/pangolin/MANIFEST.toml` (or the workflow) changes, retries
+  for ~2 min, and logs `cf-ray`/`cf-cache-status`/`age` on every attempt.
+  Run the local reproduction below on every bump before merging.
+  To reproduce any plugin question locally without touching
   a host: `podman run --rm --tmpfs /plugins-storage -v <dir>:/etc/traefik:ro,Z
   reg.mini.dev/traefik:<tag> --configFile=/etc/traefik/traefik.yml` — the
   `--tmpfs` is required, or the plugin manager fails earlier with `mkdir

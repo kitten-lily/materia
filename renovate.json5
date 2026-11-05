@@ -46,21 +46,18 @@
       versioning: "regex:^(?<compatibility>ee)-(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$",
     },
     {
-      // fosrl/badger is HELD at v1.5.0. Every tag from v1.6.0 onward fails
-      // Traefik's plugin-catalog integrity check — `GET
-      // plugins.traefik.io/public/validate/github.com/fosrl/badger/<v>` returns
-      // 404 for v1.6.0/v1.6.1/v1.7.0 and 200 for v1.5.0 — which makes Traefik
-      // disable ALL plugins on startup, invalidating every router that
-      // references the badger middleware (i.e. all of them) and returning 404
-      // for every hostname, dashboard included. PR #52 bumped v1.5.0 -> v1.6.1
-      // and took the edge node down at the next traefik restart.
-      // Lift this once traefik/piceus#156 / fosrl/badger#31 are resolved AND
-      // the validate endpoint returns 200 for the target version — probed WITH
-      // traefik's X-Plugin-Hash (sha256 of the archive); a bare curl always
-      // gets 404 (BUG-014). As of 2026-11-05 v1.6.0–v1.7.0 do validate with
-      // the hash; confirm with a local traefik run before lifting.
+      // fosrl/badger bumps are never automerged. A version traefik can't
+      // load makes it disable ALL plugins on startup, invalidating every
+      // router that references the badger middleware (i.e. all of them) and
+      // returning 404 for every hostname, dashboard included. PR #52 did this
+      // at the next traefik restart (BUG-007). The global automerge rule sets
+      // ignoreTests, so it would not wait for the badger-catalog check.
+      // Before merging: the badger-catalog check is green, and the version
+      // loads in a local traefik run (AGENTS.md has the command).
+      // Replaces the <=1.5.0 hold, lifted 2026-11-05: v1.6.0-v1.7.0 were
+      // broken in the catalog until 2026-08-27 (traefik/traefik#13771).
       matchPackageNames: ["fosrl/badger"],
-      allowedVersions: "<=1.5.0",
+      automerge: false,
     },
     {
       // Jellyfin dropped the leading `10.` from its version scheme in

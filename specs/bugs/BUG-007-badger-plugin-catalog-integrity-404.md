@@ -70,8 +70,10 @@ download, not a CDN edge, not our network.
 `X-Plugin-Hash`. A missing or wrong hash gets 404 and the right hash gets
 200. It has also re-published v1.6.1 (archive sha256 is now
 `9a5a926900ab…`, not `33bcd3d7…`). With the right hash, v1.6.0, v1.6.1 and
-v1.7.0 all validate. The hold below stays until a local traefik run
-confirms it.
+v1.7.0 all validate. **Hold lifted 2026-11-05:** upstream re-released
+v1.6.0–v1.7.0 after a registry outage fixed on 2026-08-27
+(traefik/traefik#13771). v1.8.0 loads in a local traefik run, so badger is
+pinned to v1.8.0, and badger bumps are never automerged.
 
 Upstream has the same finding: fosrl/badger#31 (Pangolin maintainer:
 "We must have previously accidentally tagged a version v1.6.0 that the
