@@ -65,6 +65,15 @@ untested planner path on hosts still running materia v0.7.0 (#173).
    `materia-update` and confirm no `FATA`.
 4. `mise db:backup --target core@bow --compare /var/lib/db-backups/<stamp>`
    fails on any missing table or row loss. Then check that both apps load.
+   Postgres then warns of a **collation version mismatch** (glibc 2.44 on
+   minimus/Wolfi → 2.41 on Debian). For each of `mediamanager`, `postgres`
+   and `template1`, run `REINDEX DATABASE`, then
+   `ALTER DATABASE … REFRESH COLLATION VERSION`.
+
+   **Done on bow, 2026-11-05:** backup `20261105T101227Z` (grimmory 73
+   tables / 863 rows, mediamanager 15 / 8). After the swap: materia-update
+   green, both apps up over the tailnet, and `--compare` found no missing
+   tables and no row loss.
 5. flutterina (traefik) applies at its next `materia-update`. Check the
    public hostnames answer as before (baseline 2026-11-05:
    `pangolin.<domain>` and `beszel.<domain>` returned 200), and that

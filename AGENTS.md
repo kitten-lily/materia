@@ -2011,7 +2011,15 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   mount/volume)`. A failing service fails `materia-update` for the whole
   host. Confirmed locally; `mediamanager-postgres.container.gotmpl` sets
   the override. The `POSTGRES_USER`/`POSTGRES_DB`/`POSTGRES_PASSWORD`
-  contract is the same as minimus. The `.volume` stays root-owned with no
+  contract is the same as minimus. **Changing the image's distro changes
+  glibc, and with it postgres's collation version.** After the swap,
+  every connection warned `database "mediamanager" has a collation version
+  mismatch … created using collation version 2.44, but the operating
+  system provides version 2.41` (minimus/Wolfi → Debian). Text indexes
+  built under the old sort order can misorder non-ASCII keys. Fix, per
+  database (`mediamanager`, `postgres`, `template1`): `REINDEX DATABASE`,
+  then `ALTER DATABASE … REFRESH COLLATION VERSION`. MariaDB has no
+  equivalent problem: it ships its own collations. The `.volume` stays root-owned with no
   `User=`/`Group=`: the entrypoint chowns `PGDATA` itself. Was pinned to
   the 17 series (18 relocated the data directory, which would silently
   re-init an empty cluster on an existing volume) until issue #104
