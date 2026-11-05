@@ -241,6 +241,24 @@ no PCRs, `--token-only` unlocks) is skipped.
   `systemctl --failed`, and beszel's systemd failed count picks it up.
   It never shows up as a `materia-update` failure.
 
+**Verified on bow, 2026-11-05:**
+- materia-update green with the component (drive attached).
+- `mise usb-drive:enroll`:
+  - TPM2 token as keyslot 4, no PCRs; stale slots 1–3 wiped; password
+    slot 0 kept;
+  - unlocked and mounted (XFS) with no password;
+  - all checks pass after `f60005a` fixed two broken checks in the task.
+- Hotplug:
+  - `systemctl stop usb-drive-unlock.service` closed the mapping and
+    unmounted;
+  - after a physical replug, both units came back `active` and
+    `/dev/mapper/usb` was mounted at `/mnt/usb` within 10 s, with no
+    password.
+
+Not yet checked: pulling the drive while it is mounted (the clean stop
+was used instead), and a reboot with the drive attached. Check the
+reboot after bow's next Flatcar update.
+
 ## Risks / limits
 
 - **Containers:** a container bind-mounting `/mnt/usb` hard-fails when
