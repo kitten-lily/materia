@@ -174,7 +174,7 @@ fi
 echo "==> applying pinned image to live quadlet"
 
 _failed_before=$(mktemp)
-systemctl --failed --no-legend --plain --no-pager > "$_failed_before"
+systemctl --failed --no-legend --plain --no-pager | sort > "$_failed_before"
 
 _rewritten=$(mktemp "$(dirname "$_quadlet")/.materia-update.container.XXXXXX")
 _replaced=0
@@ -213,15 +213,16 @@ _legacy_output_is_v07() {
   done < "$1"
   return 1
 }
-for _legacy_output in \
-  /var/lib/materia/output/lastrun.toml \
-  /var/lib/materia/output/lastplan.toml
-do
-  if [[ -f "$_legacy_output" ]] && _legacy_output_is_v07 "$_legacy_output"; then
-    echo "removing v0.7 output incompatible with v0.8: $_legacy_output"
-    rm -f "$_legacy_output"
-  fi
-done
+_legacy_lastrun=/var/lib/materia/output/lastrun.toml
+_legacy_lastplan=/var/lib/materia/output/lastplan.toml
+if [[ -f "$_legacy_lastrun" ]] && _legacy_output_is_v07 "$_legacy_lastrun"; then
+  for _legacy_output in "$_legacy_lastrun" "$_legacy_lastplan"; do
+    if [[ -f "$_legacy_output" ]]; then
+      echo "removing v0.7 output incompatible with v0.8: $_legacy_output"
+      rm -f "$_legacy_output"
+    fi
+  done
+fi
 
 
 _apply_since=$(date --iso-8601=seconds)
@@ -269,15 +270,23 @@ if [[ -n "$_container_image_id" ]]; then
 fi
 
 _failed_after=$(mktemp)
-trap 'rm -f "$_failed_after"; _cleanup' EXIT
-systemctl --failed --no-legend --plain --no-pager > "$_failed_after"
-if ! cmp -s "$_failed_before" "$_failed_after"; then
-  echo "error: systemctl --failed changed during the upgrade" >&2
-  diff -u "$_failed_before" "$_failed_after" || true
-  exit 1
-fi
+_new_failed=$(mktemp)
+trap 'rm -f "$_failed_after" "$_new_failed"; _cleanup' EXIT
+for ((_health_wait = 0; _health_wait <= 24; _health_wait++)); do
+  systemctl --failed --no-legend --plain --no-pager | sort > "$_failed_after"
+  comm -13 "$_failed_before" "$_failed_after" > "$_new_failed"
+  if [[ ! -s "$_new_failed" ]]; then
+    break
+  fi
+  if [[ "$_health_wait" -eq 24 ]]; then
+    echo "error: new failed units remain after waiting for restart-time health probes" >&2
+    cat "$_new_failed" >&2
+    exit 1
+  fi
+  sleep 5
+done
 
-echo "verified systemctl --failed is unchanged"
+echo "verified reconciliation added no failed units"
 echo "==> pinned materia image applied successfully"
 PAYLOAD_EOF
 

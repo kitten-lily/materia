@@ -69,15 +69,15 @@ The default is read-only. `--apply` proceeds only after that plan succeeds, then
 
 1. Replaces only the live quadlet's `Image=` and `HostName=` lines, preserving
    all other content and the file's owner/mode.
-2. When the live image differs from the pin, removes the exact legacy
-   `output/lastrun.toml` and `output/lastplan.toml` paths required by the v0.8
-   migration. Re-running the task on v0.8 preserves v0.8's new-format output.
+2. When `output/lastrun.toml` contains v0.7's top-level `plan = [...]`,
+   removes that file and its paired `lastplan.toml`. Re-running the task after
+   v0.8 writes the structured `[plan]` table preserves both diagnostics.
 3. Runs `systemctl daemon-reload` and starts `materia-update.service`.
 4. Prints and checks only the journal entries from that invocation for `FATA`.
 5. Verifies the local image digest and generated service command use the
    repository pin; if the oneshot container remains, also verifies its image ID.
-6. Verifies `systemctl --failed` is byte-for-byte unchanged from the pre-apply
-   baseline.
+6. Waits for restart-time health probes to settle, then verifies the run added
+   no failed units. Failures that disappeared during reconciliation are allowed.
 
 The wrapper enables SSH keepalives. If a managed network-path service restart
 drops the apply connection, it reconnects and repeats the idempotent
@@ -152,7 +152,7 @@ Observed evidence required per host:
 - post-apply journal for the new run contains no `FATA`;
 - local image digest and generated service command match the repository pin;
 - the live `HostName=` equals the target's OS hostname;
-- failed-unit set is unchanged;
+- no new failed units remain after restart-time health probes settle;
 - the next scheduled 05:00 run exits green with no `FATA` and no failed-unit
   change.
 
@@ -165,7 +165,11 @@ Observed evidence required per host:
   so the original client missed its post-check even though the remote service
   finished green. The task now detects that apply-stage disconnect and
   reconnects idempotently. The failed-unit smoke exposed BUG-017: Newt's
-  persisted ID no longer exists in Pangolin (failing streak 2319).
+  persisted ID no longer existed in Pangolin (failing streak 2319). Bow's
+  obsolete Newt was subsequently removed; its healthy Tailscale gateway now
+  owns `newt-net`, all forward targets passed, and `systemctl --failed` is empty.
+  A restart-time gateway health probe also exposed a verification race; the task
+  now waits for probes to settle and rejects only newly failed units.
 - **flutterina:** first run completed successfully; digest and generated
   service matched the pin; failed-unit set was unchanged. `pangolin-pod`,
   `app`, `gerbil`, `traefik`, `beszel-hub`, `newt` and `tailscale` were active;

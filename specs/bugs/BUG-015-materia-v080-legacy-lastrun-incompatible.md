@@ -49,10 +49,12 @@ also record the failed invocation through its healthchecks.io dead-man switch.
 1. Its read-only v0.8 plan overlays a temporary empty directory at
    `/var/lib/materia/output`, so the old file is invisible to the new image
    without mutating host state.
-2. Only after that plan succeeds and `--apply` is set, it removes the legacy
-   exact paths `output/lastrun.toml` and `output/lastplan.toml` before starting
-   the v0.8 service. The files are diagnostics, not reconciliation input;
-   v0.8 recreates its own new-format output after the run.
+2. Only after that plan succeeds and `--apply` is set, it detects v0.7 by the
+   top-level `plan = [...]` in `output/lastrun.toml`, then removes that file and
+   its paired `lastplan.toml` before starting v0.8. The files are diagnostics,
+   not reconciliation input; v0.8 recreates its own new-format output after the
+   run. The paired v0.8 `lastplan.toml` still uses an array, so it is never used
+   alone as the legacy-format signal.
 
 The task does not delete wildcard matches. Future v0.8 rotation files use the
 new format and must remain available to facts.
@@ -64,6 +66,8 @@ new format and must remain available to facts.
 - With `--apply`, the legacy file is absent before service start, the v0.8 run
   completes without `FATA`, and v0.8 writes a parseable new-format last-run
   file.
+- A repeated v0.8 apply preserves the structured `lastrun.toml` and its paired
+  `lastplan.toml`.
 - A second v0.8 dry run succeeds against the newly generated state.
 
 ## Source
