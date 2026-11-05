@@ -5,4 +5,4 @@ Secrets = ["tailscaleAuthKey"]
 
 [[Services]]
 Service = "tailscale-gateway.service"
-RestartedBy = ["tailscale-gateway.container", "serve/serve.json", "tailscale-gateway-state.volume"]
+RestartedBy = ["tailscale-gateway.container", "newt.network", "serve/serve.json", "tailscale-gateway-state.volume"]
