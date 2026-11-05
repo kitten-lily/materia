@@ -173,10 +173,10 @@ components/
   grimmory/                     # Grimmory ebook/comic/audiobook library + MariaDB sidecar (standalone, bow-only)
     MANIFEST.toml                # component manifest — Secrets (grimmoryDbPassword, mariadbRootPassword), Services
     grimmory.container.gotmpl     # Grimmory app, joins newt-net, /books bind from LVM data disk, grimmory.<baseDomain>
-    grimmory-mariadb.container.gotmpl # Minimus MariaDB sidecar, joins newt-net, no PublishPort, MARIADB_* env
+    grimmory-mariadb.container.gotmpl # MariaDB sidecar (Docker Official Image), joins newt-net, no PublishPort, MARIADB_* env
     grimmory-data.volume          # named volume for /app/data (UID 1000)
     grimmory-bookdrop.volume      # named volume for /bookdrop (UID 1000)
-    grimmory-mariadb-config.volume # named volume for /var/lib/mysql (UID 1000)
+    grimmory-mariadb-config.volume # named volume for /var/lib/mysql (entrypoint chowns it to mysql/999)
   audiobookshelf/                # Audiobookshelf audiobook + podcast server (standalone, bow-only)
     MANIFEST.toml                # component manifest — Defaults, Services (no Secrets)
     audiobookshelf.container.gotmpl # joins newt-net, ro AudioBooks + rw Podcasts binds from LVM data disk, audiobookshelf.<baseDomain>
@@ -190,7 +190,7 @@ components/
   mediamanager/                  # MediaManager TV + movie management ("Arr" replacement, standalone, bow-only)
     MANIFEST.toml                # component manifest — Secrets (mediamanagerTokenSecret, mediamanagerDbPassword), Services
     mediamanager.container.gotmpl # app, joins newt-net, runs as UID 1000, single rw bind of LVM video/ subtree, mediamanager.<baseDomain>
-    mediamanager-postgres.container.gotmpl # minimus postgres 17 sidecar, joins newt-net, Notify=healthy gates the app
+    mediamanager-postgres.container.gotmpl # postgres 18 sidecar (Docker Official Image, PGDATA override), joins newt-net, Notify=healthy gates the app
     config.toml.gotmpl            # templated backend config, mounted read-only via CONFIG_DIR (see gotchas)
     mediamanager-db.volume        # named volume for /var/lib/postgresql/data (root-owned, entrypoint chowns it)
     mediamanager-images.volume    # named volume for the poster cache at /images (UID 1000)
@@ -232,7 +232,7 @@ mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, but
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, clean)
 ```
 
 ## Multi-server model
@@ -331,7 +331,7 @@ shell; see the `env = false` gotcha.
   use `--format docker`, or any local test of healthcheck behaviour will
   wrongly conclude podman ignores image healthchecks. (3) A plain-string
   `HealthCmd=` is wrapped in `/bin/sh -c`, which **does not exist** in
-  scratch/distroless images (`traefik` minimus, `beszel-hub`,
+  scratch/distroless images (`beszel-hub`,
   `beszel-agent`, both buildbarn images — confirmed by `podman exec … /bin/sh`
   failing with `crun: executable file /bin/sh not found`). Use the
   JSON-array form for those, which execs directly:
@@ -834,9 +834,11 @@ shell; see the `env = false` gotcha.
   fully closed — see
   `specs/plans/issue-38-restic-backup-timer-noop.md` and
   `specs/bugs/BUG-004-restic-backup-timer-remainaftereexit-noop.md`.
-- **Minimus images run as non-root (UID 1000), not root like most upstream
-  images.** Three things break when switching from an upstream image to a
-  minimus equivalent: (1) **privileged port binding** — UID 1000 can't bind
+- **Non-root images (UID 1000) need three changes, not just a new
+  `Image=`.** This was learned with minimus (none are left since the
+  2026-11 exit, see below), and it applies to any non-root image, e.g.
+  Docker Hardened Images (#174). Three things break when switching from
+  an upstream image to a non-root one: (1) **privileged port binding** — UID 1000 can't bind
   to ports < 1024 without `CAP_NET_BIND_SERVICE`; add
   `AddCapability=NET_BIND_SERVICE` to the `.container.gotmpl`. (2) **named
   volume write permissions** — podman named volumes are root-owned by
@@ -929,7 +931,7 @@ shell; see the `env = false` gotcha.
   Run the local reproduction below on every bump before merging.
   To reproduce any plugin question locally without touching
   a host: `podman run --rm --tmpfs /plugins-storage -v <dir>:/etc/traefik:ro,Z
-  reg.mini.dev/traefik:<tag> --configFile=/etc/traefik/traefik.yml` — the
+  docker.io/library/traefik:<tag> --configFile=/etc/traefik/traefik.yml` — the
   `--tmpfs` is required, or the plugin manager fails earlier with `mkdir
   plugins-storage: permission denied` and masks the real error.
 - **CI can publish more than one image per push — verify the digest against
@@ -1869,21 +1871,34 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   translation would be. Container name resolution only works on named
   networks, not the default bridge — the same reason every
   tunnel-reachable service in this repo uses `Network=newt-net`.
-- **Minimus MariaDB uses `MARIADB_*` env, not `MYSQL_*`; data dir is
-  `/var/lib/mysql`, not `/config`.** Upstream's grimmory compose used
+- **The official MariaDB image uses `MARIADB_*` env, not `MYSQL_*`; data
+  dir is `/var/lib/mysql`, not `/config`.** Upstream's grimmory compose used
   the linuxserver mariadb image (`lscr.io/linuxserver/mariadb`), which
   accepts `MYSQL_ROOT_PASSWORD`/`MYSQL_DATABASE`/`MYSQL_USER`/
-  `MYSQL_PASSWORD` and stores data in `/config`. The minimus mariadb
-  image (`reg.mini.dev/mariadb`) follows the **official** MariaDB
-  convention: `MARIADB_ROOT_PASSWORD`/`MARIADB_USER`/`MARIADB_PASSWORD`/
-  `MARIADB_DATABASE` env, data in `/var/lib/mysql`. The `MYSQL_*` env
-  vars are **silently ignored** on minimus, leaving the DB
-  uninitialized with no error (the app then fails with a connection
-  refusal). Both are required translations when switching from the
-  linuxserver image to minimus — flagged here so a future contributor
-  copying from upstream's compose doesn't carry over the wrong names.
-  The minimus registry is `reg.mini.dev` (auth realm `auth.mini.dev`,
-  not Docker Hub / GHCR) — same host as the pinned traefik image.
+  `MYSQL_PASSWORD` and stores data in `/config`. The official convention
+  (minimus followed it too) is `MARIADB_ROOT_PASSWORD`/`MARIADB_USER`/
+  `MARIADB_PASSWORD`/`MARIADB_DATABASE`, with data in `/var/lib/mysql`.
+  `MYSQL_*` vars are **silently ignored**, leaving the DB uninitialized
+  with no error (the app then fails with a connection refusal). Don't
+  carry the linuxserver names over from upstream's compose.
+- **minimus (`reg.mini.dev`) closed anonymous pulls around 2026-10-22,
+  and nothing failed loudly.** After the echo.ai acquisition,
+  `auth.mini.dev/api/v1/registry/token` answers 403. The only signal was
+  Renovate's dependency dashboard (#6): `Failed to look up docker package
+  reg.mini.dev/…: no-result`. Running containers kept going on cached
+  images, but no more security updates arrived, and a rebuilt or pruned
+  host could not have pulled traefik at all (no edge). traefik, grimmory's
+  mariadb and mediamanager's postgres moved to Docker Official Images at
+  the same versions (plan: `specs/plans/minimus-exit.md`). Takeover of the
+  minimus-written data was smoke-tested locally first:
+  - mariadb's and postgres's root entrypoints chown a UID-1000 datadir to
+    999 and keep the data;
+  - root traefik reads the UID-1000, mode-600 `acme.json`.
+
+  `mise db:backup` takes the dump, row counts and volume tar before any
+  DB image change, and `--compare` checks the counts afterwards. **Read
+  the Renovate dashboard's lookup failures**: an image that stops getting
+  lookups is frozen, not current.
 - **Pangolin SSO is OFF for grimmory, audiobookshelf and jellyfin — only
   Media Manager has it.** Earlier versions of this file said SSO was
   "kept ON" for the three media apps; the live dashboard (Pangolin API,
@@ -1986,16 +2001,21 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   pipefail`. Cost of `User=1000`: host-side bind sources must be owned
   `1000:1000` (deploy step), and named volumes the app writes need
   `User=1000`/`Group=1000` per the existing UID-1000 volume gotcha.
-- **Minimus postgres needs no translation (unlike minimus mariadb).**
-  `reg.mini.dev/postgres` ships the stock `docker-entrypoint.sh` with
-  `User=0` and `PGDATA=/var/lib/postgresql/data`, i.e. the official
-  `POSTGRES_USER`/`POSTGRES_DB`/`POSTGRES_PASSWORD` contract and the
-  official data dir — verified from the registry image config and then
-  live. So its `.volume` stays root-owned with no `User=`/`Group=` (the
-  entrypoint chowns `PGDATA` itself), the opposite of what minimus
-  mariadb needed. Was pinned to the 17 series (18 relocated the data
-  directory, which would silently re-init an empty cluster on an existing
-  volume) until issue #104 (2026-09-17): mediamanager wasn't in production
+- **Official postgres 18 needs `PGDATA=/var/lib/postgresql/data` set
+  explicitly.** The official 18+ image moved its default `PGDATA` to
+  `/var/lib/postgresql/18/docker`. With an existing cluster mounted at
+  `/var/lib/postgresql/data` (minimus's path, and the 17-era default) and
+  no override, it **refuses to start** with exit 1: `Error: in 18+, these
+  Docker images are configured to store database data in a format …
+  there appears to be PostgreSQL data in: /var/lib/postgresql/data (unused
+  mount/volume)`. A failing service fails `materia-update` for the whole
+  host. Confirmed locally; `mediamanager-postgres.container.gotmpl` sets
+  the override. The `POSTGRES_USER`/`POSTGRES_DB`/`POSTGRES_PASSWORD`
+  contract is the same as minimus. The `.volume` stays root-owned with no
+  `User=`/`Group=`: the entrypoint chowns `PGDATA` itself. Was pinned to
+  the 17 series (18 relocated the data directory, which would silently
+  re-init an empty cluster on an existing volume) until issue #104
+  (2026-09-17): mediamanager wasn't in production
   use yet, so the bump to v18.6 was landed as a rebuild-in-place (wipe
   `mediamanager-db.volume`, let v18's entrypoint init a fresh cluster) —
   NOT a `pg_dump`/`pg_upgrade` migration. **That wipe was never executed

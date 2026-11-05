@@ -5,17 +5,20 @@ After=network-online.target
 
 [Container]
 ContainerName=mediamanager-postgres
-# Minimus postgres. Unlike minimus mariadb (which needed MARIADB_*/data-dir
-# translation away from the linuxserver convention), this image ships the
-# stock docker-entrypoint.sh with User=0 and PGDATA=/var/lib/postgresql/data,
-# i.e. the official POSTGRES_* contract. On v18 (moved from v17 in issue #104):
-# v18 relocated PGDATA's on-disk layout vs. v17, so this was NOT a live
-# pg_dump/pg_upgrade migration — mediamanager wasn't in production use yet,
-# so mediamanager-db.volume was wiped and v18 initialized a fresh cluster at
-# deploy time. If real data exists before a future major bump, that bump
-# needs an actual pg_dump/pg_upgrade path instead of this rebuild-in-place
-# approach.
-Image=reg.mini.dev/postgres:v18.6@sha256:54dae5eb80238c7d4b52fccf89a2b002904b1f4edab64a2c4028c0c692987de0
+# Docker Official Image (minimus exit: reg.mini.dev stopped serving anonymous
+# pulls around 2026-10-22). Same version as the minimus pin. Official
+# POSTGRES_* contract; the entrypoint starts as root and chowns PGDATA to
+# postgres (999) itself.
+# Take `mise db:backup` before changing this image or the version. A major
+# bump needs a pg_dump/pg_upgrade path: the #104 rebuild-in-place only
+# worked because the DB was empty then (BUG-010).
+Image=docker.io/library/postgres:18.6@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
+# REQUIRED. The official 18+ image defaults PGDATA to
+# /var/lib/postgresql/18/docker. With data at /var/lib/postgresql/data it
+# refuses to start ("there appears to be PostgreSQL data in
+# /var/lib/postgresql/data (unused mount/volume)", exit 1), and a failing
+# service fails materia-update for the whole host. minimus used this path.
+Environment=PGDATA=/var/lib/postgresql/data
 
 # Join newt-net so the app reaches it by container name
 # "mediamanager-postgres:5432". No PublishPort — 5432 is never bound on the
