@@ -79,6 +79,14 @@ untested planner path on hosts still running materia v0.7.0 (#173).
    `pangolin.<domain>` and `beszel.<domain>` returned 200), and that
    `journalctl -u traefik.service` shows `Plugins loaded`.
 
+   **Done on flutterina, 2026-11-05**, together with the badger v1.8.0 bump,
+   in a single traefik restart. materia-update green (`update_rc=0`). traefik
+   runs `docker.io/library/traefik@sha256:1336e85a…` and logged
+   `Plugins loaded. plugins=["badger"]`. app, gerbil, traefik and the pod
+   are active. pangolin/beszel return 200 from outside, still advertising
+   HTTP/3, and beszel's `/api/health` returns 200. No minimus images are
+   left in the repo.
+
 ## Rollback
 
 - Image: revert the swap commit. The cached minimus images are still on
