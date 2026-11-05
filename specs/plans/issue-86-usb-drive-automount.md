@@ -92,38 +92,43 @@ list). The key is sealed to bow's TPM storage root key only.
 - With this, the units are static files, with no `.gotmpl` and no
   attributes.
 
-### materia semantics (verified in source, v0.8.0 / master)
+### materia semantics (verified in source; revised after the first deploy)
+
+The first design listed the unlock service in `[[Services]]` with
+`Static` + `Stopped` + `Oneshot`, checked against v0.8.0 / master
+source. **bow runs materia v0.7.0**: its live quadlet still uses
+`:stable`, pulled 2026-06-16, even though the `.bu` templates now pin
+v0.8.0. In v0.7.0, `coalesceServices` (`pkg/plan/plan.go`) adds a
+zero-valued action whenever a service's only planned step is Enable.
+The first deploy (`bea0e45`) therefore aborted bow's whole run with
+`FATA unsupported resource type: Unknown` (0/7 steps, nothing applied).
+Upstream fixed it in v0.7.1 (`f1e7425`). The component was unassigned
+in `36992ea` and bow went green again.
+
+Revised approach, safe on v0.7.0 and v0.8.0:
 
 - `.service` and `.mount` resources are `ResourceTypeService`. They are
   installed to `/etc/systemd/system`, and a daemon-reload follows.
-- Only `Static = true` makes materia enable a unit (D-Bus
-  `EnableUnitFiles`, which honours `[Install]`).
-- `Stopped = true` / `Oneshot = true` give a wildcard desired state:
-  materia never starts it and never stops it. Without an action there is
-  no health check, so a missing drive, or a failed unlock, can't fail a
+- Units *not* listed in `[[Services]]` get no service actions at all: no
+  enable, start, stop, disable or health check. That holds in both
+  versions: v0.7.0 `GenerateServiceActions` only walks `ServiceConfigs`,
+  and in the failed v0.7.0 plan `mnt-usb.mount` got `Install` only. A
+  missing drive or a failed unlock therefore can't fail a
   `materia-update` run (that would be the all-host blast radius of
   BUG-010).
-- **Catch:** materia enables the unit *after* the plan's only
-  daemon-reload and never reloads again. The enroll task runs
-  `systemctl daemon-reload` itself. A reboot also fixes it.
-- The mount unit is not listed in `[[Services]]`. It is installed but
-  never enabled or started by materia; the unlock service pulls it in.
+- The one-time `systemctl enable usb-drive-unlock.service` moves into the
+  enroll task. `systemctl enable` reloads systemd itself, so the
+  enable-after-reload gap of the `Static` approach goes away too.
+- Trade-off: enablement isn't declared in git. If someone disables the
+  unit by hand, materia won't re-enable it; re-running the enroll task
+  does.
 
 ## Changes
 
 ### `components/usb-drive/` (new; assigned in `MANIFEST.toml` `Hosts.bow.Components`)
 
-`MANIFEST.toml`:
-
-```toml
-[[Services]]
-Service = "usb-drive-unlock.service"
-# Enabled (WantedBy= the drive's device unit) but never started or
-# health-checked by materia: it only runs when the drive is plugged in.
-Static = true
-Stopped = true
-Oneshot = true
-```
+`MANIFEST.toml`: comments only, deliberately no `[[Services]]` (see
+above).
 
 `usb-drive-unlock.service`:
 
@@ -183,7 +188,7 @@ no PCRs, `--token-only` unlocks) is skipped.
 
 1. Refuse unless `usb-drive-unlock.service` is installed (the component
    lands first) and `cryptsetup isLuks <device>` succeeds.
-2. `systemctl daemon-reload`, to cover materia's enable-after-reload gap.
+2. `systemctl enable usb-drive-unlock.service`, which also reloads systemd.
 3. `systemd-cryptenroll <device> --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=`.
    Enrollment completes first and the new slot is excluded from the wipe
    (`systemd-cryptenroll(1)`), so the three stale tokens go and the
@@ -205,19 +210,20 @@ no PCRs, `--token-only` unlocks) is skipped.
 
 - `AGENTS.md`: repo-layout entry for `usb-drive/` and the `usb-drive/enroll` task.
 - `AGENTS.md` gotchas:
-  - the `Static`+`Stopped`+`Oneshot` "enabled, never started" recipe
-    and its enable-after-reload catch;
+  - check the materia version a host actually runs (bow: v0.7.0), and
+    the v0.7.0 Enable-only phantom action;
+  - hotplug units: install with materia, unlisted; enable from the task;
   - no replace function in templates, so use a dash-free label for
     device units;
   - never bind-mount `/mnt/usb` into a materia container (see Risks).
 
 ## Sequencing
 
-1. Land `components/usb-drive/` and the `Hosts.bow` assignment. Wait for
-   bow's `materia-update`, then confirm it was green:
-   `journalctl -u materia-update.service | grep FATA` is empty, and
-   `systemctl is-enabled usb-drive-unlock.service` is `enabled`. The
-   unit is harmless before step 2: no device carries the label yet.
+1. Land `components/usb-drive/` and the `Hosts.bow` assignment, run
+   bow's `materia-update`, and confirm it was green: no `FATA` in
+   `journalctl -u materia-update.service`, and both units exist under
+   `/etc/systemd/system`. The units are inert before step 2: nothing
+   enables them, and no device carries the label yet.
 2. Run `mise usb-drive:enroll --target core@bow --device /dev/disk/by-id/usb-Seagate_Desktop_<serial>-0:0`.
 
 ## Acceptance
@@ -265,6 +271,7 @@ no PCRs, `--token-only` unlocks) is skipped.
 - A restic or rsync job to the drive: a `.service` with
   `BindsTo=mnt-usb.mount`, `After=mnt-usb.mount`,
   `WantedBy=mnt-usb.mount` (runs on every plug), and/or a timer whose
-  service has `ConditionPathIsMountPoint=/mnt/usb`. It gets the same
-  `Static`/`Stopped`/`Oneshot` manifest treatment, for the same
-  never-health-checked reason.
+  service has `ConditionPathIsMountPoint=/mnt/usb`. Same treatment as the
+  unlock unit: unlisted in `[[Services]]` (or `Static`+`Stopped`+`Oneshot`
+  once the host runs materia ≥ v0.7.1), for the same never-health-checked
+  reason.

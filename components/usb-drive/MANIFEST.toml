@@ -1,15 +1,12 @@
 # External LUKS2 USB drive: unlocked with a TPM2 token and mounted at
-# /mnt/usb whenever it is plugged in. One-time host setup (TPM enrollment +
-# the LUKS label the units match on): `mise usb-drive:enroll`.
-# See specs/plans/issue-86-usb-drive-automount.md.
-
-[[Services]]
-Service = "usb-drive-unlock.service"
-# Static: materia enables the unit, which honours its WantedBy= on the
-# drive's device unit, so plugging the drive in starts it.
-# Stopped + Oneshot: materia never starts, stops or health-checks it. An
-# absent drive or a failed unlock must not fail materia-update, which
-# would block every component on the host.
-Static = true
-Stopped = true
-Oneshot = true
+# /mnt/usb whenever it is plugged in. One-time host setup (TPM enrollment,
+# the LUKS label the units match on, and enabling the unlock unit):
+# `mise usb-drive:enroll`. See specs/plans/issue-86-usb-drive-automount.md.
+#
+# Deliberately no [[Services]] entries. materia installs unlisted units but
+# never starts, stops, enables, disables or health-checks them, so an absent
+# drive or a failed unlock can't fail materia-update. The enroll task runs
+# `systemctl enable usb-drive-unlock.service` instead of `Static = true`:
+# materia v0.7.0 (what bow's materia-update runs) adds a phantom action to any
+# plan whose only step for a service is Enable, and the whole run then aborts
+# with "FATA unsupported resource type: Unknown" (fixed upstream in v0.7.1).

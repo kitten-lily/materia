@@ -203,7 +203,7 @@ components/
     config/asset.jsonnet          # bb-asset config — 'error' fetcher (pure cache, never fetches on its own)
     certs/server.crt              # self-signed server TLS cert, SAN bst-cache.<tailnet>.ts.net (public; key is a materia Secret; krytis pins a copy)
   usb-drive/                     # LUKS2 USB drive, TPM2 auto-unlock + mount at /mnt/usb on hotplug (bow-only, issue #86)
-    MANIFEST.toml                # [[Services]] Static+Stopped+Oneshot: enabled, never started/health-checked by materia
+    MANIFEST.toml                # no [[Services]] on purpose: materia installs the units but never touches them (see gotchas)
     usb-drive-unlock.service     # WantedBy= the drive's by-label device unit; systemd-cryptsetup attach, tpm2-device=auto,headless
     mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
 images/
@@ -686,29 +686,43 @@ shell; see the `env = false` gotcha.
   update`) ever starts it. Pair with `Oneshot = true` ("prevents materia
   from checking if this service started successfully") for jobs that don't
   stay running.
-- **A materia unit that starts on hotplug: `Static` + `Stopped` +
-  `Oneshot`, then one extra `daemon-reload`.** The `usb-drive` component
-  (#86) needs `usb-drive-unlock.service` *enabled* (its
-  `WantedBy=dev-disk-by\x2dlabel-usbbackup.device` is what starts it when
-  the drive is plugged in) but never started or health-checked by
-  materia. A failed check while the drive is absent would fail
-  `materia-update` for every component on bow. Confirmed in materia
-  source (v0.8.0 / master):
-  - only `Static = true` makes materia enable a plain unit
-    (`EnableUnitFiles`, honours `[Install]`);
-  - without `Static`, a listed unit that something else enabled is
-    actively *disabled* on the next run;
-  - `Stopped`/`Oneshot` give a wildcard desired state, so there is no
-    start/stop action and therefore no health check.
+- **Check the materia version a host actually runs, not the template's
+  pin, before relying on materia behaviour.** Both `.bu` templates pin
+  `ghcr.io/stryan/materia:v0.8.0@sha256:…` (#105, Renovate #168). But
+  bow's live `/etc/containers/systemd/materia-update.container` still says
+  `ghcr.io/stryan/materia:stable`, and the image under that tag was pulled
+  2026-06-16, which is **v0.7.0**. Butane changes don't reach a running
+  host, and nothing re-pulls `:stable`. Check with
+  `sudo podman image inspect ghcr.io/stryan/materia:stable --format
+  '{{.Created}}'` and match the date against the release tags. Caught by
+  #86 (2026-11-05): the usb-drive design was checked against v0.8.0
+  source, and its first deploy aborted bow's whole `materia-update` with
+  `FATA unsupported resource type: Unknown`. The plan began with a
+  zero-valued `(<parent>) Unknown Unknown` step. v0.7.0's
+  `coalesceServices` (`pkg/plan/plan.go`) emits that phantom action for
+  any service whose only planned step is Enable or Disable. Upstream
+  fixed it in v0.7.1 (`f1e7425`). On v0.7.0, then, `Static = true` on a
+  unit that is never started (`Stopped`/`Oneshot`) breaks every run that
+  has to enable it. Recovery was unassigning the component (0/7 steps
+  had run, so nothing to undo).
+- **A unit that starts on hotplug: install it with materia, enable it
+  outside materia.** `usb-drive-unlock.service` (#86) has
+  `WantedBy=dev-disk-by\x2dlabel-usbbackup.device`, so plugging the drive
+  in starts it. materia must never start it or health-check it: a failed
+  check while the drive is absent would fail `materia-update` for every
+  component on the host. Units *not* listed in `[[Services]]` get
+  exactly that treatment on every version checked (v0.7.0, v0.8.0):
+  installed, daemon-reloaded, never enabled, started, stopped or
+  checked. `mise usb-drive:enroll` runs the one-time
+  `systemctl enable`, which also reloads systemd. On v0.7.1+ the
+  declarative alternative is `Static` + `Stopped` + `Oneshot`, but
+  materia enables *after* its only daemon-reload, so it would still need
+  an extra reload.
 
-  Two catches:
-  - materia enables *after* the plan's only daemon-reload, so systemd
-    doesn't see the new `.device.wants/` link until another reload or a
-    reboot. `mise usb-drive:enroll` runs the reload.
-  - Templates have no string-replace function, so a UUID can't be turned
-    into the `\x2d`-escaped device unit name. Match the drive by a
-    dash-free LUKS2 label instead (`cryptsetup config --label`); udev
-    creates `by-label` links for `crypto` devices too.
+  Templates have no string-replace function, so a UUID can't be turned
+  into the `\x2d`-escaped device unit name. Match the drive by a
+  dash-free LUKS2 label instead (`cryptsetup config --label`); udev
+  creates `by-label` links for `crypto` devices too.
 
   **A mount pulled in by a service must carry `Options=nofail`.** A
   `.mount` unit otherwise gets an implicit `Before=local-fs.target`, and

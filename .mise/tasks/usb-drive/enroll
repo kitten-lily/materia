@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="One-time host setup for the usb-drive component: TPM2-enroll the LUKS drive, label it, verify it unlocks and mounts"
+#MISE description="One-time host setup for the usb-drive component: TPM2-enroll the LUKS drive, label it, enable the unlock unit, verify it unlocks and mounts"
 
 #USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
 #USAGE flag "--device <device>" required=#true help="the drive's whole-disk path on the host, e.g. /dev/disk/by-id/usb-<vendor>_<model>_<serial>-0:0"
@@ -9,12 +9,13 @@
 # drive, after materia has installed the component on the host. Safe to
 # re-run: a working enrollment is left alone.
 #
+#   - Enables usb-drive-unlock.service (WantedBy= the drive's device unit).
+#     materia doesn't: see components/usb-drive/MANIFEST.toml for why.
 #   - Enrolls a systemd-tpm2 token bound to this TPM with NO PCRs, and
 #     wipes every other TPM2 slot. The password slot is never touched.
 #     No PCRs because PCR 7/14 move with shim SBAT and dbx updates on
 #     Flatcar and add almost nothing with Secure Boot off.
 #   - Sets the LUKS2 label the units match on (usbbackup).
-#   - Runs daemon-reload: materia enables the unit after its own reload.
 #
 # See specs/plans/issue-86-usb-drive-automount.md.
 
@@ -46,11 +47,9 @@ mounted() { findmnt -n -S "$MAPPER" "$MNT" >/dev/null 2>&1; }
 cryptsetup isLuks --type luks2 "$DEVICE" || fail "not a LUKS2 device: $DEVICE"
 systemctl cat "$UNIT" >/dev/null 2>&1 \
   || fail "$UNIT is not installed. Assign the usb-drive component to this host and let materia-update run first."
-[[ "$(systemctl is-enabled "$UNIT" 2>/dev/null)" == enabled ]] \
-  || fail "$UNIT is installed but not enabled. Check: journalctl -u materia-update.service"
 
-step "daemon-reload (materia enables the unit after its own reload)"
-systemctl daemon-reload
+step "Enabling $UNIT (systemctl enable also reloads systemd)"
+systemctl enable "$UNIT"
 
 if [[ "$(tpm2_tokens)" == 1 && -z "$(tpm2_pcrs)" ]] && token_unlocks; then
   step "TPM2 token already enrolled (no PCRs) and unlocks; skipping enrollment"
