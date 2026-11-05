@@ -113,7 +113,9 @@ KubeStellar and Pangolin live ABOVE node layer.
   beszel-hub through the tunnel (by container name on `newt-net`) instead
   of via local-site resources (Pangolin's docs: local sites support no
   health checking at all, nor private resources or Docker socket
-  scanning). Both flutterina and bow are in `[Roles.tunneled]`.
+  scanning). Flutterina is the only current `[Roles.tunneled]` host. Bow uses
+  Tailscale for transport instead; its gateway component owns the still-shared
+  `newt-net` network.
 
 ## Repo layout
 
@@ -149,10 +151,10 @@ components/
   beszel-agent/                  # beszel monitoring agent (role-assigned, see below)
     MANIFEST.toml                # component manifest — Secrets = ["beszelToken"], Defaults, Services
     beszel-agent.container.gotmpl # Network=host, podman socket mount, connects to hub via public URL; optional per-host extra disk
-  newt/                          # Pangolin tunnel client (role-assigned, [Roles.tunneled])
+  newt/                          # Pangolin tunnel client (role-assigned, [Roles.tunneled]; currently flutterina-only)
     MANIFEST.toml                # component manifest — Secrets = ["newtProvisioningKey"], Services
     newt.container.gotmpl        # userspace WireGuard tunnel client, joins newt-net network
-    newt.network                 # named podman network for tunnel-reachable services
+    newt.network                 # named network for Newt hosts; gateway owns the same name on bow
     newt-config.volume           # named volume for Newt's provisioned id/secret
     blueprint.gotmpl             # provisioning blueprint (imperative, applied once at first boot)
   tailscale/                     # host-level Tailscale node, kernel mode (role-assigned, [Roles.tailnet], #163)
@@ -162,6 +164,7 @@ components/
   tailscale-gateway/             # userspace Tailscale node on newt-net, bow-only (the newt analogue, #163)
     MANIFEST.toml                # component manifest — Secrets = ["tailscaleAuthKey"] (vault globals), Services
     tailscale-gateway.container.gotmpl # tag:gateway, no caps/PublishPort, TS_SERVE_CONFIG from the serve/ dir
+    newt.network                 # owns bow's stable newt-net after the Newt-to-Tailscale cutover
     serve/serve.json             # TCP forwards by container name (one tailnet port per app) + 22 → host sshd; Services block hosts svc:bst-cache
     advertise-services           # ExecStartPost helper: re-advertises every svc: in serve.json (containerboot bug workaround)
     tailscale-gateway-state.volume # named volume for node identity (losing it = new node, new tailnet IP)
@@ -1420,10 +1423,12 @@ shell; see the `env = false` gotcha.
   three seconds with `400 "No newt found with that newtId"` and its
   `/tmp/newt-health` probe stays unhealthy forever. The stored provisioning
   key is ignored and cannot repair that ID. Caught on bow during #173
-  (BUG-017; failing streak 2319). Either remove Newt from the host if its site
-  was intentionally retired, or create a fresh provisioning key/site and
-  remove `newt-config.volume` so it provisions a new identity. Resetting the
-  transient failed healthcheck unit alone is a one-minute cosmetic fix.
+  (BUG-017; failing streak 2319). Bow's site was intentionally retired, so bow
+  was removed from `[Roles.tunneled]`; `tailscale-gateway` now owns the
+  still-required `newt-net` resource. On a host that still needs Newt, create a
+  fresh provisioning key/site and remove `newt-config.volume` so it provisions
+  a new identity. Resetting the transient failed healthcheck unit alone is a
+  one-minute cosmetic fix.
 - **`DOCKER_ENFORCE_NETWORK_VALIDATION=true` only filters container
   *discovery* — it does not gate proxying.** The flag reaches exactly one
   place in newt's source (`docker.ListContainers`, called from

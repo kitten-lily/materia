@@ -113,7 +113,7 @@ bugs:
     file: specs/bugs/BUG-016-materia-quadlet-literal-percent-q-hostname.md
   - id: BUG-017
     title: "bow Newt credentials reference a deleted server record; tunnel unhealthy"
-    status: open
+    status: fixed
     severity: P1
     found: 2026-11-05
     epic: newt

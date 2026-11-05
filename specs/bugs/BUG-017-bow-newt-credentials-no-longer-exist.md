@@ -1,6 +1,6 @@
 # BUG-017: bow Newt credentials reference a deleted server record
 
-**Status:** open
+**Status:** fixed
 **Severity:** P1
 **Found:** 2026-11-05
 **Epic:** newt
@@ -39,17 +39,21 @@ unset as designed, so the container is not restarted into a loop.
 - Resources already moved to the Tailscale backhaul may be unaffected, but any
   remaining Pangolin target using bow's Newt site cannot work.
 
-## Decision required
+## Resolution
 
-Determine whether bow's Newt site was deliberately deleted during the
-Tailscale backhaul migration:
+Bow no longer needs Newt. All seven bow HTTP applications had already moved to
+the flutterina Pangolin site backed by bow's Tailscale gateway; Buildbarn uses
+Tailscale Service `svc:bst-cache`. No live HTTP route used the deleted bow site.
 
-1. If Newt is no longer part of bow's architecture, remove bow from the
-   `[Roles.tunneled]` assignment (or otherwise remove only its Newt component)
-   and remove any remaining Pangolin resources that target that site.
-2. If Newt remains required, create a new provisioning key/site, update the
-   vault, remove `newt-config.volume`, and let Newt provision a fresh ID. The
-   existing provisioning key cannot repair a consumed/deleted identity.
+The fix removes bow from `[Roles.tunneled]`, which removes its dead Newt
+container, consumed config volume, provisioning secret and component resources.
+Bow's application containers still require the named `newt-net` network for
+container-name resolution, so `components/tailscale-gateway/newt.network` now
+owns that resource on bow. Flutterina remains in `[Roles.tunneled]`.
 
-Do not reset the failed unit alone: the next one-minute healthcheck recreates
-it while the credential error persists.
+The live cutover completed without `FATA`. Newt and its stale transient
+healthcheck are absent; the gateway is healthy; all nine configured forward
+targets resolve and accept connections from the gateway; the five unprotected
+public application routes return 2xx/3xx, and Media Manager returns its expected
+Pangolin-auth 401. A second materia plan reports `No changes made`, and
+`systemctl --failed` is empty.
