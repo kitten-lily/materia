@@ -267,7 +267,12 @@ the real root, and its `Wants=` didn't fire [INFERENCE]. Fix: add
 `usb-drive-boot.service` (`WantedBy=multi-user.target`,
 `ConditionPathExists=/dev/disk/by-label/usbbackup`, runs
 `systemctl --no-block start usb-drive-unlock.service`), enabled by
-`mise usb-drive:enroll`. Confirm with the next reboot.
+`mise usb-drive:enroll`.
+
+**Confirmed by reboot, 2026-11-06 08:45:** `usb-drive-boot.service` ran at
+12.0 s, `usb-drive-unlock.service` unlocked with the TPM at 12.3–13.0 s,
+and `mnt-usb.mount` mounted at 13.5 s. No password prompt, and
+`systemctl --failed` was empty.
 
 ## Risks / limits
 
