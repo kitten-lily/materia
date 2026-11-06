@@ -42,8 +42,8 @@ storage:
 
   files:
     # Explicit hostname — ties the OS hostname to this server's name, which
-    # materia's m_facts "hostname" macro uses to resolve MANIFEST.toml's
-    # Hosts.<name> assignment. SERVER_NAME is substituted at transpile time.
+    # materia matches against MANIFEST.toml's Hosts.<name> (materia.hostname
+    # fact). SERVER_NAME is substituted at transpile time.
     - path: /etc/hostname
       mode: 0644
       # Flatcar's image ships /etc/hostname; without overwrite Ignition

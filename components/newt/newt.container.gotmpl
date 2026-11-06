@@ -37,9 +37,9 @@ Volume=/run/podman/podman.sock:/var/run/docker.sock:ro
 Environment=PANGOLIN_ENDPOINT=https://pangolin.{{ .baseDomain }}
 
 # Site name — the server's hostname, so the site appears as e.g. "bow" in
-# the Pangolin dashboard. m_facts "hostname" resolves the OS hostname,
+# the Pangolin dashboard. m_facts "host.hostname" resolves the OS hostname,
 # matching the MANIFEST.toml Hosts.<name> assignment.
-Environment=NEWT_NAME={{ m_facts "hostname" }}
+Environment=NEWT_NAME={{ m_facts "host.hostname" }}
 
 # Config file path inside the container (on the named volume).
 Environment=CONFIG_FILE=/var/newt/config.json

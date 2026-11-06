@@ -1574,8 +1574,8 @@ shell; see the `env = false` gotcha.
   never be wiped and reprovisioned the way `bow`/`flutterina` were. The
   server name is the box's real OS hostname (`krytis-runner`), not the
   GitHub Actions runner label — required, not just convention, since
-  materia resolves `MANIFEST.toml`'s `Hosts.<name>` against
-  `m_facts "hostname"`. Sequencing still matters: land the host +
+  materia matches `MANIFEST.toml`'s `Hosts.<name>` against its
+  `materia.hostname` fact. Sequencing still matters: land the host +
   `Components = []` first, populate `attributes/<name>.yml`, *then* wire
   the real `Components` list — same "map has no entry for key"
   fatal-abort risk as any other new component, see the
@@ -1664,8 +1664,13 @@ service, no GitHub App credentials (materia replaces all of those).
   after Ignition and only on Hetzner — this write removes the dependency on
   that timing and gives bare-metal (no metadata service) the same guarantee.
   This is what makes the multi-server model's unified identity hold:
-  materia's `m_facts "hostname"` resolves `MANIFEST.toml`'s `Hosts.<name>` by
-  the box's actual OS hostname.
+  materia matches `MANIFEST.toml`'s `Hosts.<name>` against its
+  `materia.hostname` fact. That fact is the config's `hostname` override if
+  set (no host sets one), else the OS hostname inside the materia container,
+  which the quadlet pins with `HostName=${SERVER_NAME}`. Templates name the
+  host with `m_facts "host.hostname"`, the same OS hostname. v0.8 still
+  accepts the deprecated bare `m_facts "hostname"` but logs a warning for
+  it; the templates switched once every host ran v0.8.
 - **Pure-podman sysext** — `podman` enabled in `enabled-sysext.conf`; Docker and
   containerd disabled via `/dev/null` symlinks on their `.raw` sysext files (the
   `-docker` syntax in `enabled-sysext.conf` doesn't work — flatcar/Flatcar#1481).

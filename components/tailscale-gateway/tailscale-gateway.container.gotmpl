@@ -19,7 +19,7 @@ Environment=TS_USERSPACE=true
 # `tailscale set`, which ignores TS_EXTRA_ARGS).
 Environment=TS_EXTRA_ARGS=--advertise-tags=tag:gateway
 Environment=TS_AUTH_ONCE=true
-Environment=TS_HOSTNAME={{ m_facts "hostname" }}
+Environment=TS_HOSTNAME={{ m_facts "host.hostname" }}
 
 # OAuth client secret with ?ephemeral=false&preauthorized=true stored in the
 # value itself; without that suffix the node registers as ephemeral and is

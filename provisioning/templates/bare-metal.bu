@@ -9,8 +9,8 @@
 # enable-podman-socket oneshot, core user SSH key). The explicit
 # /etc/hostname write is load-bearing here: bare metal has no cloud
 # metadata service, so without it the box keeps whatever hostname the
-# firmware/dhcp hands out and materia's m_facts "hostname" can't resolve
-# the MANIFEST.toml Hosts.<name> assignment.
+# firmware/dhcp hands out and materia can't match the MANIFEST.toml
+# Hosts.<name> assignment (materia.hostname fact).
 #
 # Two patterns ported from the sibling server-provisioning repo's
 # hosting.bu, generalized away from their kubernetes-specific use:
@@ -51,8 +51,8 @@ storage:
 
   files:
     # Explicit hostname — ties the OS hostname to this server's name, which
-    # materia's m_facts "hostname" macro uses to resolve MANIFEST.toml's
-    # Hosts.<name> assignment. SERVER_NAME is substituted at transpile time.
+    # materia matches against MANIFEST.toml's Hosts.<name> (materia.hostname
+    # fact). SERVER_NAME is substituted at transpile time.
     # Load-bearing on bare metal: no cloud metadata service to set it later.
     - path: /etc/hostname
       mode: 0644

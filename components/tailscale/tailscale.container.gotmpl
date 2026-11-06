@@ -34,7 +34,7 @@ AddCapability=NET_ADMIN NET_RAW
 # again, plus the udp/40000 rule on the Hetzner firewall.
 Environment="TS_EXTRA_ARGS=--advertise-tags={{ m_default "tailscaleTags" "tag:server" }} --netfilter-mode=off"
 Environment=TS_AUTH_ONCE=true
-Environment=TS_HOSTNAME={{ m_facts "hostname" }}
+Environment=TS_HOSTNAME={{ m_facts "host.hostname" }}
 {{- if exists "tailscaleMagicDns" }}
 
 # Opt-in per host (tailscaleMagicDns in MANIFEST.toml): MagicDNS on the

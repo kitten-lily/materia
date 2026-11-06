@@ -18,9 +18,9 @@ Volume={{ m_dataDir "restic-backup" }}/ssh_config:/usr/local/etc/ssh_config:ro,Z
 Secret=materia-storageBoxSshKey,type=mount,target=/run/secrets/ssh_key,mode=0400
 {{ secretEnv "resticPassword" "RESTIC_PASSWORD" }}
 Environment=RESTIC_REPOSITORY={{ .resticRepository }}
-Environment=RESTIC_HOST={{ m_facts "hostname" }}
+Environment=RESTIC_HOST={{ m_facts "host.hostname" }}
 Environment=HC_PING_URL={{ .hcPingURL }}
-Environment=HC_SLUG=restic-backup-{{ m_facts "hostname" }}
+Environment=HC_SLUG=restic-backup-{{ m_facts "host.hostname" }}
 Environment=KEEP_DAILY={{ m_default "resticKeepDaily" "7" }}
 Environment=KEEP_WEEKLY={{ m_default "resticKeepWeekly" "4" }}
 Environment=KEEP_MONTHLY={{ m_default "resticKeepMonthly" "6" }}

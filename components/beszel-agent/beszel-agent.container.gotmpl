@@ -56,7 +56,7 @@ Mask=/sys/fs/btrfs
 {{ secretEnv "beszelToken" "TOKEN" }}
 Environment="KEY={{ .beszelKey }}"
 Environment=HUB_URL={{ .beszelHubUrl }}
-Environment=SYSTEM_NAME={{ m_facts "hostname" }}
+Environment=SYSTEM_NAME={{ m_facts "host.hostname" }}
 # Required for container-level stats (issue #32) — beszel's DOCKER_HOST is
 # never auto-detected for Podman ("either the Podman API or the Docker
 # API, not both", per beszel.dev/guide/podman); without it the agent
