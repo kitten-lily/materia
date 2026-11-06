@@ -7,6 +7,7 @@
 # never starts, stops, enables, disables or health-checks them, so an absent
 # drive or a failed unlock can't fail materia-update. The enroll task runs
 # `systemctl enable usb-drive-unlock.service` instead of `Static = true`:
-# materia v0.7.0 (what bow's materia-update runs) adds a phantom action to any
-# plan whose only step for a service is Enable, and the whole run then aborts
+# materia v0.7.0 (what bow ran until #173) adds a phantom action to any plan
+# whose only step for a service is Enable, and the whole run then aborts
 # with "FATA unsupported resource type: Unknown" (fixed upstream in v0.7.1).
+# The unlisted approach also works on v0.8.0, so it stays.

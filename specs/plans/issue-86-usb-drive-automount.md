@@ -210,8 +210,9 @@ no PCRs, `--token-only` unlocks) is skipped.
 
 - `AGENTS.md`: repo-layout entry for `usb-drive/` and the `usb-drive/enroll` task.
 - `AGENTS.md` gotchas:
-  - check the materia version a host actually runs (bow: v0.7.0), and
-    the v0.7.0 Enable-only phantom action;
+  - check the materia version a host actually runs (bow ran v0.7.0 until
+    #173 upgraded every host to v0.8.0), and the v0.7.0 Enable-only
+    phantom action;
   - hotplug units: install with materia, unlisted; enable from the task;
   - no replace function in templates, so use a dash-free label for
     device units;
