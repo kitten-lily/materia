@@ -1,0 +1,18 @@
+[Unit]
+Description=Unlock USB backup drive if it is attached at boot
+# usb-drive-unlock.service's WantedBy= on the drive's device unit only covers
+# hotplug. A drive attached at boot is already found in the initrd (bow:
+# sdb at 4.7 s), so after switch-root its device unit is already plugged and
+# never starts its Wants= (2026-11-06: no attempt at all, device plugged with
+# Wants= set). This covers boot. The condition skips cleanly when no drive is
+# attached. Starting usb-drive-unlock.service directly would instead wait 90 s
+# for the device (BindsTo=) and leave a failed unit.
+ConditionPathExists=/dev/disk/by-label/usbbackup
+
+[Service]
+Type=oneshot
+# --no-block: queue the start instead of waiting on it from inside boot.
+ExecStart=/usr/bin/systemctl --no-block start usb-drive-unlock.service
+
+[Install]
+WantedBy=multi-user.target

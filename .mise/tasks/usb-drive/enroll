@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="One-time host setup for the usb-drive component: TPM2-enroll the LUKS drive, label it, enable the unlock unit, verify it unlocks and mounts"
+#MISE description="One-time host setup for the usb-drive component: TPM2-enroll the LUKS drive, label it, enable its units, verify it unlocks and mounts"
 
 #USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
 #USAGE flag "--device <device>" required=#true help="the drive's whole-disk path on the host, e.g. /dev/disk/by-id/usb-<vendor>_<model>_<serial>-0:0"
@@ -9,8 +9,10 @@
 # drive, after materia has installed the component on the host. Safe to
 # re-run: a working enrollment is left alone.
 #
-#   - Enables usb-drive-unlock.service (WantedBy= the drive's device unit).
-#     materia doesn't: see components/usb-drive/MANIFEST.toml for why.
+#   - Enables usb-drive-unlock.service (WantedBy= the drive's device unit,
+#     for hotplug) and usb-drive-boot.service (WantedBy=multi-user.target,
+#     for a drive attached at boot). materia doesn't: see
+#     components/usb-drive/MANIFEST.toml for why.
 #   - Enrolls a systemd-tpm2 token bound to this TPM with NO PCRs, and
 #     wipes every other TPM2 slot. The password slot is never touched.
 #     No PCRs because PCR 7/14 move with shim SBAT and dbx updates on
@@ -31,6 +33,7 @@ set -euo pipefail
 # Must match components/usb-drive/*.
 LABEL=usbbackup
 UNIT=usb-drive-unlock.service
+BOOT_UNIT=usb-drive-boot.service
 MAPPER=/dev/mapper/usb
 MNT=/mnt/usb
 DEVUNIT="dev-disk-by\\x2dlabel-$LABEL.device"
@@ -46,14 +49,17 @@ mounted() { findmnt -n --source "$MAPPER" --mountpoint "$MNT" >/dev/null 2>&1; }
 # Ask the device unit (not `show -p WantedBy`, which prints the name quoted
 # and with the backslash doubled).
 wanted() { systemctl show -p Wants --value "$DEVUNIT" | tr ' ' '\n' | grep -qxF "$UNIT"; }
+boot_enabled() { [[ "$(systemctl is-enabled "$BOOT_UNIT" 2>/dev/null)" == enabled ]]; }
 
 [[ -b "$DEVICE" ]] || fail "not a block device: $DEVICE"
 cryptsetup isLuks --type luks2 "$DEVICE" || fail "not a LUKS2 device: $DEVICE"
-systemctl cat "$UNIT" >/dev/null 2>&1 \
-  || fail "$UNIT is not installed. Assign the usb-drive component to this host and let materia-update run first."
+for u in "$UNIT" "$BOOT_UNIT"; do
+  systemctl cat "$u" >/dev/null 2>&1 \
+    || fail "$u is not installed. Assign the usb-drive component to this host and let materia-update run first."
+done
 
-step "Enabling $UNIT (systemctl enable also reloads systemd)"
-systemctl enable "$UNIT"
+step "Enabling $UNIT + $BOOT_UNIT (systemctl enable also reloads systemd)"
+systemctl enable "$UNIT" "$BOOT_UNIT"
 
 if [[ "$(tpm2_tokens)" == 1 && -z "$(tpm2_pcrs)" ]] && token_unlocks; then
   step "TPM2 token already enrolled (no PCRs) and unlocks; skipping enrollment"
@@ -86,6 +92,7 @@ DESC="exactly one TPM2 token" check test "$(tpm2_tokens)" = 1
 DESC="TPM2 token bound to no PCRs" check test -z "$(tpm2_pcrs)"
 DESC="password keyslot 0 still present" check sh -c "cryptsetup luksDump '$DEVICE' | grep -qE '^  0: luks2'"
 DESC="$UNIT is wanted by $DEVUNIT" check wanted
+DESC="$BOOT_UNIT is enabled for boot" check boot_enabled
 DESC="$MAPPER mounted at $MNT" check mounted
 [[ $rc == 0 ]] || fail "verification failed"
 findmnt "$MNT"

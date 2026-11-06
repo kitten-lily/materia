@@ -257,8 +257,17 @@ no PCRs, `--token-only` unlocks) is skipped.
     password.
 
 Not yet checked: pulling the drive while it is mounted (the clean stop
-was used instead), and a reboot with the drive attached. Check the
-reboot after bow's next Flatcar update.
+was used instead).
+
+**Reboot, 2026-11-06: the drive was not mounted.** Both units stayed
+`inactive` and never ran this boot, even though the device unit was
+`plugged` with `Wants=usb-drive-unlock.service`. The drive was found in
+the initrd (4.7 s), so the device unit never went from dead to plugged in
+the real root, and its `Wants=` didn't fire [INFERENCE]. Fix: add
+`usb-drive-boot.service` (`WantedBy=multi-user.target`,
+`ConditionPathExists=/dev/disk/by-label/usbbackup`, runs
+`systemctl --no-block start usb-drive-unlock.service`), enabled by
+`mise usb-drive:enroll`. Confirm with the next reboot.
 
 ## Risks / limits
 

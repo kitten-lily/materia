@@ -208,6 +208,7 @@ components/
   usb-drive/                     # LUKS2 USB drive, TPM2 auto-unlock + mount at /mnt/usb on hotplug (bow-only, issue #86)
     MANIFEST.toml                # no [[Services]] on purpose: materia installs the units but never touches them (see gotchas)
     usb-drive-unlock.service     # WantedBy= the drive's by-label device unit; systemd-cryptsetup attach, tpm2-device=auto,headless
+    usb-drive-boot.service       # WantedBy=multi-user.target; ConditionPathExists on the label, starts the unlock unit for a drive attached at boot
     mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
 images/
   restic-backup/
@@ -740,6 +741,20 @@ shell; see the `env = false` gotcha.
   into the `\x2d`-escaped device unit name. Match the drive by a
   dash-free LUKS2 label instead (`cryptsetup config --label`); udev
   creates `by-label` links for `crypto` devices too.
+
+  **A device unit's `Wants=` covers hotplug only, not a device present
+  at boot.** After the 2026-11-06 reboot, bow's drive was found **in the
+  initrd** (`sdb` at 4.7 s, journal hostname `localhost`). Its device unit
+  ended up `plugged` with `Wants=usb-drive-unlock.service`, yet nothing
+  even tried to start the unit (no journal entries). [INFERENCE] The device
+  was already plugged when the real root took over, so there was no
+  dead→plugged transition to start its `Wants=`; a replug does produce one.
+  Fix: `usb-drive-boot.service`, `WantedBy=multi-user.target` with
+  `ConditionPathExists=/dev/disk/by-label/usbbackup`, runs
+  `systemctl --no-block start usb-drive-unlock.service`. Don't add
+  `WantedBy=multi-user.target` to a unit that has `BindsTo=` on a device:
+  every boot without the drive would wait 90 s for the device and leave a
+  failed unit.
 
   **A mount pulled in by a service must carry `Options=nofail`.** A
   `.mount` unit otherwise gets an implicit `Before=local-fs.target`, and
