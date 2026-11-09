@@ -11,7 +11,7 @@ Artifacts are cached outside the repo on the operator workstation under
 | 0 — Baseline, release, recovery | **in progress** (steps 1, 3 pass; 2, 4, 5 pending) | below |
 | 1 — Local control plane + worker | not started | |
 | 2 — Host VPN + cross-site networking | not started | |
-| 3 — Materia + persistent services | not started; **to be rescoped**, see F2 decision | |
+| 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
 | 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
@@ -176,8 +176,9 @@ Bluefin. If Bluefin Server is adopted, services are expected to move to
 Kubernetes-native deployment, replacing Materia rather than running beside
 it. The plan's Phase 3 (Materia/rootful Quadlet compatibility) and the
 Materia timer requirements in the Phase 5 soak therefore need rescoping
-toward Kubernetes-native equivalents. Until the plan is revised, Phase 3 is
-not executed as written.
+toward Kubernetes-native equivalents. The plan was revised the same day
+(b22e9ce): Phase 3 now trials Argo CD-reconciled workloads, and the Phase 5
+soak checks Argo CD syncs and scheduled backup jobs.
 
 **F3 — Reboot and update controls (feeds Phase 1 step 1 and Phase 5).**
 - kured: disable with `HOMELAB_KURED=no` in `homelab.conf` (on by default).
