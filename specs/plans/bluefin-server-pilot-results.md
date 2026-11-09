@@ -11,8 +11,8 @@ Artifacts are cached outside the repo on the operator workstation under
 | 0 — Baseline, release, recovery | **in progress** (steps 1, 3 pass; 2, 4, 5 pending) | below |
 | 1 — Local control plane + worker | not started | |
 | 2 — Host VPN + cross-site networking | not started | |
-| 3 — Materia + persistent services | not started; **at risk**, see F2 | |
-| 4 — Hetzner edge worker | not started; **likely blocked**, see F1 | |
+| 3 — Materia + persistent services | not started; **to be rescoped**, see F2 decision | |
+| 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
 
@@ -124,20 +124,43 @@ Inputs gathered so far:
 
 ## Findings
 
-**F1 — Hetzner x86 Cloud boots legacy BIOS; Bluefin needs UEFI. Likely blocks
-Phase 4.** flutterina, the same CX family the plan uses for the pilot edge,
-has no `/sys/firmware/efi` and reports SeaBIOS firmware. Bluefin boots via
+**F1 — Firmware depends on the Hetzner server-type generation. RESOLVED:
+UEFI is available, but not on CX.** flutterina (cx23, created 2025-10-30) has
+no `/sys/firmware/efi` and reports SeaBIOS firmware. Bluefin boots via
 systemd-boot/UKI with A/B boot counting, and the release ships only x86-64
-assets (the build defines `aarch64`, but no arm64 release artifacts exist, so
-Hetzner's UEFI-booting CAX/Arm line is not an option today). The plan's own
-rule (Phase 4 step 1) is to stop the provider phase if UEFI cannot be
-supplied. Confirming on a disposable CX23 costs a few cents but is still a
-paid, outward-facing action. Options: (a) confirm on a disposable CX23 and
-record the stop; (b) evaluate another provider with UEFI x86 VMs for the edge
-role; (c) keep flutterina on Flatcar outside the cluster and pilot only bow.
+assets (no arm64 release artifacts, so the CAX/Arm line is not an option).
+
+Probe, 2026-11-09 (operator chose option 1a). **CX23 cannot be ordered**:
+`hcloud server-type list` shows cx23/cx33/cx43/cx53 available in no location.
+So the probe used the closest orderable x86 type, `cpx12` in hel1
+(€0.023/h), with a temporary SSH key and a firewall allowing tcp/22 from the
+operator's IP only, all labelled `pilot=bluefin`:
+
+- Debian 13 system image: `/sys/firmware/efi` present, `efi: EFI v2.7 by
+  Ubuntu distribution of EDK II`, DMI still "Hetzner vServer 20171111". The
+  disk has both a BIOS-boot and an EFI System partition. No `SecureBoot`
+  variable and no PK/KEK/db enrolled, so Secure Boot is unavailable or off.
+- Rebuilt from the **same Flatcar snapshot flutterina was built from**
+  (`flatcar-stable-x86`): still UEFI. The image does not select the
+  firmware; the server type does.
+- Server, firewall and SSH key deleted about 2 minutes after creation.
+  `hcloud {server,firewall,ssh-key} list -l pilot=bluefin` all empty, and
+  only flutterina remains.
+
+Consequences:
+- Phase 4 uses **`cpx22`** (2 vCPU, 4 GB, €0.039/h in hel1), the orderable
+  equivalent of cx23's RAM, instead of CX23. Capacity results are measured on
+  a different CPU generation (AMD EPYC-Genoa, faster per core per the
+  2026-09-24 benchmarks), so they are not a like-for-like sizing of
+  flutterina's current box.
+- Secure Boot is off on Hetzner. Phase 1 step 2 already treats an insecure
+  exception as a provider constraint; record it as such.
+- Not Bluefin-specific: CX types are currently unorderable. A
+  delete-and-recreate of flutterina (as opposed to `hz:rebuild`, which keeps
+  the server) would have to move to another type.
 
 **F2 — Bluefin's Podman sysext is rootless-only and ships no Quadlet
-generator. Puts Phase 3 at risk.** Extracted `podman_26.11.1701.raw.zst`
+generator. Not a blocker, per the operator decision below.** Extracted `podman_26.11.1701.raw.zst`
 contains only *user* units (`bluefin-podman.service`/`.socket` under
 `/usr/lib/systemd/user`), private binaries under `/usr/lib/bluefin/podman`
 (podman, crun, conmon, netavark, aardvark-dns, pasta), and **no quadlet
@@ -147,6 +170,14 @@ binary and no system generator**. Materia installs Quadlets to
 Materia needs a self-maintained rootful Podman/Quadlet sysext. The plan says
 to record that cost and reconsider the migration before more service tests
 (Phase 3 exit).
+
+*Operator decision, 2026-11-09:* Materia is not a long-term requirement on
+Bluefin. If Bluefin Server is adopted, services are expected to move to
+Kubernetes-native deployment, replacing Materia rather than running beside
+it. The plan's Phase 3 (Materia/rootful Quadlet compatibility) and the
+Materia timer requirements in the Phase 5 soak therefore need rescoping
+toward Kubernetes-native equivalents. Until the plan is revised, Phase 3 is
+not executed as written.
 
 **F3 — Reboot and update controls (feeds Phase 1 step 1 and Phase 5).**
 - kured: disable with `HOMELAB_KURED=no` in `homelab.conf` (on by default).
