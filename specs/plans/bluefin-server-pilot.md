@@ -131,7 +131,9 @@ informational and never passes a gate on its own.
    SSH goes over the tailnet, with the provider console as fallback.
    Verify: the posture is recorded in the results file and the pilot firewall
    exists (`hcloud firewall describe <pilot-firewall>`) before Phase 4 creates
-   a server.
+   a server. Decided 2026-11-09 (results, Phase 0 step 5): netfilter mode
+   off, Cilium host policies as the host firewall, firewall `bluefin-pilot`
+   created.
 
 Exit: exact artifacts identified, signature verified, resource budget and
 network posture recorded, and no production disks or credentials attached to
@@ -186,7 +188,8 @@ no failed units, unresolved pod failures, or repeated credential prompts.
    first-party extension. It must start before kubeadm and survive a broken
    CNI. Keep pilot tags separate from production gateway tags. Use the
    netfilter mode recorded in Phase 0 step 5 and confirm it does not mix
-   iptables backends with Cilium. Verify:
+   iptables backends with Cilium. `tailscaled.service` is disabled by preset
+   in the Tailscale sysext, so the Butane enables it. Verify:
    `ip address show tailscale0; tailscale status; systemctl status tailscaled;
    tailscale debug prefs | grep -i netfilter; nft list ruleset` (no rules in
    tables owned by another backend).
@@ -204,7 +207,10 @@ no failed units, unresolved pod failures, or repeated credential prompts.
    import bow's Flatcar firewall or flush runtime-managed rules.
    Verify: `cilium status --wait; cilium connectivity test` from a pinned CLI
    matching the installed Cilium, with test endpoints placed on both sites.
-   Also prove what must fail: from a host outside the tailnet, over both
+   Apply the Cilium host firewall policies chosen in Phase 0 step 5
+   (`CiliumClusterwideNetworkPolicy` with a node selector; enable Cilium's
+   host firewall first) and record them in the pilot source. Also prove what
+   must fail: from a host outside the tailnet, over both
    public IPv4 and IPv6, connections to 6443, 6447, 10250 and the Cilium
    transport port are refused or time out (`nc -vz -w 5 <addr> <port>` per
    port and address family, every one failing).

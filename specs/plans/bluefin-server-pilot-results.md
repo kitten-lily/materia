@@ -8,7 +8,7 @@ Artifacts are cached outside the repo on the operator workstation under
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| 0 — Baseline, release, recovery | **in progress** (steps 1, 2, 3 pass; 4 procedures written, checks pending; 5 pending) | below |
+| 0 — Baseline, release, recovery | **in progress** (steps 1, 2, 3, 5 pass; 4 procedures written, its checks run in Phase 1) | below |
 | 1 — Local control plane + worker | not started | |
 | 2 — Host VPN + cross-site networking | not started | |
 | 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
@@ -155,20 +155,47 @@ Pilot policy: every node gets a console root password. Its two checks
 an installed node and run in Phase 1. The tailnet enrollment policy and the
 pilot Proton Pass vault are proposed, not applied.
 
-### Step 5: network posture — pending (needs operator decisions)
+### Step 5: network posture — pass
 
-Inputs gathered so far:
+Decided by the operator on 2026-11-09:
 
-- Joining defaults to **mDNS** discovery plus a passphrase on TCP 6447.
-  `HOMELAB_CONTROL_PLANE=host[:port]` skips mDNS. The pilot must set it on
-  every node (plan requirement: no cross-site mDNS dependency).
-- The Tailscale sysext exists and is signed (`tailscale_26.11.1701.raw.zst`);
-  its netfilter behaviour is not yet inspected.
-- Production backends: both hosts run netavark through iptables-nft
-  (`iptables v1.8.13 (nf_tables)`); bow also loads nftables `inet filter`.
-- Still undecided: Tailscale netfilter mode, pilot host firewall, and the
-  pilot Hetzner firewall object (not created; creating it is an
-  outward-facing change awaiting approval).
+| Item | Decision | Why |
+| --- | --- | --- |
+| Tailscale netfilter mode | **off** on every pilot node (`--netfilter-mode=off`) | keeps Tailscale from writing rules next to Cilium's; the pilot nodes advertise no routes and are not exit nodes, so only the 100.64.0.0/10 anti-spoof drop is lost |
+| Host firewall | **Cilium host policies** (host firewall, `CiliumClusterwideNetworkPolicy` with a node selector) | Bluefin ships no host firewall at all (no nftables files in the source tree); Kubernetes-native; also covers the `hostNetwork` Pangolin pod; production bow would need the same to replace its nftables posture |
+| Pilot Hetzner firewall | created now, rules below | free; required before Phase 4 creates a server |
+| Tailscale relay | the pilot does not use flutterina's production peer relay | no production dependency; udp/41641 is open on the edge instead |
+
+Facts behind the decisions, from the extracted sysexts: `tailscaled.service`
+runs natively on the host with `--port=${PORT}` (41641 by default, from
+`/usr/share/bluefin/tailscale/tailscaled.defaults`, overridable in
+`/etc/default/tailscaled`) and is **disabled** by preset (`80-tailscale.preset`),
+so the pilot Butane must enable it. Cilium runs in `routing-mode: tunnel`,
+`tunnel-protocol: vxlan` (udp/8472) with `enable-ipv4-masquerade`. Joining
+defaults to mDNS plus a passphrase on TCP 6447; `HOMELAB_CONTROL_PLANE`
+skips mDNS and is set on every node.
+
+Pilot firewall `bluefin-pilot` (id 12011815, label `pilot=bluefin`),
+created 2026-11-09 20:51 CET, **not applied** to any server; Phase 4
+attaches it at server creation. Inbound, from `0.0.0.0/0` and `::/0`:
+
+| Protocol/port | Purpose |
+| --- | --- |
+| tcp/443 | Traefik HTTPS (Pangolin test) |
+| udp/443 | Traefik HTTP/3 |
+| udp/51820 | Gerbil WireGuard |
+| udp/21820 | Gerbil client relay |
+| udp/41641 | Tailscale direct peer connections |
+| icmp | diagnostics |
+
+No rule for tcp/22, 6443, 6447, 10250 or udp/8472: SSH, the API, joining,
+kubelet and VXLAN all go over the tailnet. Verified with `hcloud firewall
+describe bluefin-pilot`. Remove it in the pilot cleanup.
+
+Operator actions: the `bluefin-pilot` Proton Pass vault was created on
+2026-11-09 (`pass-cli vault list` shows it; it holds no items yet). Still
+open: apply the `tag:bluefin-pilot` tailnet policy (recovery doc, T2), which
+is needed before Phase 1 enrolls a node.
 
 ## Findings
 
