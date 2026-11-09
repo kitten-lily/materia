@@ -8,7 +8,7 @@ Artifacts are cached outside the repo on the operator workstation under
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| 0 — Baseline, release, recovery | **in progress** (steps 1, 2, 3 pass; 4, 5 pending) | below |
+| 0 — Baseline, release, recovery | **in progress** (steps 1, 2, 3 pass; 4 procedures written, checks pending; 5 pending) | below |
 | 1 — Local control plane + worker | not started | |
 | 2 — Host VPN + cross-site networking | not started | |
 | 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
@@ -64,8 +64,8 @@ shrink the OS disks, or pick another host.
 
 UEFI console boot test, 2026-11-09, on melog:
 
-- QEMU 10.2.4, `q35` with KVM, 4 vCPU, 8 GiB, `OVMF_CODE.fd` (no Secure
-  Boot enforcement) with a fresh copy of `OVMF_VARS.fd`. The verified
+- QEMU 10.2.4, `q35` with KVM, 4 vCPU, 8 GiB, `OVMF_CODE.fd` (the non-SMM
+  build) with a fresh copy of `OVMF_VARS.fd`. The verified
   installer image was attached as a USB disk through a qcow2 overlay (the
   downloaded image is never written), plus an empty 64 GiB sparse virtio
   target disk. Console captured from serial and by QMP `screendump`. Run
@@ -91,9 +91,14 @@ UEFI console boot test, 2026-11-09, on melog:
 - Stopped via QMP `quit` without answering the prompt. The target qcow2 stayed
   at ~200 KB, so nothing was installed.
 
-Not covered here, and still needed in Phase 1: Secure Boot *enforcement*
-(rerun with `OVMF_CODE_4M.secboot.fd`, `smm=on` and fresh secboot VARS), an
-actual install, and the recovery boot from the installer over an installed
+Correction: the installer's `bluefin-installer-secure-boot.service` check
+went straight to the disk prompt. Per upstream `usb-installer.md`, it does
+that only when Secure Boot is on with the Bluefin certificate in `db`; every
+other state shows a warning first. So after enrollment this firmware ran with
+Secure Boot on, even on the non-SMM OVMF build (whose variable store is not
+SMM-protected). Still needed in Phase 1: the SMM build
+(`OVMF_CODE_4M.secboot.fd`, `smm=on`) for a tamper-resistant variable store,
+an actual install, and the recovery boot from the installer over an installed
 disk (Phase 0 step 4).
 
 ### Step 3: release verification — pass
@@ -138,7 +143,17 @@ Second release for update testing: candidate **v26.11.1714** (latest, same
 day). Upstream cut four releases on 2026-11-06 alone, so "latest" will move;
 re-pin and check its Kubernetes minor before Phase 5.
 
-### Step 4: recovery procedures — pending
+### Step 4: recovery procedures — written; checks pending
+
+Procedures and restore inputs:
+[bluefin-server-pilot-recovery.md](bluefin-server-pilot-recovery.md).
+Upstream facts that shaped them: no emergency shell (a failed boot reboots);
+the installer is offline with no shell, so its "recovery boot" is a
+reinstall; root is locked unless a console password is set at first boot.
+Pilot policy: every node gets a console root password. Its two checks
+(console access with networking off, reinstall over an installed disk) need
+an installed node and run in Phase 1. The tailnet enrollment policy and the
+pilot Proton Pass vault are proposed, not applied.
 
 ### Step 5: network posture — pending (needs operator decisions)
 
