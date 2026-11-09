@@ -8,7 +8,7 @@ Artifacts are cached outside the repo on the operator workstation under
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| 0 — Baseline, release, recovery | **in progress** (steps 1, 3 pass; 2, 4, 5 pending) | below |
+| 0 — Baseline, release, recovery | **in progress** (steps 1, 2, 3 pass; 4, 5 pending) | below |
 | 1 — Local control plane + worker | not started | |
 | 2 — Host VPN + cross-site networking | not started | |
 | 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
@@ -52,7 +52,7 @@ concurrency cannot be read from existing data. Only throughput is available
 (Traefik metrics or access log), which needs its own approval. Until then,
 Phase 4's load profile can only be specified as throughput.
 
-### Step 2: home-side virtualization — candidate found, boot test pending
+### Step 2: home-side virtualization — pass
 
 Candidate: the operator workstation (melog): 16 threads, 31 GiB RAM (~20 GiB
 available under normal use), `/dev/kvm`, `qemu-system-x86_64`, OVMF
@@ -60,8 +60,41 @@ including Secure Boot variants (`OVMF_CODE_4M.secboot.fd`). libvirt is not
 installed or running, so `virt-host-validate` is unavailable; plain QEMU is
 enough. `/var` has 76 GiB free (92% used), which does not fit the plan's
 allocation (64 + 2 data + 40 GiB) fully provisioned. Use sparse qcow2 and
-shrink the OS disks, or pick another host. Not yet done: the disposable UEFI
-VM console boot.
+shrink the OS disks, or pick another host.
+
+UEFI console boot test, 2026-11-09, on melog:
+
+- QEMU 10.2.4, `q35` with KVM, 4 vCPU, 8 GiB, `OVMF_CODE.fd` (no Secure
+  Boot enforcement) with a fresh copy of `OVMF_VARS.fd`. The verified
+  installer image was attached as a USB disk through a qcow2 overlay (the
+  downloaded image is never written), plus an empty 64 GiB sparse virtio
+  target disk. Console captured from serial and by QMP `screendump`. Run
+  files are in `~/.cache/bluefin-pilot/vm/uefi-test/`.
+- First boot: OVMF loaded the installer's systemd-boot, which found the
+  firmware in Secure Boot setup mode, printed `Enrolling secure boot keys
+  from directory: \loader\keys\auto` and `Custom Secure Boot keys
+  successfully enrolled, rebooting the system now!`, then rebooted. **The
+  installer enrolls its own PK/KEK/db into any firmware left in setup
+  mode.** See F4.
+- Second boot (same NVRAM): the systemd-boot menu offered "Bluefin Server
+  26.11.1701" (installer), "Bluefin Home Server (home-server)", "Homelab:
+  control plane", "Homelab: node" and "Reboot Into Firmware Interface". It
+  auto-booted the default. The kernel came up at ~2.4 s, and about 60 s after
+  start the VGA console showed the installer prompt: "Install Bluefin Server
+  26.11.1701 to which disk? … 1) 64G unknown model /dev/vda … Disk number
+  [1], or q to cancel". It listed only the target disk, not the USB it booted
+  from, and says it confirms again before erasing.
+- Serial noise only: 10 `Failed to preset all unit` lines for generated or
+  masked units, and `systemd-gpt-auto-generator … exit status 1` (expected
+  when booting from a USB image with no root-disk GPT). No unit failures are
+  visible on the console.
+- Stopped via QMP `quit` without answering the prompt. The target qcow2 stayed
+  at ~200 KB, so nothing was installed.
+
+Not covered here, and still needed in Phase 1: Secure Boot *enforcement*
+(rerun with `OVMF_CODE_4M.secboot.fd`, `smm=on` and fresh secboot VARS), an
+actual install, and the recovery boot from the installer over an installed
+disk (Phase 0 step 4).
 
 ### Step 3: release verification — pass
 
@@ -179,6 +212,17 @@ Materia timer requirements in the Phase 5 soak therefore need rescoping
 toward Kubernetes-native equivalents. The plan was revised the same day
 (b22e9ce): Phase 3 now trials Argo CD-reconciled workloads, and the Phase 5
 soak checks Argo CD syncs and scheduled backup jobs.
+
+**F4 — The installer auto-enrolls its own Secure Boot keys into firmware in
+setup mode.** Seen on the melog UEFI test. The Hetzner cpx12 probe had no
+PK/KEK/db enrolled (results, F1), so the same will likely happen on a
+Hetzner pilot node. Two things to check in Phase 4 before relying on it:
+whether Hetzner's firmware NVRAM persists across stop/start and rebuilds
+(otherwise the node is back in setup mode after each one), and whether
+enrollment actually turns enforcement on there. Either way it is a firmware
+state change on the node; for bow's physical firmware it would replace
+whatever keys are enrolled today, which needs a separate decision before any
+bow hardware test.
 
 **F3 — Reboot and update controls (feeds Phase 1 step 1 and Phase 5).**
 - kured: disable with `HOMELAB_KURED=no` in `homelab.conf` (on by default).
