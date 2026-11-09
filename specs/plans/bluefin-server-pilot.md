@@ -2,16 +2,27 @@
 
 Date: 2026-11-06, revised 2026-11-09 after a cross-model review (reboot
 control, Materia pin and state, restic soak evidence, network denial tests,
-edge restart scope, pass thresholds). Status: planned; execution has not
-started.
+edge restart scope, pass thresholds), and again on 2026-11-09 after Phase 0
+findings: services move to Kubernetes instead of running under Materia, and
+the Hetzner edge worker uses cpx22. Status: Phase 0 in progress, see
+[results](bluefin-server-pilot-results.md).
 Companion: [feasibility investigation](bluefin-server-investigation.md).
 
 ## Outcome
 
 Demonstrate that an installed Bluefin Server control plane and cloud worker
-can run the requested homelab templates alongside Materia's existing service
-model. Produce evidence sufficient to decide whether to migrate bow and
-flutterina, plus a separate decision for krytis-runner.
+can run the requested homelab templates, and that bow's and flutterina's
+services can run as Kubernetes workloads on that cluster. Produce evidence
+sufficient to decide whether to migrate bow and flutterina, plus a separate
+decision for krytis-runner.
+
+**Direction (operator decision, 2026-11-09):** if Bluefin Server is adopted,
+services move to Kubernetes-native deployment, reconciled from git by Argo CD
+(shipped in the homelab templates). Materia is replaced, not kept beside
+Kubernetes. Phase 0 found that Bluefin's Podman sysext is rootless-only with
+no Quadlet generator (results, F2), which would have made running Materia on
+Bluefin a self-maintained sysext anyway. Materia keeps running the Flatcar
+fleet until a production migration replaces it host by host.
 
 Bluefin Server 26.11 is **Beta**, announced November 3, 2026. This supersedes
 the stale Alpha label encountered in the repository README. Beta changes the
@@ -29,9 +40,9 @@ Writing this plan does not provision paid resources or deploy anything.
 
 | Machine | Role | Starting allocation | Purpose |
 | --- | --- | --- | --- |
-| bluefin-pilot-cp | Installed homelab-control-plane VM on available home-side virtualization | 4 vCPU, 8 GiB RAM, 64 GiB OS disk, two disposable data disks | Stand-in for bow, persistent etcd, Materia/storage testing |
+| bluefin-pilot-cp | Installed homelab-control-plane VM on available home-side virtualization | 4 vCPU, 8 GiB RAM, 64 GiB OS disk, two disposable data disks | Stand-in for bow, persistent etcd, workload/storage testing |
 | bluefin-pilot-node | Installed homelab-node VM on the same virtualization host | 2 vCPU, 4 GiB RAM, 40 GiB disk | Establish basic joining before testing WAN routing |
-| bluefin-pilot-edge | Disposable installed Hetzner homelab-node | CX23 first, matching flutterina | Provider install/recovery, WAN routing and edge coexistence |
+| bluefin-pilot-edge | Disposable installed Hetzner homelab-node | cpx22 (2 vCPU, 4 GB): CX is unorderable and boots legacy BIOS; cpx boots UEFI (results, F1) | Provider install/recovery, WAN routing and edge workloads |
 | bluefin-pilot-runner | Optional separate worker/build environment | Size from actual runner inventory | Krytis build feasibility, after core gates pass |
 
 These are starting test allocations, not upstream minimums or capacity claims.
@@ -42,9 +53,9 @@ default; record its hourly cost, storage, public IP charges, and deletion date
 before creation. Use a maximum 7-day cloud pilot unless deliberately extended.
 
 Each pilot gets a unique hostname, VPN identity, join credential, and secrets.
-Use a pilot-only Materia source/ref with explicit pilot host assignments and
-restricted test attributes. Do not copy the fleet-wide age private key or live
-Newt/Tailscale identities. Use a test backup repository and synthetic database
+Argo CD reconciles from a pilot-only git source/ref holding the pilot
+manifests and pilot-only secrets (encrypted with a pilot-only key). Do not
+copy the fleet-wide age private key or live Newt/Tailscale identities. Use a test backup repository and synthetic database
 contents. Any restore using real data must remain private and retain separate
 identities, domains and outbound integrations to avoid duplicate side effects.
 
@@ -71,6 +82,10 @@ Proposed implementation artifacts, to be written during execution:
   named pilot resources. Reject production hostnames and ambiguous disks.
 - Pilot Kubernetes fixtures: persistent-volume writer, HTTP service, scheduled
   workload, and cross-node connectivity tests with pinned image digests.
+- Pilot workload manifests for the Phase 3 and 4 services (database, media
+  app, Buildbarn, backup job, Pangolin edge pod), pinned by digest and
+  reconciled by Argo CD from the pilot source. Where they live (this repo or a
+  new one) is decided when Phase 3 starts and recorded in the results.
 
 There are no such task implementations yet. Commands below use existing OS
 tools as verification probes; exact fixture names and runtime paths must be
@@ -129,21 +144,26 @@ pilot installation.
    ordering and the explicit kubeadm-init symlink. Inject SSH access and join
    credentials privately. Render with the repo-pinned Butane if compatible;
    otherwise pin the required Butane before rendering. Disable every
-   automatic reboot mechanism before first boot: the templates ship kured
-   (see the investigation), and the OS updater may have its own reboot
-   policy. Phases 1–4 run database, restore and capacity tests that an
-   unscheduled reboot would invalidate; reboots stay manual until Phase 5
-   step 4 tests the interlock. Verify: `butane --strict --pretty <
+   automatic update and reboot mechanism before first boot (results, F3):
+   `HOMELAB_KURED=no` in `homelab.conf`, and disable `systemd-sysupdate.timer`
+   and `systemd-sysupdate-reboot.timer` (which also stops
+   `bluefin-fleet-reboot.timer`, `PartOf=` it). That keeps the pilot on the
+   pinned release and stops unscheduled reboots from invalidating the
+   database, restore and capacity tests in Phases 1–4. Both stay off until
+   Phase 5 enables them deliberately. Verify: `butane --strict --pretty <
    homelab-control-plane.bu > cp.ign` and the corresponding worker render,
    stored in ignored private output; after boot,
-   `kubectl get daemonset -A | grep -i kured` shows none (or zero desired
-   pods) and the updater's reboot setting is recorded as disabled.
+   `kubectl get daemonset -A | grep -i kured` shows none, and
+   `systemctl is-enabled systemd-sysupdate.timer
+   systemd-sysupdate-reboot.timer` reports both disabled or masked.
 2. Install to the disposable OS disks in UEFI mode. Match Secure Boot trust
    to the upstream installer; record any explicit insecure exception and
    treat that exception as a provider constraint. Verify: `bootctl status;
    findmnt /usr; systemd-sysext list; systemctl --failed`.
 3. Establish baseline joining on the LAN, then select an explicit private API
-   endpoint before the WAN cluster is initialized. If this requires changing
+   endpoint before the WAN cluster is initialized. Set
+   `HOMELAB_CONTROL_PLANE=host[:port]` on every node so joining never depends
+   on mDNS. If this requires changing
    an initialized endpoint, rebuild the disposable cluster deliberately.
    Verify: `kubectl get nodes -o wide; kubectl get pods -A -o wide;
    kubectl get --raw='/readyz?verbose'` and successful worker join.
@@ -166,14 +186,14 @@ no failed units, unresolved pod failures, or repeated credential prompts.
    first-party extension. It must start before kubeadm and survive a broken
    CNI. Keep pilot tags separate from production gateway tags. Use the
    netfilter mode recorded in Phase 0 step 5 and confirm it does not mix
-   iptables backends with Cilium or Podman's netavark. Verify:
+   iptables backends with Cilium. Verify:
    `ip address show tailscale0; tailscale status; systemctl status tailscaled;
    tailscale debug prefs | grep -i netfilter; nft list ruleset` (no rules in
    tables owned by another backend).
 2. Configure workers' explicit control-plane join address on TCP 6447 and
    kubeadm's private API endpoint on TCP 6443 with matching SANs. Select
    kubelet InternalIPs and Cilium devices, routing/tunnel mode and MTU
-   deliberately. Check LAN, Podman, pod, service, Tailscale and Gerbil CIDRs
+   deliberately. Check LAN, pod, service, Tailscale and Gerbil CIDRs
    for overlap before init. Verify: `kubectl get nodes -o wide` and
    `openssl s_client -connect "$PILOT_API_HOST:6443" -servername
    "$PILOT_API_HOST" </dev/null` with the pilot CA and hostname validation
@@ -188,8 +208,8 @@ no failed units, unresolved pod failures, or repeated credential prompts.
    public IPv4 and IPv6, connections to 6443, 6447, 10250 and the Cilium
    transport port are refused or time out (`nc -vz -w 5 <addr> <port>` per
    port and address family, every one failing).
-4. Exercise cross-node DNS, ClusterIP, Podman-to-VPN traffic, large payloads,
-   and sustained connections. Drop only the pilot VPN path for 10 minutes,
+4. Exercise cross-node DNS, ClusterIP, pod-to-tailnet traffic, large
+   payloads, and sustained connections. Drop only the pilot VPN path for 10 minutes,
    then restore it. Verify node recovery, workload behavior and DNS without
    manual repair using `kubectl get nodes; kubectl get pods -A` and repeated
    checksum-verified HTTP transfers through the fixture Service.
@@ -205,98 +225,115 @@ latency and recovery time recorded. If WAN routing
 cannot be made reliable, recommend separate clusters rather than stretching
 this one; do not silently change the requested topology during the test.
 
-## Phase 3 — Materia and persistent service compatibility
+## Phase 3 — Persistent services as Kubernetes workloads
 
-1. Enable/fetch Bluefin's Podman extension, then inspect its actual binaries,
-   units and generators. Current documentation describes private binaries and
-   rootless sockets; prove a rootful compatibility layer before adopting
-   Materia. Verify: `systemd-sysext list; systemctl cat podman.socket;
-   systemctl cat materia-update.service` after integration, recording the
-   resolved executable, socket and generator paths. Missing units fail the
-   gate. Do not point Materia at a rootless socket and assume equivalence.
-2. Make rootful Quadlet, API socket, secrets, network creation and writable
-   helper placement work without changing immutable `/usr`. Preserve
-   Kubernetes' containerd/CNI. Verify: `podman info; podman network ls;
-   podman secret ls; systemctl status podman.socket` plus a secret-consuming
-   test Quadlet that survives restart and reboot without exposing its value.
-3. Run Materia pinned by digest to the image the provisioning templates pin
-   at execution time (v0.8.1 as of this revision; re-check against the Phase 0
-   inventory), against explicit pilot host assignments and pilot-only
-   attributes. Before every apply, confirm the hostname Materia matches
-   equals the pilot's `[Hosts.<name>]` key and read the plan: any
-   stop/remove of a component that was not deliberately unassigned fails the
-   gate. Run two separate cases, because the #173 traps only appear in the
-   second: (a) a fresh bootstrap with an empty `/var/lib/materia`; (b) a
-   restored-state run, starting from a copy of a production-shaped
-   `/var/lib/materia/output` and installed component set. In each case apply
-   twice, then test a deliberate fixture change. Verify:
-   `materia plan` run in the pinned image with the host's real hostname (as
-   `mise materia:sync-image` does) before applying;
-   `systemctl start materia-update.service;
-   journalctl -u materia-update.service -b --no-pager | grep -E 'FATA|Remove'`;
-   confirm the second run changes nothing and the fixture update restarts
-   only intended units.
-4. Exercise one representative database service, a media bind mount,
-   Buildbarn push/pull using test credentials, and restic to a test repository.
-   Verify: application readiness queries, a checksum-matched BuildStream
-   artifact round-trip, and `restic check` plus a restore to an empty directory.
-5. Build a VG/LV on the two disposable data disks, write checksum fixtures,
+Replaces the earlier Materia-coexistence phase (see Outcome). The goal is to
+show that each kind of service bow runs today works as an Argo CD-reconciled
+Kubernetes workload, with the failure modes recorded in `AGENTS.md` checked
+again in their Kubernetes form.
+
+1. Point the template's Argo CD root Application (`HOMELAB_ARGOCD_ROOT_REPO`,
+   `_REVISION`, `_PATH`) at the pilot source. Sync, then push a deliberate
+   fixture change, then hand-edit a managed object. Verify: `kubectl -n
+   argocd get applications` shows every app `Synced`/`Healthy`; the pushed
+   change rolls out with no manual step; the hand edit is reverted
+   (self-heal on). Record the sync interval and how a sync failure surfaces.
+2. Choose and test one secrets mechanism (SOPS through an Argo CD plugin,
+   sealed-secrets or external-secrets), with a pilot-only key. Verify: a
+   fixture consumes a secret; after rotating it in git the consumer sees the
+   new value after its rollout (the stale-secret failure in `AGENTS.md` is
+   exactly this check); no secret value appears in git, events or logs.
+3. Expose existing data to pods. bow's libraries are pre-existing
+   directories on the data LV, so use static local PersistentVolumes with
+   node affinity rather than the dynamic local-path provisioner: read-only
+   where the app only reads, and one read-write volume over the whole
+   `video/` subtree where the app hardlinks (the cross-mount hardlink
+   gotcha). Verify: fixture checksums from inside the pod; the media
+   manager's startup hardlink check passes; a read-only mount refuses a
+   write.
+4. Run representative workloads, each pinned by digest:
+   - a database (PostgreSQL StatefulSet, setting `PGDATA` explicitly per the
+     postgres 18 gotcha) with an app gated on its readiness;
+   - one media app on the static volumes (no `/dev/dri` in a VM; that check
+     stays a bow hardware gate);
+   - Buildbarn `bb-storage` + `bb-asset` with test JWT credentials and the
+     CAS blocks file on a local volume, reachable from the tailnet by the
+     method chosen in Phase 2 (Tailscale operator or host Tailscale), with
+     the TLS SAN matching that name.
+   Verify: readiness probes pass; database rows survive pod deletion and a
+   node reboot; a checksum-matched BuildStream artifact round-trip from a
+   tailnet client.
+5. Back up with a scheduled job (the existing restic image as a CronJob, or
+   Velero) to a test repository, covering the database dump and the
+   persistent volumes. Verify: a scheduled run creates a new snapshot;
+   `restic check`; a restore to an empty volume matches fixture checksums.
+6. Build a VG/LV on the two disposable data disks, write checksum fixtures,
    then reinstall only the VM OS disk and import the existing VG. Do not
    execute the current production data-disk initialization script on import.
-   Verify: `pvs; vgs; lvs; findmnt /var/lib/materia-data` and fixture checksums
-   before and after reinstall. Missing LVM tooling becomes an explicit
-   compatibility task and blocks bow readiness.
+   Verify: `pvs; vgs; lvs; findmnt` and fixture checksums before and after
+   reinstall, then the step 3 volumes bind again unchanged. Missing LVM
+   tooling becomes an explicit compatibility task and blocks bow readiness.
 
-Exit: Materia rootful operations and Kubernetes coexist across reboot;
-restored database/media/cache fixtures work, data-disk import is non-destructive.
-If rootful integration needs a maintained custom runtime image, record that
-cost and reconsider the migration before adding more service tests.
+Exit: Argo CD reconciles every pilot workload from git; data survives pod
+rescheduling, node reboot and OS-disk reinstall; secret rotation and backup
+restore are proven. Record any service that needs something Kubernetes on
+Bluefin cannot give it (host networking, devices, privileged mode), with the
+cost of the workaround.
 
 ## Phase 4 — Disposable Hetzner edge worker
 
-1. Create a separately named CX23 in flutterina's configured region using a
-   tested rescue/install path. Confirm firmware mode first. The release OS
-   DDI is not a ready-to-upload provider root-disk image. If UEFI cannot be
-   supplied, stop this provider phase; legacy BIOS diskless boot does not
-   establish installed-node update/recovery feasibility.
-   Verify: `test -d /sys/firmware/efi; bootctl status; findmnt` after disk boot,
-   and boot again without rescue media.
-2. Join the pilot cluster over the VPN and repeat Phase 2's connectivity and
-   interruption tests. Restrict workload placement to fixture pods; cloud
-   nodes must not announce bow's LAN MetalLB pool.
-   Verify: `kubectl get nodes -o wide; cilium connectivity test` and inspect
-   MetalLB speaker placement/announcement policy.
-3. Run an isolated Pangolin/Gerbil/Traefik pod preserving the repository's
-   shared network namespace. Use test domains, staging ACME and synthetic
-   application data, never production identities. Exercise the same public
-   port set without opening Kubernetes API/join/kubelet to the internet.
-   Verify: `podman pod inspect pangolin; ss -lntup` and external HTTP/TLS,
-   tunnel and health-check requests against pilot endpoints. Confirm SSH
-   works over the tailnet and that the provider console still reaches a login
-   with `tailscaled` stopped.
-4. Restore the isolated edge state to a fresh pilot instance or clean disk,
-   then restart `app.service` (not Traefik: an app restart is what drained the
-   pod in BUG-009) while Kubernetes traffic is active. Gerbil and Traefik
-   `Requires=app.service`, so a short ingress outage is expected; the gate is
-   that it stays short and the pod survives, not that ingress is
-   uninterrupted. Verify: `ExitPolicy=continue` in the rendered pod unit;
-   `podman pod inspect pangolin --format '{{.State}}'` stays `Running`
-   throughout; `app`, `gerbil` and `traefik` services all return to active;
-   the endpoint probes and database readiness query pass afterwards. Pass:
-   external probe outage of at most 2 minutes, measured from the probe log.
-5. Measure 48 hours at CX23 size with a load profile fixed before the run:
+1. Create a separately named cpx22 in flutterina's region (hel1), with the
+   pilot firewall from Phase 0 step 5 attached at creation, using a tested
+   rescue/install path. Phase 0 confirmed that cpx types boot UEFI and that
+   Secure Boot is unavailable; record that as a provider constraint. The
+   release OS DDI is not a ready-to-upload provider root-disk image.
+   Verify: `test -d /sys/firmware/efi; bootctl status; findmnt` after disk
+   boot, and boot again without rescue media.
+2. Join the pilot cluster over the VPN and repeat Phase 2's connectivity,
+   denial and interruption tests. Taint the edge node so only edge workloads
+   and fixtures schedule there; cloud nodes must not announce bow's LAN
+   MetalLB pool. Verify: `kubectl get nodes -o wide; cilium connectivity
+   test`, and inspect MetalLB speaker placement/announcement policy.
+3. Run Pangolin as **one Kubernetes pod** with the app, Gerbil and Traefik
+   containers. Containers in a pod share one network namespace, which keeps
+   the locked shared-namespace architecture (Traefik must reach Gerbil's
+   tunnel IPs). Use `hostNetwork: true` so the public ports (443/tcp,
+   443/udp, 51820/udp, 21820/udp) bind on the node, `NET_ADMIN` for Gerbil,
+   a node selector plus toleration for the edge node, and state on a local
+   volume. Host Podman is not a fallback here: Bluefin's Podman is
+   rootless-only (results, F2). Use test domains, staging ACME and synthetic
+   application data, never production identities. Verify: all three
+   containers ready; `ss -lntup` on the node shows exactly the intended
+   public ports; external HTTP/TLS, HTTP/3, tunnel and health-check requests
+   against pilot endpoints; the Phase 2 denial tests still pass with
+   `hostNetwork` in use. Confirm SSH works over the tailnet and that the
+   provider console still reaches a login with `tailscaled` stopped.
+4. Restore the isolated edge state into a fresh pod on a clean volume, then
+   test two restarts while Kubernetes traffic is active: (a) kill the app
+   container's process, so the kubelet restarts that container only while the
+   pod and its network namespace stay; (b) delete the whole pod. Gerbil and
+   Traefik need the app, so a short ingress outage is expected; the gate is
+   that it stays short and recovers without manual action or a crash loop.
+   Verify: for (a) the pod UID is unchanged and only the app's
+   `restartCount` increments; all three containers return to ready; endpoint
+   probes and the database readiness query pass afterwards. Pass: external
+   probe outage at most 2 minutes for (a) and at most 5 minutes for (b),
+   measured from the probe log.
+5. Measure 48 hours at cpx22 size with a load profile fixed before the run:
    synthetic HTTPS traffic at 2× the peak request rate and concurrency from
    the Phase 0 baseline, plus a sustained tunnel transfer at flutterina's
-   recorded peak throughput for at least 1 hour per day.
-   Verify: `free -h; df -h; journalctl -k --since '48 hours ago'` plus sampled
-   CPU/RAM/disk and HTTP error rates. Require zero OOMs, zero kubelet
-   pressure/eviction events, at least 25% measured RAM/disk headroom, and an
-   HTTP 5xx/connection-error rate below 0.1% outside deliberate restarts.
+   recorded peak throughput for at least 1 hour per day. cpx22 runs a newer
+   CPU generation than flutterina's cx23, so this sizes the cpx22, not the
+   current box. Verify: `free -h; df -h; journalctl -k --since '48 hours
+   ago'` plus sampled CPU/RAM/disk and HTTP error rates. Require zero OOMs,
+   zero kubelet pressure/eviction events, at least 25% measured RAM/disk
+   headroom, and an HTTP 5xx/connection-error rate below 0.1% outside
+   deliberate restarts.
    If it fails, report the larger required size and cost; do not declare
    flutterina's current sizing sufficient.
 
-Exit: provider install/recovery works, cross-site worker is stable, and
-Pangolin ingress coexists with cluster networking at a measured capacity.
+Exit: provider install/recovery works, cross-site worker is stable, and the
+Pangolin pod serves ingress beside cluster networking at a measured capacity.
 
 ## Phase 5 — Updates, failures and recovery
 
@@ -314,32 +351,37 @@ Pangolin ingress coexists with cluster networking at a measured capacity.
    version; avoid editing production slots. Verify: `bootctl status;
    cat /usr/lib/os-release; systemctl --failed` after fallback. Confirm data
    survives; do not infer application schema rollback from OS fallback.
-4. Test shutdown/drain and control-plane unavailability while Materia jobs
-   and services run. Implement an interlock for host jobs, then enable the
-   automatic reboot mechanisms disabled in Phase 1 for the first time.
-   Verify: a scheduled reboot stays deferred while a
+   Also test the boot health gate (results, F3): on a boot-counted boot, a
+   failed host unit must trigger the deadline reboot and fallback, while a
+   crash-looping pod (not a systemd unit) must not. Record both outcomes.
+4. Test shutdown/drain and control-plane unavailability while workloads and
+   backup jobs run. Enable the automatic update and reboot mechanisms
+   disabled in Phase 1 for the first time, with an interlock on both reboot
+   paths: kured (Kubernetes nodes; for example its blocking-pod selector
+   matching a long-running Job) and `systemd-sysupdate-reboot`, which honours
+   `/etc/reboot-lock` and `/run/reboot-lock` and which kured ignores.
+   Verify: a scheduled reboot stays deferred on each path while a
    long-running fixture job is active, then completes within the configured
    window after that job finishes; journal and timestamps are evidence.
-5. Run a 72-hour final soak including two unattended Materia timer fires, two
-   unattended restic backup runs, worker restart, control-plane restart and
-   the WAN outage test. This may overlap the 48-hour capacity test after
-   earlier gates pass. A timer firing is not evidence that its job ran
-   (BUG-004: the restic timer fired on schedule and did nothing): each
-   restic run must create a new snapshot. Change the fixture data between the
-   two runs, then restore from the second snapshot and match checksums of the
-   changed data. Verify: `systemctl list-timers --all; journalctl -u
-   materia-update.service --since '72 hours ago'; journalctl -u
-   restic-backup.service --since '72 hours ago'; restic snapshots` (two new
-   snapshot IDs with timestamps matching the timer fires), the restore
-   checksum comparison, and `kubectl get events -A
-   --sort-by=.lastTimestamp` alongside externally collected uptime logs.
-   Collect events continuously because Kubernetes event retention may be
-   shorter than the soak.
+5. Run a 72-hour final soak including two git changes reconciled by Argo CD
+   with no manual action, two unattended scheduled backup runs, worker
+   restart, control-plane restart and the WAN outage test. This may overlap
+   the 48-hour capacity test after earlier gates pass. A schedule firing is
+   not evidence that its job ran (BUG-004: the restic timer fired on
+   schedule and did nothing): each backup run must create a new snapshot.
+   Change the fixture data between the two runs, then restore from the second
+   snapshot and match checksums of the changed data. Verify: Argo CD sync
+   history shows both commits applied and the apps `Synced`/`Healthy`;
+   `kubectl get jobs -A` and the backup job logs; `restic snapshots` (two new
+   snapshot IDs with timestamps matching the schedule); the restore checksum
+   comparison; and `kubectl get events -A --sort-by=.lastTimestamp` alongside
+   externally collected uptime logs. Collect events continuously because
+   Kubernetes event retention may be shorter than the soak.
 
 Pass thresholds: a restarted worker or control plane is `Ready` with fixture
 probes passing within 10 minutes; the etcd restore in step 1 completes within
-60 minutes of starting from a snapshot; both Materia runs and both restic runs
-succeed unattended.
+60 minutes of starting from a snapshot; both Argo CD changes and both backup
+runs succeed unattended.
 
 Exit: reproducible upgrade and fallback, tested state restore, thresholds
 above met, and zero unexplained failed units, data corruption, OOMs or
@@ -386,7 +428,9 @@ The final report must distinguish:
 - flutterina: provider boot/recovery, edge functionality and required size;
 - krytis-runner: tested build environment or deferred with concrete blockers;
 - operations: measured restore time, expected migration outage, ongoing
-  maintenance burden, monthly cost, and remaining production work.
+  maintenance burden, monthly cost, and remaining production work,
+  including the per-service effort to move each Materia component to Argo CD
+  manifests.
 
 On a failed gate, retain redacted evidence and either repair the pilot or stop
 that phase. Recovery is deletion/recreation of disposable pilot resources;
