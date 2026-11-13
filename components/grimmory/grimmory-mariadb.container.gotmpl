@@ -10,7 +10,7 @@ ContainerName=grimmory-mariadb
 # starts as root and chowns a datadir minimus left as UID 1000 to mysql
 # (999) before dropping privileges; verified locally with data kept.
 # Take `mise db:backup` before changing this image or the version.
-Image=docker.io/library/mariadb:12.3.3@sha256:4ebbcf100a3ba320766dfa0e1af008df12261301db6ef72798c7650f70794aed
+Image=docker.io/library/mariadb:13.0.2@sha256:54f493ea0d60b621a5bff84e5b20100f8b86b6efa6b79158e04756c5194a5e4d
 # Join newt-net so the grimmory app reaches it by container name
 # "grimmory-mariadb:3306" (DATABASE_URL in grimmory.container.gotmpl).
 # Same named-network requirement as the app. No PublishPort — 3306 is
