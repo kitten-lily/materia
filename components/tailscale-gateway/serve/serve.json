@@ -5,6 +5,7 @@
     "4533": { "TCPForward": "navidrome:4533" },
     "6060": { "TCPForward": "grimmory:6060" },
     "8000": { "TCPForward": "mediamanager:8000" },
+    "8040": { "TCPForward": "pinepods:8040" },
     "8080": { "TCPForward": "aonsoku:8080" },
     "8096": { "TCPForward": "jellyfin:8096" }
   },
