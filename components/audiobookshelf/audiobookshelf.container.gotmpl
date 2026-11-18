@@ -1,5 +1,5 @@
 [Unit]
-Description=Audiobookshelf (audiobooks + podcasts)
+Description=Audiobookshelf (audiobooks)
 Wants=network-online.target
 After=network-online.target
 
@@ -14,19 +14,20 @@ Image=ghcr.io/advplyr/audiobookshelf:2.38.0@sha256:60064c23f32fd9099fd39e82c5132
 # music/grimmory/newt itself use Network=newt-net.
 Network=newt-net
 
-# Audiobook + podcast libraries — bind mounts from bow's LVM data disk
+# Audiobook library — bind mount from bow's LVM data disk
 # (/var/lib/materia-data, created by bare-metal.bu's lvm-data.service).
-# AudioBooks is read-only (:ro,z) — audiobookshelf shouldn't modify
-# source files. Podcasts is read-write (:z) — audiobookshelf downloads
-# new episodes directly into that library.
+# Read-only (:ro,z) — audiobookshelf shouldn't modify source files.
 # No /books volume: ebook/comic hosting is grimmory's job on this host.
+# No /podcasts volume: podcasts moved to the pinepods component (#196),
+# which takes over /var/lib/materia-data/Podcasts with a private :Z label
+# and UID 1000 ownership. Re-adding a mount here would fight it for the
+# directory.
 Volume=/var/lib/materia-data/AudioBooks:/audiobooks:ro,z
-Volume=/var/lib/materia-data/Podcasts:/podcasts:z
 
-# App config (users, sessions, settings) and metadata cache (covers,
-# podcast download staging) — named volumes, not bind mounts. Materia
-# treats the data dir as fully managed; app-writable runtime state
-# needs a named volume so it isn't scheduled for removal as drift.
+# App config (users, sessions, settings) and metadata cache (covers) —
+# named volumes, not bind mounts. Materia treats the data dir as fully
+# managed; app-writable runtime state needs a named volume so it isn't
+# scheduled for removal as drift.
 Volume=audiobookshelf-config.volume:/config:z
 Volume=audiobookshelf-metadata.volume:/metadata:z
 
