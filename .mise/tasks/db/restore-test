@@ -35,6 +35,7 @@ DBS=(
   "grimmory|mariadb|/etc/containers/systemd/grimmory/grimmory-mariadb.container|grimmory"
   "mediamanager|postgres|/etc/containers/systemd/mediamanager/mediamanager-postgres.container|mediamanager"
   "silentsuite|postgres|/etc/containers/systemd/silentsuite/silentsuite-postgres.container|silentsuite"
+  "pinepods|postgres|/etc/containers/systemd/pinepods/pinepods-postgres.container|pinepods"
 )
 APP_VOLUMES=(systemd-grimmory-data systemd-mediamanager-images systemd-silentsuite-data)
 MAX_AGE_H=36

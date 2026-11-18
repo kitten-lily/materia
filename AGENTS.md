@@ -224,10 +224,11 @@ components/
     silentsuite-data.volume      # /data: secret.txt (Django SECRET_KEY), media, static (etebase UID 100 via copy-up)
     silentsuite-db.volume        # Postgres data
   db-dump/                       # nightly logical DB dumps into a named volume restic carries off-host (bow-only, #194)
-    MANIFEST.toml                # no Secrets (references grimmory/mediamanager's), NoRestart, Stopped+Oneshot dumps, static timer
+    MANIFEST.toml                # no Secrets (references each app component's), NoRestart, Stopped+Oneshot dumps, static timer
     dump.bash                    # shared dump script (not .sh: see the Script-resource gotcha): counts.pre, dump, counts.post, .done via atomic renames
     db-dump-grimmory.container.gotmpl     # mariadb-dump --databases grimmory, same image pin as grimmory-mariadb
     db-dump-mediamanager.container.gotmpl # pg_dump mediamanager, same image pin as mediamanager-postgres
+    db-dump-pinepods.container.gotmpl # pg_dump pinepods, same image pin as pinepods-postgres (#196)
     db-dumps.volume              # systemd-db-dumps: <name>.sql/.counts.pre/.counts.post/.done (root, 0700/0600)
     db-dump-trigger.service.gotmpl # systemctl restart of every dump unit + healthchecks.io db-dump-<host> pings
     db-dump.timer.gotmpl         # dbDumpOnCalendar, default 23:30, before restic's 00:00 run

@@ -1,6 +1,8 @@
 # db-dump: nightly logical dumps of bow's databases into the db-dumps volume,
-# which restic carries off-host (#194). No Secrets: the dump units reference
-# the podman secrets the grimmory/mediamanager components already own.
+# which restic carries off-host (#194). No Secrets: each dump unit references
+# the podman secret its app component already owns (grimmory, mediamanager,
+# silentsuite, pinepods). Add a dump only after that component's first
+# materia run has created the secret.
 
 [Settings]
 # Same reason as restic-backup (BUG-004): materia's default restart of a
@@ -23,6 +25,11 @@ Oneshot = true
 
 [[Services]]
 Service = "db-dump-silentsuite.service"
+Stopped = true
+Oneshot = true
+
+[[Services]]
+Service = "db-dump-pinepods.service"
 Stopped = true
 Oneshot = true
 
