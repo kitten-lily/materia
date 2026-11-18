@@ -1,0 +1,19 @@
+# silentsuite: SilentSuite E2E-encrypted calendar/contacts/tasks sync on bow
+# (#192). Plan: specs/plans/issue-192-silentsuite-component.md; decisions and
+# test results: specs/plans/silentsuite-investigation.md.
+#
+# Secrets MUST stay above the first table header (TOML scoping gotcha).
+# Written by `mise silentsuite:init-secrets`. silentsuiteRegistrationToken
+# only exists after `--close`; until then materia skips it (no attribute, no
+# secret) and the quadlet's `exists` guard leaves it out.
+Secrets = ["silentsuiteDbPassword", "silentsuiteDbIni", "silentsuiteBootstrapToken", "silentsuiteRegistrationToken"]
+
+[Defaults]
+
+[[Services]]
+Service = "silentsuite.service"
+RestartedBy = ["silentsuite.container", "etebase-server.ini"]
+
+[[Services]]
+Service = "silentsuite-postgres.service"
+RestartedBy = ["silentsuite-postgres.container"]

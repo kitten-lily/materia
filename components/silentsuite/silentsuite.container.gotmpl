@@ -1,0 +1,50 @@
+[Unit]
+Description=SilentSuite sync server
+# The entrypoint runs migrations before serving and exits if the DB isn't up.
+Requires=silentsuite-postgres.service
+After=silentsuite-postgres.service
+
+[Container]
+ContainerName=silentsuite
+# Pin = a PUBLISHED release whose server-image.json indexDigest equals this
+# digest. GHCR tags appear before their release is published; the
+# silentsuite-release CI check enforces this, and Renovate never automerges.
+Image=ghcr.io/silent-suite/silentsuite-server:v0.5.20-beta@sha256:6a5ab47d21feeed4fc05379258e8c2686e1fa67138dbd6570900eea732b0c7bb
+# On newt-net so tailscale-gateway reaches it as silentsuite:3735. No
+# PublishPort.
+Network=newt-net
+Volume=silentsuite-data.volume:/data:Z
+Volume={{ m_dataDir "silentsuite" }}/etebase-server.ini:/etc/etebase-server/etebase-server.ini:ro,Z
+# The DB password, as an ini fragment merged over the file above. Hand-written
+# rather than secretMount: the default mode 0444 is what the non-root etebase
+# user needs to read it.
+Secret=materia-silentsuiteDbIni,type=mount,target=/run/secrets/db.ini
+Environment=ETEBASE_EASY_CONFIG_PATH=/run/secrets/db.ini
+# The proxy peer is tailscale-gateway on newt-net, whose IP changes: trust
+# podman's named-network pool so the server sees the real scheme (no HTTPS
+# redirect loop) and client IP. Any newt-net container could set these
+# headers; they are all ours.
+Environment=TRUSTED_PROXY_IPS=10.89.0.0/16
+Environment=ETEBASE_DISABLE_DJANGO_ADMIN=true
+# The first signup must pass ?bootstrap_token=... while no account exists.
+{{ secretEnv "silentsuiteBootstrapToken" "ETEBASE_BOOTSTRAP_ADMIN_TOKEN" }}
+# Added by `mise silentsuite:init-secrets --close`: every later signup then
+# needs a header no client can send, which closes signups.
+{{- if exists "silentsuiteRegistrationToken" }}
+{{ secretEnv "silentsuiteRegistrationToken" "ETEBASE_REGISTRATION_TOKEN" }}
+{{- end }}
+Notify=healthy
+# Exactly 200 from the API's readiness endpoint. Upstream's "any status
+# below 500" probe also passes on a 301 loop or a 400 Host rejection.
+HealthCmd=python -c "import http.client,sys;c=http.client.HTTPConnection('localhost',3735,timeout=5);c.request('GET','/api/v1/authentication/is_etebase/');sys.exit(c.getresponse().status!=200)"
+HealthInterval=10s
+HealthRetries=12
+HealthTimeout=10s
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

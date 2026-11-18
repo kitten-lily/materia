@@ -1,0 +1,4 @@
+[Volume]
+# /data: secret.txt (Django SECRET_KEY), media, static. No User=/Group=: the
+# image chowns /data to etebase (UID 100), and podman copies that ownership
+# into an empty named volume on first use.

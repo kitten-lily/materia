@@ -1,0 +1,21 @@
+; SilentSuite (Etebase) server config, templated by materia.
+; No [database] password here: the server merges a second ini from the
+; silentsuiteDbIni podman secret (ETEBASE_EASY_CONFIG_PATH), so the password
+; never lands in the materia data dir.
+[global]
+secret_file = /data/secret.txt
+debug = false
+media_root = /data/media
+static_root = /data/static
+
+[allowed_hosts]
+allowed_host1 = silentsuite.{{ .baseDomain }}
+; The container healthcheck probes localhost.
+allowed_host2 = localhost
+
+[database]
+engine = django.db.backends.postgresql
+name = silentsuite
+user = silentsuite
+host = silentsuite-postgres
+port = 5432
