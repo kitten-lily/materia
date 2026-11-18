@@ -35,6 +35,7 @@ set -euo pipefail
 DBS=(
   "grimmory|mariadb|grimmory-mariadb|grimmory-mariadb.service|grimmory.service|materia-mariadbRootPassword|systemd-grimmory-mariadb-config|root|/etc/containers/systemd/grimmory/grimmory-mariadb.container"
   "mediamanager|postgres|mediamanager-postgres|mediamanager-postgres.service|mediamanager.service|materia-mediamanagerDbPassword|systemd-mediamanager-db|mediamanager|/etc/containers/systemd/mediamanager/mediamanager-postgres.container"
+  "silentsuite|postgres|silentsuite-postgres|silentsuite-postgres.service|silentsuite.service|materia-silentsuiteDbPassword|systemd-silentsuite-db|silentsuite|/etc/containers/systemd/silentsuite/silentsuite-postgres.container"
   "pinepods|postgres|pinepods-postgres|pinepods-postgres.service|pinepods.service|materia-pinepodsDbPassword|systemd-pinepods-db|pinepods|/etc/containers/systemd/pinepods/pinepods-postgres.container"
 )
 

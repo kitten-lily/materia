@@ -8,5 +8,5 @@ Type=oneshot
 ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null {{ .hcPingURL }}/db-dump-{{ m_facts "host.hostname" }}/start
 # restart (not start) re-runs a oneshot that is still active from last
 # night, waits for each to finish, and exits non-zero if any fails.
-ExecStart=/usr/bin/systemctl restart db-dump-grimmory.service db-dump-mediamanager.service
+ExecStart=/usr/bin/systemctl restart db-dump-grimmory.service db-dump-mediamanager.service db-dump-silentsuite.service
 ExecStopPost=-/usr/bin/bash -c 'url="{{ .hcPingURL }}/db-dump-{{ m_facts "host.hostname" }}"; [ "$$EXIT_STATUS" = "0" ] || url="$$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "$$url"'

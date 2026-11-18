@@ -1,0 +1,30 @@
+[Unit]
+Description=Logical dump of the silentsuite database
+# Ordering only: a dump must never start a stopped DB. A stopped DB fails
+# the dump, and the trigger reports it.
+After=silentsuite-postgres.service
+
+[Container]
+ContainerName=db-dump-silentsuite
+# Same pin as silentsuite-postgres.container.gotmpl, so Renovate bumps both.
+Image=docker.io/library/postgres:16.16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
+Network=newt-net
+# Shared label (:z): both dump units write this volume at the same time.
+Volume=db-dumps.volume:/dumps:z
+Volume={{ m_dataDir "db-dump" }}/dump.bash:/db-dump.sh:ro,z
+# Created by the silentsuite component; referenced here, never declared,
+# so db-dump never owns (or removes) it.
+Secret=materia-silentsuiteDbPassword,type=env,target=PGPASSWORD
+Environment=PGCONNECT_TIMEOUT=10
+Environment=DB_KIND=postgres
+Environment=DB_HOST=silentsuite-postgres
+Environment=DB_NAME=silentsuite
+Environment=DB_USER=silentsuite
+Exec=bash /db-dump.sh
+
+[Service]
+# Oneshot pattern copied from restic-backup (BUG-004, #31). Never started by
+# materia (Stopped = true); only db-dump-trigger.service restarts it.
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=1h

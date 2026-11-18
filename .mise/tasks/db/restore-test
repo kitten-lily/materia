@@ -34,8 +34,9 @@ RQ=/etc/containers/systemd/restic-backup/restic-backup.container
 DBS=(
   "grimmory|mariadb|/etc/containers/systemd/grimmory/grimmory-mariadb.container|grimmory"
   "mediamanager|postgres|/etc/containers/systemd/mediamanager/mediamanager-postgres.container|mediamanager"
+  "silentsuite|postgres|/etc/containers/systemd/silentsuite/silentsuite-postgres.container|silentsuite"
 )
-APP_VOLUMES=(systemd-grimmory-data systemd-mediamanager-images)
+APP_VOLUMES=(systemd-grimmory-data systemd-mediamanager-images systemd-silentsuite-data)
 MAX_AGE_H=36
 
 step() { echo "==> $*"; }

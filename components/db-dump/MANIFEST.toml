@@ -22,6 +22,11 @@ Stopped = true
 Oneshot = true
 
 [[Services]]
+Service = "db-dump-silentsuite.service"
+Stopped = true
+Oneshot = true
+
+[[Services]]
 Service = "db-dump-trigger.service"
 Stopped = true
 
