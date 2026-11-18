@@ -108,6 +108,8 @@ Options:
 - `TRUSTED_PROXY_IPS=*`: passed to uvicorn's `--forwarded-allow-ips`. It
   also lets any `newt-net` container spoof client IPs and scheme.
 
+**Settled by the local test run (below):** use
+`TRUSTED_PROXY_IPS=10.89.0.0/16`. Original review note, kept for context:
 **Not settled (review 2026-11-18).** These conclusions come from `main`
 sources, not the release that would be pinned. The uvicorn version, the
 full Django/FastAPI middleware order, and the "exact IPs, no CIDR" limit
@@ -168,9 +170,7 @@ changes take effect.
 
 **Healthcheck:** upstream's probe passes on any status below 500, so a 400
 (host rejected by `allowed_hosts`), a 404 or a redirect loop all count as
-healthy. Use a probe that names an endpoint and requires the exact status
-(and body if useful) it returns when the API is ready. Find both in the
-test run. The Pangolin health check must send `Host:
+healthy. Use `is_etebase` and require exactly 200 (see test results). The Pangolin health check must send `Host:
 silentsuite.<baseDomain>` if it probes the target IP. After deploy, also
 make one real API request through Pangolin from outside.
 
@@ -232,10 +232,95 @@ and fresh named volumes:
 - First signup with the bootstrap token; second signup rejected after
   `ETEBASE_DISABLE_SIGNUP=true`.
 
+## Local test results (2026-11-18)
+
+Run on the workstation with **rootless** podman 6.1.4 (no sudo there; bow
+is rootful), against `v0.5.20-beta@sha256:6a5ab47d…` and the upstream
+Postgres digest (16.9-alpine), fresh named volumes, and Caddy terminating
+TLS in front as a stand-in for Traefik + `tailscale-gateway`. The image
+ships uvicorn 0.49.0, Django 5.2.19, FastAPI 0.138.2. Test files were in the
+session scratchpad and are deleted, as are all containers, volumes and
+secrets.
+
+**Routing.** `asgi.py` mounts FastAPI first and Django at `/` beneath it.
+All sync traffic is FastAPI (`/api/v1/...`). Django only serves the landing
+page (`success.html`) and `/admin/`, which is disabled by default. Django's
+`SecurityMiddleware` and `CsrfViewMiddleware` therefore never see API
+requests, and with admin off there are no Django forms. CSRF is not a
+concern.
+
+**ini merge: works.** The templated ini without a password at
+`/etc/etebase-server/etebase-server.ini`, plus a podman secret
+`[database]\npassword = …` mounted at `/run/secrets/db.ini` (mode 0444, owned
+by root, readable by `etebase`) and named by `ETEBASE_EASY_CONFIG_PATH`. All
+migrations ran, so the server authenticated to Postgres. The
+hand-written `Secret=` approach stands.
+
+**`/data` volume: works.** An empty named volume came up owned by
+`100:101` (`etebase`), the server created `secret.txt` (0600), and its hash
+was unchanged across three container recreates. Accounts persisted too.
+No `User=`/`Group=` needed on the `.volume`. Not yet seen under rootful
+podman; check the ownership on bow's first start.
+
+**Proxy behaviour,** with Caddy sending `X-Forwarded-Proto: https`:
+
+| Setting | `/` (Django) | API | HSTS on `/` | Client IP in logs |
+|---|---|---|---|---|
+| upstream defaults | **301 to itself (loop)** | 200 | — | proxy IP |
+| `ETEBASE_SECURE_SSL_REDIRECT=false` | 200 | 200 | none | proxy IP |
+| `ETEBASE_BEHIND_PROXY=true` | 200 | 200 | yes | proxy IP |
+| `TRUSTED_PROXY_IPS=10.89.0.0/16` | 200 | 200 | yes | forwarded IP |
+
+The loop only ever affected the landing page, never sync. CIDR **works** in
+`TRUSTED_PROXY_IPS`: the entrypoint passes it to uvicorn, whose
+`_TrustedHosts` parses networks. Upstream's "exact IPs only" note is wrong
+for this release. No code uses the client IP (no rate limiting or lockout),
+so it only matters for logs.
+
+**Decision:** `TRUSTED_PROXY_IPS=10.89.0.0/16`, podman's named-network pool
+(the same range the bare-metal nftables rule uses). Our peer is the
+`tailscale-gateway` container on `newt-net`, whose IP changes. This gives the
+real scheme and client IP without overriding Django security settings. The
+trade-off: any container on `newt-net` can set those headers, and they are
+all ours. API responses carry no HSTS either way; Traefik can add it at the
+edge if wanted.
+
+**Healthcheck.** `GET /api/v1/authentication/is_etebase/` answers **200**
+with body `null` when the app is up, and `400 Invalid host header` for a
+Host outside `allowed_hosts`. Upstream's probe (`GET /`, pass if < 500)
+passes on the 301 loop, confirmed directly. Use:
+`HealthCmd=python -c "import http.client,sys;c=http.client.HTTPConnection('localhost',3735,timeout=5);c.request('GET','/api/v1/authentication/is_etebase/');sys.exit(c.getresponse().status!=200)"`
+(Alpine-based, so `/bin/sh` exists and the string form is fine). It does not
+touch the DB, but the server can't start without Postgres (entrypoint
+migrates first) and the sidecar has its own `pg_isready` probe. Pair it with
+`Notify=healthy`: uvicorn logs "running" about 5 s before its workers accept
+connections (seen as Caddy 502s in the test). The Pangolin health check uses
+the same path with `Host: silentsuite.<baseDomain>`.
+
+**Signup flow** (raw msgpack signups through the proxy):
+
+| Server state | Request | Result |
+|---|---|---|
+| no users, bootstrap token set | no token / wrong token | 403 `bootstrap_token_required` |
+| | correct `?bootstrap_token=` | 200, account created |
+| one user exists | **no token** | **200, account created** |
+| `ETEBASE_DISABLE_SIGNUP=true` | any | 400 `generic` ("An error occurred during signup") |
+| `ETEBASE_REGISTRATION_TOKEN` set | missing / wrong header | 403 `registration_token_required` |
+| | `x-silentsuite-registration-token: <token>` | 200 |
+
+So signups are open to anyone between the first account and the closing
+deploy. Closing works either way. `ETEBASE_REGISTRATION_TOKEN` is the better
+steady state: it allows adding accounts later without reopening signups.
+The registration check runs *before* the bootstrap check, so setting both
+from the first deploy would leave no open window at all. That only works if
+the clients can send the header. Not verified: check the web/Android signup
+UI for a registration-token field.
+
 ## Open questions / unverified
 
 - iOS requirement (blocking, user decision).
-- Everything listed under "Local test run".
+- `/data` ownership under rootful podman (check on bow's first start).
+- Whether clients can send `x-silentsuite-registration-token` (decides whether signups are ever open).
 - Backup prerequisite (see Proposed component).
 - Audit lineage: none found (2026-11-17). EteSync's two NLnet NGI0 PET
   grants (iOS app 2019, Etebase protocol redesign 2020) mention no audit,
