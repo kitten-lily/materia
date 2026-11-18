@@ -22,7 +22,7 @@ Components = ["newt"]
 Components = ["tailscale"]
 
 [Hosts.bow]
-Components = ["music", "grimmory", "audiobookshelf", "jellyfin", "buildbarn", "mediamanager", "tailscale-gateway", "usb-drive"]
+Components = ["music", "grimmory", "audiobookshelf", "jellyfin", "buildbarn", "mediamanager", "tailscale-gateway", "usb-drive", "db-dump"]
 Roles = ["base"]
 
 [Hosts.krytis-runner]

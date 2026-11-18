@@ -210,6 +210,14 @@ components/
     usb-drive-unlock.service     # WantedBy= the drive's by-label device unit; systemd-cryptsetup attach, tpm2-device=auto,headless
     usb-drive-boot.service       # WantedBy=multi-user.target; ConditionPathExists on the label, starts the unlock unit for a drive attached at boot
     mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
+  db-dump/                       # nightly logical DB dumps into a named volume restic carries off-host (bow-only, #194)
+    MANIFEST.toml                # no Secrets (references grimmory/mediamanager's), NoRestart, Stopped+Oneshot dumps, static timer
+    dump.sh                      # shared dump script: counts.pre, dump, counts.post, .done, all via atomic renames
+    db-dump-grimmory.container.gotmpl     # mariadb-dump --databases grimmory, same image pin as grimmory-mariadb
+    db-dump-mediamanager.container.gotmpl # pg_dump mediamanager, same image pin as mediamanager-postgres
+    db-dumps.volume              # systemd-db-dumps: <name>.sql/.counts.pre/.counts.post/.done (root, 0700/0600)
+    db-dump-trigger.service.gotmpl # systemctl restart of every dump unit + healthchecks.io db-dump-<host> pings
+    db-dump.timer.gotmpl         # dbDumpOnCalendar, default 23:30, before restic's 00:00 run
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper
