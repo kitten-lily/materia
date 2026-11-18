@@ -1,0 +1,4 @@
+[Volume]
+# Nightly logical dumps of bow's databases (#194). restic backs up every
+# podman named volume, so this one goes off-host with no restic change.
+# Root-owned: the dump clients run as root in the official images.

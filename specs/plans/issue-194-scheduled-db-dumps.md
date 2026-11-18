@@ -152,6 +152,15 @@ review (same day): the review's 8 points are folded in and marked
   removed when *no* assigned component declares it. If that isn't so, stop
   and redesign: declare the secrets in `db-dump` with host-scoped vault
   copies.
+  **Result (2026-11-18): passes.** v0.8.1 (`4304e19`): a component's host-side
+  secret resources come only from its own manifest `Secrets`
+  (`pkg/loader/secret.go`, `SecretDiscoveryStage.Process` checks existence
+  of the component's own declared names). A secret is removed only by that
+  component's resource diff (`pkg/planner/planner.go`,
+  `generateUpdatedComponentResources`, `toRemove`) or by removing that
+  component. A component that declares no secrets can't remove anyone's.
+  Consequence: removing grimmory or mediamanager from bow removes its secret,
+  and that dump then fails and alerts.
 - [ ] **Step 1: Write the units.** `db-dumps.volume`: `[Volume]` only.
   Each `.container.gotmpl` has `[Unit] After=<db>.service`. Its
   `[Container]` section has:
