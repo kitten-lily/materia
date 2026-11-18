@@ -419,6 +419,13 @@ feeds). It will live inside `Podcasts/.bin` on bow, and must not be deleted as
   HTTP/2 and HTTP/3, `/api/health` healthy.
 - `HOSTNAME`/`PINEPODS_PUBLIC_URL` moved from the planned `pinepods.` to
   `pods.<baseDomain>` in a follow-up commit.
+- **Cutover step 6:** the user re-subscribed by hand to the four shows from
+  the checklist (2026-11-18). The hostname commit (`382d2d8`) went live in
+  the 12:45 UTC run. That run then failed on SilentSuite (another session's
+  rollout, handed off), *after* pinepods' restart step.
+- **Still open on #196:** add `db-dump-pinepods` to `db-dump`, plus a
+  `db:restore-test` row. Wait until SilentSuite is fixed: both deploy in
+  the same all-or-nothing materia run on bow.
 
 ## Decisions (2026-11-18)
 
