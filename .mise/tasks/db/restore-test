@@ -46,7 +46,10 @@ flunk() { echo "    FAIL  $*"; FAILED=1; }
 work=$(mktemp -d /var/tmp/restore-test.XXXXXX)
 net=restore-test-$$
 cleanup() {
-  podman rm -f "$net-grimmory" "$net-mediamanager" >/dev/null 2>&1 || true
+  # -v: both official images declare a VOLUME, so each throwaway server has an
+  # anonymous volume holding the restored database. Without -v it outlives the
+  # container on the root disk, and restic then backs it up off-host.
+  podman rm -f -v "$net-grimmory" "$net-mediamanager" >/dev/null 2>&1 || true
   podman network rm "$net" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
