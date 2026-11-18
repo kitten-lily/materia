@@ -1,6 +1,7 @@
 {
   "TCP": {
     "22": { "TCPForward": "host.containers.internal:22" },
+    "3735": { "TCPForward": "silentsuite:3735" },
     "80": { "TCPForward": "audiobookshelf:80" },
     "4533": { "TCPForward": "navidrome:4533" },
     "6060": { "TCPForward": "grimmory:6060" },

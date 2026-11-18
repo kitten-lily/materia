@@ -210,6 +210,13 @@ components/
     usb-drive-unlock.service     # WantedBy= the drive's by-label device unit; systemd-cryptsetup attach, tpm2-device=auto,headless
     usb-drive-boot.service       # WantedBy=multi-user.target; ConditionPathExists on the label, starts the unlock unit for a drive attached at boot
     mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
+  silentsuite/                   # SilentSuite E2E calendar/contacts/tasks sync server + Postgres 16 sidecar (standalone, bow-only, #192)
+    MANIFEST.toml                # Secrets: silentsuiteDbPassword, silentsuiteDbIni, silentsuiteBootstrapToken, silentsuiteRegistrationToken (from `mise silentsuite:init-secrets`)
+    silentsuite.container.gotmpl # server, newt-net, no PublishPort, TRUSTED_PROXY_IPS=10.89.0.0/16, strict is_etebase healthcheck; reg token behind {{ if exists }}
+    silentsuite-postgres.container.gotmpl # postgres 16.16-alpine (upstream's tested major), default PGDATA
+    etebase-server.ini.gotmpl    # allowed_hosts silentsuite.<baseDomain> + localhost; NO password (merged from the silentsuiteDbIni secret)
+    silentsuite-data.volume      # /data: secret.txt (Django SECRET_KEY), media, static (etebase UID 100 via copy-up)
+    silentsuite-db.volume        # Postgres data
   db-dump/                       # nightly logical DB dumps into a named volume restic carries off-host (bow-only, #194)
     MANIFEST.toml                # no Secrets (references grimmory/mediamanager's), NoRestart, Stopped+Oneshot dumps, static timer
     dump.bash                    # shared dump script (not .sh: see the Script-resource gotcha): counts.pre, dump, counts.post, .done via atomic renames
@@ -244,7 +251,7 @@ mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, but
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, db/restore-test, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, db/restore-test, silentsuite/init-secrets, clean)
 ```
 
 ## Multi-server model
