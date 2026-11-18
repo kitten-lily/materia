@@ -147,9 +147,9 @@ designed path.
   pinepods docs warn against that mount path on postgres:18, but that warning
   is about Docker's default anonymous-volume layout. The override is proven on
   bow by mediamanager.
-- `POSTGRES_DB=pinepods_database`, `POSTGRES_USER=pinepods`, and
+- `POSTGRES_DB=pinepods`, `POSTGRES_USER=pinepods`, and
   `POSTGRES_PASSWORD` from secret `pinepodsDbPassword`.
-- `Notify=healthy` + `HealthCmd=pg_isready -U pinepods -d pinepods_database`
+- `Notify=healthy` + `HealthCmd=pg_isready -U pinepods -d pinepods`
   gate the app's start. The app has `Requires=`/`After=` on postgres and
   valkey. Do not rely on the app's own retry. Its startup behaviour on an
   absent DB is unverified, and a crash loop fails the host.
@@ -205,7 +205,7 @@ never pasted by hand.
 
 The app gets `DB_PASSWORD` via `secretEnv`. Non-secret env:
 `DB_TYPE=postgresql`, `DB_HOST=pinepods-postgres`, `DB_PORT=5432`,
-`DB_USER=pinepods`, `DB_NAME=pinepods_database`,
+`DB_USER=pinepods`, `DB_NAME=pinepods` (database name = user, see Backups),
 `VALKEY_HOST=pinepods-valkey`, `VALKEY_PORT=6379`, `TZ=Etc/UTC`,
 `DEBUG_MODE=true` (see below), `SEARCH_API_URL`/`PEOPLE_API_URL` (upstream
 hosted defaults, accepted 2026-11-18: search queries go to
@@ -262,16 +262,18 @@ first visit, and we do that right after deploy (see the exposure step below).
 
 - `pinepods-db.volume` is covered by restic's nightly volume backup
   (crash-consistent, same as mediamanager).
-- Extend `mise db:backup` to cover pinepods. A row alone is **not enough**:
-  `counts()` and `dump()` hardcode `-U mediamanager -d mediamanager`
-  (`.mise/tasks/db/backup`, the postgres branches). Add `db user|db name`
-  fields to the `DBS` entries and thread them through `counts`, `dump` and the
-  `--compare` path. Then add
-  `pinepods|postgres|pinepods-postgres|pinepods-postgres.service|pinepods.service|materia-pinepodsDbPassword|systemd-pinepods-db|pinepods|pinepods_database`.
-  Future major postgres bumps then have the dump/row-count path that BUG-010
-  lacked. (Separately, that task's client `PG` pin is still 18.6 while the
-  servers run 18.7. That is harmless for dumps, but bump it in the same
-  change.)
+- `mise db:backup`: superseded by `1a92228` (another session, #194), which
+  already made the task per-DB-user and reads the client image from the
+  installed server quadlet, so there is no stale pin. Its postgres branch
+  connects with `-d <user>`, so the PinePods database is named **`pinepods`**
+  (= user), not upstream's arbitrary `pinepods_database`. The task needed only
+  a pinepods row, which skips itself while the container isn't running.
+- **Follow-up after deploy (not before):** add `db-dump-pinepods.container`
+  to the `db-dump` component (#194, nightly dumps carried off-host by restic)
+  and a pinepods row to `mise db:restore-test`. Not before: the dump unit
+  references `materia-pinepodsDbPassword`, which exists only after
+  pinepods' first materia run. A dump unit created earlier would fail
+  db-dump.
 - Downloads are not backed up (they can be downloaded again). In-app backups
   land in `/var/lib/materia-data/pinepods-backups`, which is outside restic's
   paths. That is acceptable, since the DB volume is the source of truth.
