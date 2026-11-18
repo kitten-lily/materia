@@ -2124,6 +2124,23 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   next `materia-update` on each affected host actually succeeded —
   `journalctl -u materia-update.service | grep FATA` is the check.
   See `specs/bugs/BUG-010-mediamanager-postgres-major-bump-volume-not-wiped.md`.
+- **A failed materia run can lose another component's restart for good.**
+  materia installs files early in its plan and restarts services late. If
+  the run aborts in between, the new file stays on disk, and the next run
+  sees no diff, so it never plans that restart again. The service keeps
+  running the old unit (`systemctl` warns `changed on disk, the version
+  systemd has loaded is outdated`). Caught on bow on 2026-11-18 (#196): the
+  09:04 run installed `audiobookshelf.container` without its `Podcasts`
+  mount (step 1) and planned `Restart Service audiobookshelf.service`
+  (step 11). An unrelated db-dump file then aborted it at 8/14 steps. The
+  green 09:10 run planned only db-dump steps, and audiobookshelf kept the
+  old bind mount. After any failed run, list the restarts it planned and
+  never reached: `journalctl -u materia-update.service --since <run> -o cat
+  | grep 'Restart Service'`. Run them by hand with `systemctl daemon-reload
+  && systemctl restart <svc>`. Then confirm the live state, e.g. `podman
+  inspect … {{range .Mounts}}`, not just the file on disk. Also, `grep -c`
+  for a path in a quadlet can match a comment that mentions it. Match
+  `^Volume=` instead.
 - **`systemd-sysupdate-reboot.timer` is masked on every Flatcar host —
   it can only ever fail, and it squats in `systemctl --failed`.**
   Flatcar enables the timer by default but ships one placeholder
