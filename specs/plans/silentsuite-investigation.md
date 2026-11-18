@@ -313,14 +313,46 @@ deploy. Closing works either way. `ETEBASE_REGISTRATION_TOKEN` is the better
 steady state: it allows adding accounts later without reopening signups.
 The registration check runs *before* the bootstrap check, so setting both
 from the first deploy would leave no open window at all. That only works if
-the clients can send the header. Not verified: check the web/Android signup
-UI for a registration-token field.
+the clients can send the header.
+
+**Client support (checked 2026-11-18, upstream `main` source): no client
+can send a typed-in registration token.**
+
+- Hosted web app (app.silentsuite.io): `packages/core/src/etebase/client.ts`
+  can send the header, but `apps/web/app/lib/etebase-auth.ts` only fills it
+  in "owner mode". There the user enters the server's *owner password*, the
+  app trades it at `/api/v1/owner/` for a short-lived signed grant, and
+  `assertSameOriginRoot` requires the web app and server to share one
+  origin. The signup page shows the owner-password field only when
+  `isSelfHosted && NEXT_PUBLIC_OWNER_REGISTRATION === 'true'`
+  (`apps/web/app/(auth)/signup/page.tsx`), so never on the hosted app.
+- Android: signup is "hosted signup" (`ui/setup/LoginActivity.kt`), which
+  hands off to the web app. No header code in `android/`.
+- Owner mode is only wired up in upstream's Umbrel package
+  (`self-host/umbrel/silentsuite/docker-compose.yml`). It adds a third
+  container, `ghcr.io/silent-suite/silentsuite-web-selfhost`, plus an nginx
+  router that serves the web app and the server from one origin, and sets
+  `ETEBASE_OWNER_PASSWORD` and `ETEBASE_REGISTRATION_TOKEN`. The standard
+  self-host docs don't document either setting.
+
+**Decision:** stay with two containers. Use the bootstrap token for the first
+account, then close with `ETEBASE_REGISTRATION_TOKEN` set to a random value
+nobody holds. Without a client that sends it, that works like
+`DISABLE_SIGNUP` but returns a clear 403 instead of `400 generic`. To add an
+account later, unset it, sign up, and set it again. The open window is
+therefore real and limited to the time between the first signup and the
+`materia update` that closes it (run immediately, per the first-run
+procedure). Owner mode (web-selfhost + same-origin router) would remove the
+window and allow signups without reopening. It's a possible later
+upgrade, not worth a third container now.
+
+Also from the Umbrel package: it pins `postgres:16.16-alpine`, newer than
+the `16.9-alpine` digest in the standard compose. Use the 16.16 pin.
 
 ## Open questions / unverified
 
 - iOS requirement (blocking, user decision).
 - `/data` ownership under rootful podman (check on bow's first start).
-- Whether clients can send `x-silentsuite-registration-token` (decides whether signups are ever open).
 - Backup prerequisite (see Proposed component).
 - Audit lineage: none found (2026-11-17). EteSync's two NLnet NGI0 PET
   grants (iOS app 2019, Etebase protocol redesign 2020) mention no audit,
