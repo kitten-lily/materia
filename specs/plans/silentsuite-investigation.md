@@ -349,6 +349,36 @@ upgrade, not worth a third container now.
 Also from the Umbrel package: it pins `postgres:16.16-alpine`, newer than
 the `16.9-alpine` digest in the standard compose. Use the 16.16 pin.
 
+## Deployed (2026-11-18, #192)
+
+Built per `issue-192-silentsuite-component.md`. Live on bow at
+`silentsuite.<baseDomain>` since 2026-11-18:
+
+- Pin `v0.5.20-beta@sha256:6a5ab47d…` (published release, manifest digest
+  matches) and Postgres `16.16-alpine@sha256:81e77a48…`. Secrets come from
+  `mise silentsuite:init-secrets`.
+- Confirmed rootful on bow: `/data` is `100:101` and `secret.txt` 0600 via
+  copy-up, so the `.volume` needs no ownership settings.
+- First deploy failure: the string `HealthCmd` lost its closing quote under
+  podman 5.7.1. Fixed with `healthcheck.py` + JSON-array `HealthCmd`
+  (AGENTS.md gotcha). materia aborted bow twice (once at the first deploy,
+  once behind the stuck start job) and the run lost the
+  `tailscale-gateway` restart, so the gateway was restarted by hand.
+- The tailnet policy's `tag:server` → `tag:gateway` grant needed `tcp:3735`
+  (Tailscale admin console, not in the repo).
+- Pangolin resource 14 (`bow-silentsuite`) was created through the API:
+  site Flutterina, target `<bow-ts-ip>:3735`, SSO off, health check
+  `is_etebase` with a `Host` header and status 200.
+- First account created with the bootstrap token. Signups were then closed
+  with `ETEBASE_REGISTRATION_TOKEN`: a public signup gets
+  `403 registration_token_required`. A mistaken probe during the close
+  briefly created a junk account (`closed-probe-user`); it was deleted and
+  only the owner's account remains.
+- Release gate: `.github/workflows/silentsuite-release.yml`. Renovate: no
+  automerge, 3-day minimum age.
+- Backups: `db-dump-silentsuite` and the restore test's `silentsuite` entry.
+  First nightly run still to be verified.
+
 ## Open questions / unverified
 
 - iOS requirement (blocking, user decision).

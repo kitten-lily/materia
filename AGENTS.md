@@ -342,6 +342,35 @@ shell; see the `env = false` gotcha.
   `ExitPolicy=continue` unless it is genuinely meant to disappear with its
   workload. The pod itself still only restarts when the `.pod` file
   changes.
+- **On bow's podman (5.7.1), a string-form `HealthCmd` with an embedded
+  quoted argument loses its closing quote, and the container never becomes
+  healthy.** silentsuite (#192) shipped
+  `HealthCmd=python -c "import http.client,…;sys.exit(…!=200)"`. Quadlet
+  emitted `["CMD-SHELL","python -c \"import …!=200)"]`, with no closing `"`, so
+  every probe printed `/bin/sh: syntax error: unterminated quoted string`.
+  The identical quadlet was healthy under podman 6.1.4 on the workstation, so
+  a local test can't catch this. With `Notify=healthy` the start job just
+  waits: materia timed out on it and aborted bow's run (18/23 steps). Rule:
+  any `HealthCmd` needing quotes or spaces inside an argument uses the
+  JSON-array form. Best of all, use a mounted script with no quoting at all
+  (`HealthCmd=["python","/healthcheck.py"]`, `silentsuite/healthcheck.py`).
+  Check what podman stored with `podman inspect <ctr> -f '{{json
+  .Config.Healthcheck.Test}}'`.
+- **A start job stuck on `Notify=healthy` makes materia's restart of the
+  fixed unit time out too.** After the healthcheck fix landed, materia
+  installed the new quadlet but its restart queued behind the original start
+  job, which waits up to `TimeoutStartSec` for a healthy signal that never
+  comes. The run aborted again (`operation timeout`, 3/4 steps), and the
+  container kept the old health test. Fix by hand: `systemctl restart
+  <unit>` (recreates the container from the new quadlet), then re-run
+  materia, which should say `Nothing to do`.
+- **A Pangolin health check against an app that validates `Host` needs a
+  `Host` header.** Pangolin probes the target IP (`hcHostname` = the bow
+  tailnet IP). SilentSuite (Django `ALLOWED_HOSTS` + FastAPI
+  `TrustedHostMiddleware`) answers `400 Invalid host header` to that. Set
+  `hcHeaders: [{name: "Host", value: "<public hostname>"}]` and
+  `hcStatus: 200` on the target (done through the API for resource 14,
+  2026-11-18; Pangolin then reports it healthy).
 - **Podman healthcheck mechanics (issue #113).** Four things that are easy
   to get wrong: (1) **podman DOES inherit an image's `HEALTHCHECK`** — a
   container with no `HealthCmd=` still reports `healthy`/`unhealthy` if
