@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Back up the grimmory MariaDB + MediaManager Postgres databases on a host (logical dump, row counts, raw volume), or compare row counts against an earlier backup"
+#MISE description="Back up the grimmory MariaDB + MediaManager/PinePods Postgres databases on a host (logical dump, row counts, raw volume), or compare row counts against an earlier backup"
 
 #USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
 #USAGE flag "--compare <compare>" help="backup directory from an earlier run (/var/lib/db-backups/<stamp>): only re-count rows and diff against it"
@@ -35,6 +35,7 @@ set -euo pipefail
 DBS=(
   "grimmory|mariadb|grimmory-mariadb|grimmory-mariadb.service|grimmory.service|materia-mariadbRootPassword|systemd-grimmory-mariadb-config|root|/etc/containers/systemd/grimmory/grimmory-mariadb.container"
   "mediamanager|postgres|mediamanager-postgres|mediamanager-postgres.service|mediamanager.service|materia-mediamanagerDbPassword|systemd-mediamanager-db|mediamanager|/etc/containers/systemd/mediamanager/mediamanager-postgres.container"
+  "pinepods|postgres|pinepods-postgres|pinepods-postgres.service|pinepods.service|materia-pinepodsDbPassword|systemd-pinepods-db|pinepods|/etc/containers/systemd/pinepods/pinepods-postgres.container"
 )
 
 step() { echo "==> $*"; }
