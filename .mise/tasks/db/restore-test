@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+#MISE description="Restore a host's latest restic snapshot of the db-dump files and app volumes into throwaway containers and check them (#194)"
+
+#USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
+#USAGE flag "--snapshot <snapshot>" help="restic snapshot ID to test instead of this host's latest (e.g. to prove the freshness check fails)"
+
+# Proves the nightly db-dump output can be restored from the off-host restic
+# repository, not just that it was written. One ssh session, as root:
+#   1. Resolve ONE snapshot (this host's latest, or --snapshot) and use its ID
+#      for every read, never "latest".
+#   2. Every <name>.done in that snapshot must be <= 36 h old: a fresh
+#      snapshot of a stale dump must fail.
+#   3. Load each <name>.sql into a throwaway server (same image as the
+#      installed server quadlet, initialised by the same env, private network,
+#      no volume), stopping at the first SQL error. The restored table set must
+#      equal <name>.counts.pre, and each table's rows must lie in [pre, post].
+#   4. Restore each app volume and compare sha256 of every file that hasn't
+#      changed since the snapshot with the live copy.
+# restic runs from the restic-backup image with the installed quadlet's own
+# env, secrets and mounts. Nothing on the host is modified; all scratch state
+# is removed on exit.
+
+set -euo pipefail
+
+_target="${usage_target:?--target is required}"
+_snapshot="${usage_snapshot:-}"
+
+read -r -d '' _payload <<'PAYLOAD_EOF' || true
+set -euo pipefail
+VOLS=/var/lib/containers/storage/volumes
+DUMPS=$VOLS/systemd-db-dumps/_data
+RQ=/etc/containers/systemd/restic-backup/restic-backup.container
+# name|kind|server quadlet|db user
+DBS=(
+  "grimmory|mariadb|/etc/containers/systemd/grimmory/grimmory-mariadb.container|grimmory"
+  "mediamanager|postgres|/etc/containers/systemd/mediamanager/mediamanager-postgres.container|mediamanager"
+)
+APP_VOLUMES=(systemd-grimmory-data systemd-mediamanager-images)
+MAX_AGE_H=36
+
+step() { echo "==> $*"; }
+pass() { echo "    ok    $*"; }
+FAILED=0
+flunk() { echo "    FAIL  $*"; FAILED=1; }
+
+work=$(mktemp -d /var/tmp/restore-test.XXXXXX)
+net=restore-test-$$
+cleanup() {
+  podman rm -f "$net-grimmory" "$net-mediamanager" >/dev/null 2>&1 || true
+  podman network rm "$net" >/dev/null 2>&1 || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+# --- restic with the installed job's own configuration ----------------------
+image_of() { sed -n 's/^Image=//p' "$1" | head -1; }
+rargs=(--rm --tmpfs /tmp)
+while IFS= read -r line; do
+  case $line in
+    Environment=*) v=${line#Environment=}; v=${v#\"}; v=${v%\"}; rargs+=(--env "$v") ;;
+    Secret=*) rargs+=(--secret "${line#Secret=}") ;;
+    Volume=*) rargs+=(-v "${line#Volume=}") ;;
+  esac
+done < "$RQ"
+RIMG=$(image_of "$RQ")
+RHOST=$(sed -n 's/^Environment=RESTIC_HOST=//p' "$RQ")
+restic() { podman run "${rargs[@]}" -v "$work:/work" --entrypoint restic "$RIMG" --no-cache "$@"; }
+
+# --- 1. one snapshot ---------------------------------------------------------
+if [[ -n $SNAPSHOT ]]; then
+  json=$(restic snapshots --no-lock --json "$SNAPSHOT") || true
+else
+  json=$(restic snapshots --no-lock --json --host "$RHOST" --latest 1)
+fi
+id=$(grep -o '"id":"[0-9a-f]*"' <<<"$json" | head -1 | cut -d'"' -f4) || true
+stime=$(grep -o '"time":"[^"]*"' <<<"$json" | head -1 | cut -d'"' -f4) || true
+[[ -n $id && -n $stime ]] || { echo "error: no snapshot ${SNAPSHOT:-for host $RHOST} in the repository" >&2; exit 1; }
+step "snapshot ${id:0:8} from $stime (host $RHOST)"
+
+# --- 2. freshness of each dump -------------------------------------------------
+now=$(date +%s)
+for entry in "${DBS[@]}"; do
+  IFS='|' read -r name _ _ _ <<<"$entry"
+  for f in sql counts.pre counts.post done; do
+    restic dump --no-lock "$id" "$DUMPS/$name.$f" > "$work/$name.$f" 2>/dev/null ||
+      { flunk "$name.$f missing from snapshot"; continue 2; }
+  done
+  done_at=$(cat "$work/$name.done")
+  age_h=$(( (now - $(date -d "$done_at" +%s)) / 3600 ))
+  if (( age_h <= MAX_AGE_H )); then pass "$name dump finished $done_at (${age_h} h ago)"
+  else flunk "$name dump is stale: finished $done_at (${age_h} h ago, max ${MAX_AGE_H} h)"; fi
+done
+
+# --- 3. load each dump into a throwaway server ----------------------------------
+podman network create "$net" >/dev/null
+pw=$(head -c 18 /dev/urandom | base64 | tr -d '/+=')
+sql_counts() {  # kind ctr user db -> sorted "<schema>.<table>\t<count>"
+  local kind=$1 ctr=$2 user=$3 db=$4
+  case $kind in
+    mariadb)
+      podman exec -e MYSQL_PWD="$pw" "$ctr" sh -c "mariadb -uroot -N -e \"SELECT CONCAT('SELECT ''', table_schema, '.', table_name, ''', COUNT(*) FROM \\\`', table_schema, '\\\`.\\\`', table_name, '\\\`;') FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema = '$db'\" | mariadb -uroot -N" ;;
+    postgres)
+      podman exec "$ctr" sh -c "psql -U $user -d $db -Atc \"SELECT format('SELECT %L || chr(9) || count(*) FROM %I.%I;', schemaname || '.' || relname, schemaname, relname) FROM pg_stat_user_tables\" | psql -U $user -d $db -At" ;;
+  esac | LC_ALL=C sort
+}
+for entry in "${DBS[@]}"; do
+  IFS='|' read -r name kind quadlet user <<<"$entry"
+  [[ -s $work/$name.sql ]] || continue
+  ctr=$net-$name img=$(image_of "$quadlet")
+  step "$name: loading the dump into a throwaway server ($img)"
+  case $kind in
+    mariadb)
+      podman run -d --name "$ctr" --network "$net" -e MARIADB_ROOT_PASSWORD="$pw" \
+        -e MARIADB_DATABASE="$name" -e MARIADB_USER="$user" -e MARIADB_PASSWORD="$pw" "$img" >/dev/null
+      ready() { podman exec -e MYSQL_PWD="$pw" "$ctr" mariadb -h 127.0.0.1 -uroot -e 'SELECT 1' >/dev/null 2>&1; }
+      load() { podman exec -i -e MYSQL_PWD="$pw" "$ctr" mariadb -uroot < "$work/$name.sql"; } ;;
+    postgres)
+      podman run -d --name "$ctr" --network "$net" -e PGDATA=/var/lib/postgresql/data \
+        -e POSTGRES_DB="$name" -e POSTGRES_USER="$user" -e POSTGRES_PASSWORD="$pw" "$img" >/dev/null
+      ready() { podman exec "$ctr" pg_isready -h 127.0.0.1 -U "$user" -d "$name" >/dev/null 2>&1; }
+      load() { podman exec -i "$ctr" psql -q -v ON_ERROR_STOP=1 -U "$user" -d "$name" < "$work/$name.sql" >/dev/null; } ;;
+  esac
+  for _ in $(seq 120); do ready && break; sleep 1; done
+  ready || { flunk "$name: throwaway server never became ready"; continue; }
+  if ! load; then flunk "$name: dump failed to load (first SQL error above)"; continue; fi
+  sql_counts "$kind" "$ctr" "$user" "$name" > "$work/$name.counts.restored"
+  if awk -F '\t' -v name="$name" '
+      FILENAME == ARGV[1] { pre[$1] = $2; next }
+      FILENAME == ARGV[2] { post[$1] = $2; next }
+      { got[$1] = $2 }
+      END {
+        bad = 0
+        for (t in pre) if (!(t in got)) { printf "    FAIL  %s: table %s missing after restore\n", name, t; bad = 1 }
+        for (t in got) {
+          if (!(t in pre)) { printf "    FAIL  %s: unexpected table %s\n", name, t; bad = 1; continue }
+          if (got[t] + 0 < pre[t] + 0 || got[t] + 0 > post[t] + 0) {
+            printf "    FAIL  %s: %s has %d rows, expected %d..%d\n", name, t, got[t], pre[t], post[t]; bad = 1 }
+        }
+        exit bad
+      }' "$work/$name.counts.pre" "$work/$name.counts.post" "$work/$name.counts.restored"; then
+    pass "$name: $(wc -l < "$work/$name.counts.restored") tables, every row count within [pre, post]"
+  else
+    FAILED=1
+  fi
+done
+
+# --- 4. app volumes -------------------------------------------------------------
+for vol in "${APP_VOLUMES[@]}"; do
+  live=$VOLS/$vol/_data
+  [[ -d $live ]] || { flunk "$vol: not present on this host"; continue; }
+  step "$vol: restoring from ${id:0:8}"
+  restic restore --no-lock "$id" --include "$live" --target /work/restore >/dev/null
+  rest=$work/restore$live
+  [[ -d $rest ]] || { flunk "$vol: not in the snapshot"; continue; }
+  # Only files untouched since the snapshot can be compared byte for byte.
+  (cd "$live" && find . -type f ! -newermt "@$(date -d "$stime" +%s)" -print0 | sort -z | xargs -0 -r sha256sum) > "$work/$vol.live"
+  n=$(wc -l < "$work/$vol.live")
+  if (( n == 0 )); then
+    pass "$vol: restored; no files older than the snapshot to compare"
+  elif (cd "$rest" && sha256sum --quiet -c "$work/$vol.live") > "$work/$vol.diff" 2>&1; then
+    pass "$vol: $n unchanged files identical to the live copy"
+  else
+    flunk "$vol: $(grep -c FAILED "$work/$vol.diff" || true) of $n files differ or are missing"
+    head -5 "$work/$vol.diff" | sed 's/^/          /'
+  fi
+  rm -rf "$work/restore"
+done
+
+if (( FAILED )); then echo "restore test: FAILED"; exit 1; fi
+echo "restore test: passed (snapshot ${id:0:8})"
+PAYLOAD_EOF
+
+_script="SNAPSHOT=$(printf %q "$_snapshot")"$'\n'"$_payload"
+echo "==> $_target (ssh may wait for a security-key touch)"
+# shellcheck disable=SC2029 # expanded locally on purpose
+ssh "$_target" "sudo bash -c $(printf %q "$_script")"

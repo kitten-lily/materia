@@ -29,42 +29,44 @@ _compare="${usage_compare:-}"
 
 read -r -d '' _payload <<'PAYLOAD_EOF' || true
 set -euo pipefail
-# Client images: the same pins as the server quadlets.
-MDB=docker.io/library/mariadb:12.3.3@sha256:d46e102fa8b9b72bfcdeb56f9dd538742092119dc8b11f31fe662605cd234cd9
-PG=docker.io/library/postgres:18.6@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
-# name|kind|container|db service|app service|podman secret|volume
+# name|kind|container|db service|app service|podman secret|volume|db user|server quadlet
+# The client image is read from the installed server quadlet, so it is
+# always the pin Renovate last bumped (this task has no pins of its own).
 DBS=(
-  "grimmory|mariadb|grimmory-mariadb|grimmory-mariadb.service|grimmory.service|materia-mariadbRootPassword|systemd-grimmory-mariadb-config"
-  "mediamanager|postgres|mediamanager-postgres|mediamanager-postgres.service|mediamanager.service|materia-mediamanagerDbPassword|systemd-mediamanager-db"
+  "grimmory|mariadb|grimmory-mariadb|grimmory-mariadb.service|grimmory.service|materia-mariadbRootPassword|systemd-grimmory-mariadb-config|root|/etc/containers/systemd/grimmory/grimmory-mariadb.container"
+  "mediamanager|postgres|mediamanager-postgres|mediamanager-postgres.service|mediamanager.service|materia-mediamanagerDbPassword|systemd-mediamanager-db|mediamanager|/etc/containers/systemd/mediamanager/mediamanager-postgres.container"
 )
 
 step() { echo "==> $*"; }
 fail() { echo "error: $*" >&2; exit 1; }
 
+# Image= of an installed quadlet.
+image_of() { sed -n 's/^Image=//p' "$1" | head -1; }
+
 # Exact row count per table, "<schema>.<table> <count>", sorted.
 counts() {
-  local kind=$1 ctr=$2 secret=$3
+  local kind=$1 ctr=$2 secret=$3 user=$4 img=$5
   case "$kind" in
     mariadb)
-      podman run --rm --network newt-net --secret "$secret,type=env,target=MYSQL_PWD" "$MDB" sh -c "
-        mariadb -h $ctr -uroot -N -e \"SELECT CONCAT('SELECT ''', table_schema, '.', table_name, ''', COUNT(*) FROM \\\`', table_schema, '\\\`.\\\`', table_name, '\\\`;') FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')\" \
-        | mariadb -h $ctr -uroot -N" | sort ;;
+      podman run --rm --network newt-net --secret "$secret,type=env,target=MYSQL_PWD" "$img" sh -c "
+        mariadb -h $ctr -u$user -N -e \"SELECT CONCAT('SELECT ''', table_schema, '.', table_name, ''', COUNT(*) FROM \\\`', table_schema, '\\\`.\\\`', table_name, '\\\`;') FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')\" \
+        | mariadb -h $ctr -u$user -N" | sort ;;
     postgres)
-      podman run --rm --network newt-net --secret "$secret,type=env,target=PGPASSWORD" "$PG" sh -c "
-        psql -h $ctr -U mediamanager -d mediamanager -Atc \"SELECT format('SELECT %L || chr(9) || count(*) FROM %I.%I;', schemaname || '.' || relname, schemaname, relname) FROM pg_stat_user_tables\" \
-        | psql -h $ctr -U mediamanager -d mediamanager -At" | sort ;;
+      podman run --rm --network newt-net --secret "$secret,type=env,target=PGPASSWORD" "$img" sh -c "
+        psql -h $ctr -U $user -d $user -Atc \"SELECT format('SELECT %L || chr(9) || count(*) FROM %I.%I;', schemaname || '.' || relname, schemaname, relname) FROM pg_stat_user_tables\" \
+        | psql -h $ctr -U $user -d $user -At" | sort ;;
   esac
 }
 
 dump() {
-  local kind=$1 ctr=$2 secret=$3
+  local kind=$1 ctr=$2 secret=$3 user=$4 img=$5
   case "$kind" in
     mariadb)
-      podman run --rm --network newt-net --secret "$secret,type=env,target=MYSQL_PWD" "$MDB" \
-        mariadb-dump -h "$ctr" -uroot --all-databases --single-transaction --routines --events --triggers ;;
+      podman run --rm --network newt-net --secret "$secret,type=env,target=MYSQL_PWD" "$img" \
+        mariadb-dump -h "$ctr" -u"$user" --all-databases --single-transaction --routines --events --triggers ;;
     postgres)
-      podman run --rm --network newt-net --secret "$secret,type=env,target=PGPASSWORD" "$PG" \
-        pg_dumpall -h "$ctr" -U mediamanager ;;
+      podman run --rm --network newt-net --secret "$secret,type=env,target=PGPASSWORD" "$img" \
+        pg_dumpall -h "$ctr" -U "$user" ;;
   esac
 }
 
@@ -74,11 +76,11 @@ if [[ -n "$COMPARE" ]]; then
   [[ -d "$COMPARE" ]] || fail "no such backup directory: $COMPARE"
   rc=0
   for entry in "${DBS[@]}"; do
-    IFS='|' read -r name kind ctr _svc _app secret _vol <<<"$entry"
+    IFS='|' read -r name kind ctr _svc _app secret _vol user quadlet <<<"$entry"
     [[ -f "$COMPARE/$name.counts" ]] || { echo "    skip  $name (not in backup)"; continue; }
     running "$ctr" || { echo "    FAIL  $name: container $ctr not running"; rc=1; continue; }
     step "$name: comparing row counts with $COMPARE/$name.counts"
-    counts "$kind" "$ctr" "$secret" > "/tmp/$name.counts.now"
+    counts "$kind" "$ctr" "$secret" "$user" "$(image_of "$quadlet")" > "/tmp/$name.counts.now"
     # Fail on a missing table or fewer rows; more rows is normal app activity.
     awk -F '\t' -v name="$name" '
       NR == FNR { before[$1] = $2; next }
@@ -101,14 +103,15 @@ dir="/var/lib/db-backups/$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -m 0700 "$dir"
 step "backing up into $dir (free on /: $(df -h --output=avail / | tail -1 | tr -d ' '))"
 for entry in "${DBS[@]}"; do
-  IFS='|' read -r name kind ctr svc app secret vol <<<"$entry"
+  IFS='|' read -r name kind ctr svc app secret vol user quadlet <<<"$entry"
   if ! running "$ctr"; then echo "    skip  $name ($ctr not running on this host)"; continue; fi
 
   step "$name: logical dump"
-  ( umask 077; dump "$kind" "$ctr" "$secret" > "$dir/$name.sql" )
+  img=$(image_of "$quadlet"); [[ -n $img ]] || fail "$name: no Image= in $quadlet"
+  ( umask 077; dump "$kind" "$ctr" "$secret" "$user" "$img" > "$dir/$name.sql" )
   [[ -s "$dir/$name.sql" ]] || fail "$name: empty dump"
   step "$name: row counts"
-  counts "$kind" "$ctr" "$secret" > "$dir/$name.counts"
+  counts "$kind" "$ctr" "$secret" "$user" "$img" > "$dir/$name.counts"
   echo "    $(wc -l < "$dir/$name.counts") tables, $(awk -F '\t' '{s += $2} END {print s + 0}' "$dir/$name.counts") rows"
 
   step "$name: raw volume export (stops $app and $svc briefly)"

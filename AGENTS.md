@@ -244,7 +244,7 @@ mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, but
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, db/restore-test, clean)
 ```
 
 ## Multi-server model
@@ -422,6 +422,13 @@ shell; see the `env = false` gotcha.
   bind-mounted into a container must use another extension
   (`db-dump/dump.bash`). An unrecognised extension is a plain data file
   under the component's data dir.
+- **A manual restic run prunes that day's earlier snapshot.** restic-backup's
+  `forget` keeps one snapshot per day (`resticKeepDaily`), the latest. Running
+  `restic-backup-trigger.service` by hand at 09:25 on 2026-11-18 removed the
+  00:00 snapshot of that day (`no matching ID found for prefix`). When a test
+  needs "an older snapshot", take one from a previous day.
+  `mise db:restore-test --target <host> [--snapshot <id>]` (#194) checks the
+  db-dump files and app volumes of one pinned snapshot end to end.
 - **`.gotmpl` suffix is stripped.** `config.yml.gotmpl` installs as
   `config.yml`. Only the last `.gotmpl` is stripped; `conf.gotmpl.gotmpl`
   installs as `conf.gotmpl`.
