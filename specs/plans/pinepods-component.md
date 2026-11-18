@@ -153,18 +153,15 @@ designed path.
 
 ### Valkey sidecar: ephemeral, health-gated
 
-- No volume **if** the smoke test shows an acceptable loss profile. That is
-  [INFERENCE]: pinepods uses Valkey for caching and task state. The test must
-  *replace* the valkey container (`podman rm -f` + recreate, not just restart)
-  while a download is queued and a user is logged in. Record what is lost
-  (sessions? queued jobs? nothing?) and whether the app recovers without a
-  restart of its own. Accept ephemeral only if every loss is self-healing or
-  trivially redone.
-- If persistence is needed, a volume alone is not enough. The
-  `valkey/valkey` image writes nothing to `/data` unless told to. Specify
-  `Exec=valkey-server --appendonly yes --appendfsync everysec` (or `--save`
-  RDB snapshots) plus `pinepods-valkey.volume` at `/data`, and re-run the same
-  replace test to prove that the state survives.
+- **No volume (smoke-tested 2026-11-18).** A Valkey container *replace*
+  keeps API keys valid (they are cached in Valkey but backed by the DB), and
+  the app reconnects without restarting. The one loss is that a download **in
+  flight** at that moment dies. It leaves a 0-byte file, no
+  `DownloadedEpisodes` row and no automatic retry, and it logs only `Failed to
+  mark task … as failed: Redis error … (value was nil)`. Re-queueing the same
+  episode works. Persistence would not prevent this, because the transfer runs
+  inside the API process. That is acceptable: Valkey restarts only on its own
+  Renovate bumps.
 - `HealthCmd=["valkey-cli","ping"]` (JSON form, no shell needed) plus
   `Notify=healthy`.
 - Upstream's compose uses `valkey/valkey:8-alpine`. Pin the precise
@@ -173,13 +170,25 @@ designed path.
 
 ### App health check
 
-`HealthCmd=` with `HealthStartPeriod=60s` and `HealthOnFailure=kill`, probing
-`http://localhost:8040/api/health` through the in-container nginx. That probe
-exercises nginx, the API and Valkey together. The probe binary
-(`curl`/`wget`) is **unverified**, so check it in the smoke test
-(`podman run --rm --entrypoint sh <img> -c 'command -v curl wget'`). The image
-is Debian-based with bash, so the plain-string `/bin/sh -c` form is fine if a
-client exists.
+**`/api/health` answers HTTP 200 even when unhealthy** (smoke-tested): with
+Valkey down it returns `200 {"status":"unhealthy","database":true,"redis":false}`.
+A plain `curl -f` probe therefore never fails. The probe must check the body:
+
+```
+HealthCmd=curl -fsS http://localhost:8040/api/health | grep -q '"status":"healthy"'
+HealthStartPeriod=60s
+HealthInterval=30s
+HealthRetries=3
+HealthTimeout=10s
+HealthOnFailure=kill
+```
+
+The image is **Alpine** (not Debian) and ships `curl`, `wget` and `/bin/sh`.
+The plain-string form runs in `sh -c`, so the pipe works. There are no `$`
+variables, so the `$$` escaping gotcha doesn't apply. Verified as a quadlet:
+with Valkey paused, podman killed the app after ~98 s, systemd restarted it
+(`NRestarts=1`), and it was healthy again once Valkey returned. With the
+`curl -f`-only probe, nothing happened in 240 s.
 
 ### Secrets and attributes
 
@@ -193,9 +202,20 @@ The app gets `DB_PASSWORD` via `secretEnv`. Non-secret env:
 `DB_TYPE=postgresql`, `DB_HOST=pinepods-postgres`, `DB_PORT=5432`,
 `DB_USER=pinepods`, `DB_NAME=pinepods_database`,
 `VALKEY_HOST=pinepods-valkey`, `VALKEY_PORT=6379`, `TZ=Etc/UTC`,
-`DEBUG_MODE=false`, `SEARCH_API_URL`/`PEOPLE_API_URL` (upstream hosted
-defaults, accepted 2026-11-18: search queries go to `*.pinepods.online`), and
-`HOSTNAME=https://pinepods.{{ .baseDomain }}`. `baseDomain` is already a
+`DEBUG_MODE=true` (see below), `SEARCH_API_URL`/`PEOPLE_API_URL` (upstream
+hosted defaults, accepted 2026-11-18: search queries go to
+`*.pinepods.online`), and `HOSTNAME` plus `PINEPODS_PUBLIC_URL`, both
+`https://pinepods.{{ .baseDomain }}`. Without `PINEPODS_PUBLIC_URL` the sync
+settings report `server_url_configured:false` and show sync apps a URL guessed
+from the request host.
+
+**`DEBUG_MODE=true` is required for journald logging.** In "production mode"
+(`DEBUG_MODE` unset or anything other than lowercase `true`), startup.sh points
+horust's stdout/stderr at `/var/log/pinepods/service.log` inside the container
+layer. Nothing then reaches the journal, the file grows unbounded, and it is
+lost on every recreate. `true` sends both to stdout. It does **not** raise the
+Rust log level: the API uses `RUST_LOG`, default `info`, and was checked in
+`config.rs`/`main.rs`. Steady state is about one line per health probe. `baseDomain` is already a
 global attribute, so no new vault key is needed for it.
 
 There is no admin bootstrap env. `USERNAME`/`PASSWORD` would put a credential
@@ -213,15 +233,22 @@ first visit, and we do that right after deploy (see the exposure step below).
   `<bow-ts-ip>:8040`. Change site *and* host (the T2 retarget gotcha). Verify
   through `/api/v1/traefik-config` in the `app` container.
 - **SSO off.** Native PinePods apps and gPodder clients (AntennaPod, Kasts)
-  call the API directly with app passwords. They cannot follow Pangolin's 302
+  call the API directly with app passwords. gPodder sync is **off per user**
+  until it is enabled in Settings → Podcast Sync (`PUT /api/sync/server`).
+  Before that, every gPodder call is a 401 (`sync server is not enabled for
+  them`). The account password is rejected on the gPodder API, and only app
+  passwords work there (smoke-tested). They cannot follow Pangolin's 302
   (the beszel-agent #23 class). The app's own login (plus optional
   OIDC/TOTP) is the auth layer, as for jellyfin/audiobookshelf.
 - **First-admin race:** with SSO off and no bootstrap env, whoever loads the
   site first creates the admin. Mitigation: create the Pangolin resource with
   **SSO on** (Pangolin's default). Create the admin through it as the only
-  Pangolin-authenticated user. Confirm that a logged-out request to the
-  first-run endpoint no longer offers admin creation, and only then turn SSO
-  off. A disabled resource would offer no route at all. The private
+  Pangolin-authenticated user. The race is real: `POST /api/data/create_first` is
+  **unauthenticated**, and `GET /api/data/self_service_status` publicly reports
+  `first_admin_created`. Confirm through the tunnel that
+  `self_service_status` shows `"first_admin_created":true` and that an
+  unauthenticated `create_first` returns `403 An admin user already exists`
+  (both smoke-tested), and only then turn SSO off. A disabled resource would offer no route at all. The private
   alternative (tailnet `bow-ts-ip:8040` straight from the workstation) works
   only if the tailnet grants allow that port to your device. Do not rely on it
   unverified.
@@ -331,9 +358,39 @@ Before that, `sudo chown -R` `Podcasts/` back to abs's owner (abs runs as
 root) and let abs's `:z` relabel it. Then re-create the abs library and import
 the OPML.
 
+## Smoke test results (2026-11-18, Tasks 1 + 1b, local rootless podman)
+
+All pinned images were used, with planned env + PUID/PGID=1000 and `:Z` binds.
+
+| Check | Result |
+|---|---|
+| Probe client in image | Alpine. `curl`, `wget`, `/bin/sh` present |
+| Cold start → healthy | ~15 s after postgres is healthy. `/api/health` reports DB + Valkey |
+| Process user | horust, API and nginx all run as `pinepods` (UID 1000) |
+| Downloads ownership | `1000:1000` in-container (host rootless view: subuid 525287, as Codex predicted) |
+| One-time chown | runs on first boot only, `.perms-migrated` created, skipped on reboot |
+| First admin | `create_first` unauthenticated. A second call → 403. Note that the API stores the password as an Argon2 hash *computed by the web UI*, so don't script it with a plaintext password |
+| Hosted search | `proxy_search` returned results from `search.pinepods.online` |
+| OPML import | `import_opml` (list of feed URLs; the UI parses the file) subscribed 2 feeds with all episodes |
+| Episode download | real MP3 (ID3), owned 1000 |
+| gPodder | 401 until sync is enabled per user. Then login, `.opml`, a v2 device push (new subscription landed in PinePods) and a pull all return 200. The main password is rejected |
+| Valkey replace | sessions survive. An in-flight download is lost (0-byte file), and re-queueing works. Ephemeral accepted |
+| Postgres down at app start | app retries (`PostgreSQL not ready yet (attempt N)`) and recovers by itself when the DB returns. No crash loop |
+| Quadlet ordering (1b) | `quadlet -dryrun -user` OK. The app unit starts 4 ms after postgres turns **healthy** (fresh initdb ≈ 28 s) |
+| `HealthOnFailure=kill` | works only with the body-checking probe (killed at ~98 s, restarted, healthy) |
+| `DEBUG_MODE=true` | logs reach the journal. Production mode writes only to an in-container file |
+
+Extra finding: **the app self-updates yt-dlp** (41 MB executable) from the
+internet into `/opt/pinepods/downloads/.bin/` at startup and on a schedule.
+That is a runtime-fetched, unpinned binary outside this repo's digest pinning.
+It is accepted as upstream behaviour (it runs as UID 1000, only for YouTube
+feeds). It will live inside `Podcasts/.bin` on bow, and must not be deleted as
+"stray files" during later cleanups.
+
 ## Decisions (2026-11-18)
 
-- **Replace abs for podcasts:** yes. Cutover sequence above.
+- **Replace abs for podcasts:** yes. Cutover sequence above. Step 2 (delete
+  the abs podcast library) was done by the user on 2026-11-18.
 - **Upstream-hosted search/people APIs:** accepted. Self-hosting the search
   API (needs Podcast Index keys) is a possible later change.
 
