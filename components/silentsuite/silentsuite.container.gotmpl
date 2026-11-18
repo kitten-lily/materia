@@ -15,6 +15,7 @@ Image=ghcr.io/silent-suite/silentsuite-server:v0.5.20-beta@sha256:6a5ab47d21feee
 Network=newt-net
 Volume=silentsuite-data.volume:/data:Z
 Volume={{ m_dataDir "silentsuite" }}/etebase-server.ini:/etc/etebase-server/etebase-server.ini:ro,Z
+Volume={{ m_dataDir "silentsuite" }}/healthcheck.py:/healthcheck.py:ro,Z
 # The DB password, as an ini fragment merged over the file above. Hand-written
 # rather than secretMount: the default mode 0444 is what the non-root etebase
 # user needs to read it.
@@ -34,9 +35,9 @@ Environment=ETEBASE_DISABLE_DJANGO_ADMIN=true
 {{ secretEnv "silentsuiteRegistrationToken" "ETEBASE_REGISTRATION_TOKEN" }}
 {{- end }}
 Notify=healthy
-# Exactly 200 from the API's readiness endpoint. Upstream's "any status
-# below 500" probe also passes on a 301 loop or a 400 Host rejection.
-HealthCmd=python -c "import http.client,sys;c=http.client.HTTPConnection('localhost',3735,timeout=5);c.request('GET','/api/v1/authentication/is_etebase/');sys.exit(c.getresponse().status!=200)"
+# Exactly 200 from the API's readiness endpoint (see healthcheck.py). JSON
+# array form: execs directly, no /bin/sh, so nothing to mis-quote.
+HealthCmd=["python","/healthcheck.py"]
 HealthInterval=10s
 HealthRetries=12
 HealthTimeout=10s
