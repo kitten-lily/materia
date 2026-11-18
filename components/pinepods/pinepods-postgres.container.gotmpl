@@ -1,0 +1,43 @@
+[Unit]
+Description=PinePods PostgreSQL
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=pinepods-postgres
+# Same pin as mediamanager-postgres.container.gotmpl, so one Renovate PR
+# bumps both. Take `mise db:backup` before changing the image or version: a
+# major bump needs a pg_dump/pg_upgrade path (BUG-010).
+Image=docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+# REQUIRED. The official 18+ image defaults PGDATA to
+# /var/lib/postgresql/18/docker; this repo keeps data at the 17-era path
+# (same as mediamanager-postgres, proven on bow).
+Environment=PGDATA=/var/lib/postgresql/data
+
+# The app reaches it by container name "pinepods-postgres:5432" on newt-net.
+# No PublishPort: 5432 is never bound on the host.
+Network=newt-net
+
+Environment=TZ=Etc/UTC
+# Database name equals the user (not upstream's "pinepods_database"):
+# mise db:backup connects with -d <user>.
+Environment=POSTGRES_DB=pinepods
+Environment=POSTGRES_USER=pinepods
+{{ secretEnv "pinepodsDbPassword" "POSTGRES_PASSWORD" }}
+
+Volume=pinepods-db.volume:/var/lib/postgresql/data:Z
+
+# Gate the app's start on the DB accepting connections. A fresh initdb takes
+# ~30 s (smoke test). The app also retries on its own; this is the backstop.
+Notify=healthy
+HealthCmd=pg_isready -U pinepods -d pinepods
+HealthInterval=5s
+HealthRetries=20
+HealthTimeout=5s
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -1,0 +1,73 @@
+[Unit]
+Description=PinePods (podcast server)
+Wants=network-online.target
+After=network-online.target
+# Both sidecars use Notify=healthy, so this unit starts only once postgres
+# accepts connections and valkey answers PING.
+Requires=pinepods-postgres.service pinepods-valkey.service
+After=pinepods-postgres.service pinepods-valkey.service
+
+[Container]
+ContainerName=pinepods
+Image=docker.io/madeofpendletonwool/pinepods:0.9.2@sha256:a0463a3a2d7762ba198f94c6aee8856feb0393594792ad0466ae4c170e4bb86c
+
+# tailscale-gateway forwards tailnet port 8040 to "pinepods:8040" on
+# newt-net (serve/serve.json); the app reaches its sidecars by container
+# name. No PublishPort: 8040 is never bound on the host.
+Network=newt-net
+
+# Non-root via PUID/PGID, NOT User=: startup.sh must start as root to remap
+# its user and chown, then drops to 1000:1000 with su-exec. On first boot it
+# chowns downloads/ and backups/ recursively, once (.perms-migrated marker
+# in downloads/ — never delete it).
+Environment=PUID=1000
+Environment=PGID=1000
+Environment=TZ=Etc/UTC
+# "true" (lowercase) sends horust's logs to stdout, i.e. the journal.
+# Anything else writes them to a file inside the container layer, which
+# grows unbounded and is lost on recreate. It does not raise the log level.
+Environment=DEBUG_MODE=true
+
+Environment=DB_TYPE=postgresql
+Environment=DB_HOST=pinepods-postgres
+Environment=DB_PORT=5432
+Environment=DB_USER=pinepods
+Environment=DB_NAME=pinepods
+{{ secretEnv "pinepodsDbPassword" "DB_PASSWORD" }}
+Environment=VALKEY_HOST=pinepods-valkey
+Environment=VALKEY_PORT=6379
+
+# Upstream-hosted search and PodPeopleDB (accepted 2026-11-18, #196):
+# search queries go to the PinePods author's service.
+Environment=SEARCH_API_URL=https://search.pinepods.online/api/search
+Environment=PEOPLE_API_URL=https://people.pinepods.online
+# Public URL: used in generated RSS/share links (HOSTNAME) and shown to
+# gPodder sync apps (PINEPODS_PUBLIC_URL; unset, it is guessed from the
+# request host).
+Environment=HOSTNAME=https://pinepods.{{ .baseDomain }}
+Environment=PINEPODS_PUBLIC_URL=https://pinepods.{{ .baseDomain }}
+
+# Downloads take over audiobookshelf's former podcast library (#196), which
+# no longer mounts it. Private label (:Z): only this container uses it. It
+# also holds the app's self-updated yt-dlp binary in .bin/.
+Volume=/var/lib/materia-data/Podcasts:/opt/pinepods/downloads:Z
+# In-app server backups. Outside restic's paths; the DB volume is the
+# source of truth.
+Volume=/var/lib/materia-data/pinepods-backups:/opt/pinepods/backups:Z
+
+# /api/health answers HTTP 200 even when unhealthy (e.g. valkey down:
+# {"status":"unhealthy",...,"redis":false}), so curl -f alone never fails.
+# Check the body. Alpine image: curl and /bin/sh exist, so the pipe works.
+HealthCmd=curl -fsS http://localhost:8040/api/health | grep -q '"status":"healthy"'
+HealthStartPeriod=60s
+HealthInterval=30s
+HealthRetries=3
+HealthTimeout=10s
+HealthOnFailure=kill
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -1,0 +1,19 @@
+# pinepods: PinePods podcast server on bow (#196). Replaces audiobookshelf's
+# podcast role. Plan: specs/plans/pinepods-component.md.
+#
+# Secrets MUST stay above the first table header (TOML scoping gotcha).
+Secrets = ["pinepodsDbPassword"]
+
+[Defaults]
+
+[[Services]]
+Service = "pinepods.service"
+RestartedBy = ["pinepods.container"]
+
+[[Services]]
+Service = "pinepods-postgres.service"
+RestartedBy = ["pinepods-postgres.container"]
+
+[[Services]]
+Service = "pinepods-valkey.service"
+RestartedBy = ["pinepods-valkey.container"]

@@ -1,0 +1,4 @@
+# Named volume for PinePods' PostgreSQL data directory
+# (/var/lib/postgresql/data). Root-owned: the postgres entrypoint runs as
+# root and chowns PGDATA to its own runtime user, so no User=/Group= here.
+[Volume]
