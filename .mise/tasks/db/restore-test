@@ -50,7 +50,12 @@ cleanup() {
   # -v: both official images declare a VOLUME, so each throwaway server has an
   # anonymous volume holding the restored database. Without -v it outlives the
   # container on the root disk, and restic then backs it up off-host.
-  podman rm -f -v "$net-grimmory" "$net-mediamanager" >/dev/null 2>&1 || true
+  # Every server in DBS (named $net-<name>), not a hand-kept list: a new
+  # entry would otherwise leave its server and restored data behind.
+  local entry
+  for entry in "${DBS[@]}"; do
+    podman rm -f -v "$net-${entry%%|*}" >/dev/null 2>&1 || true
+  done
   podman network rm "$net" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
