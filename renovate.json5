@@ -75,6 +75,21 @@
       matchPackageNames: ["docker.io/jellyfin/jellyfin"],
       versioning: "regex:^(?<major>\\d+)\\.(?<minor>\\d+)(\\.(?<patch>\\d+))?$",
     },
+    {
+      // SilentSuite (#192) is beta: every bump runs DB migrations on start,
+      // and upstream ships no cross-version updater. GHCR also gets image tags
+      // BEFORE their GitHub release is published (v0.5.21-beta did), and the
+      // official installer refuses unpublished releases. So: never automerge,
+      // wait 3 days, and merge only when the silentsuite-release check is green
+      // (published release whose server-image.json indexDigest = the pin).
+      // Take `mise db:backup --target core@bow` before merging. The regex
+      // accepts vX.Y.Z-beta and vX.Y.Z-beta.N and ignores the selfhost-<sha>
+      // and bare-<sha> tags.
+      matchPackageNames: ["ghcr.io/silent-suite/silentsuite-server"],
+      versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-beta(\\.(?<build>\\d+))?$",
+      automerge: false,
+      minimumReleaseAge: "3 days",
+    },
   ],
 
   customManagers: [

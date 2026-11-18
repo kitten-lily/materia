@@ -1,0 +1,35 @@
+name: silentsuite-release
+
+# The SilentSuite server pin must be a published GitHub release whose
+# server-image.json indexDigest equals the pinned digest (#192). Renovate
+# never automerges this image (renovate.json5); this check is the gate.
+on:
+  push:
+    branches: [main]
+    paths:
+      - components/silentsuite/silentsuite.container.gotmpl
+      - .github/scripts/silentsuite-release-check.sh
+      - .github/workflows/silentsuite-release.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - components/silentsuite/silentsuite.container.gotmpl
+      - .github/scripts/silentsuite-release-check.sh
+      - .github/workflows/silentsuite-release.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  silentsuite-release:
+    name: silentsuite image is a published, digest-matching release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the pinned release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/silentsuite-release-check.sh components/silentsuite/silentsuite.container.gotmpl
