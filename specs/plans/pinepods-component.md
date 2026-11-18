@@ -423,9 +423,16 @@ feeds). It will live inside `Podcasts/.bin` on bow, and must not be deleted as
   the checklist (2026-11-18). The hostname commit (`382d2d8`) went live in
   the 12:45 UTC run. That run then failed on SilentSuite (another session's
   rollout, handed off), *after* pinepods' restart step.
-- **Still open on #196:** add `db-dump-pinepods` to `db-dump`, plus a
-  `db:restore-test` row. Wait until SilentSuite is fixed: both deploy in
-  the same all-or-nothing materia run on bow.
+- **db-dump follow-up: done.** `737cfd0` was deployed green at 17:40 UTC,
+  after the other session fixed SilentSuite. A manual
+  `systemctl start db-dump-pinepods.service` exited 0 and wrote
+  `pinepods.sql` (2.4 MB, 1,699 rows, `Podcasts` 5, `Users` 2), with
+  pre-counts == post-counts. The first unattended dump is the 23:30 UTC
+  timer run. The same change fixed `restore-test`'s cleanup, which had
+  leaked silentsuite's throwaway server (`e1a71f2`).
+- **Left to close #196:** run `mise db:restore-test --target <bow>` after the
+  first nightly dump + restic run, and check that pinepods restores within
+  [pre, post].
 
 ## Decisions (2026-11-18)
 
