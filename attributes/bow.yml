@@ -19,6 +19,8 @@ components:
         mediamanagerTokenSecret: ENC[AES256_GCM,data:Umed7dhoaadjt4GMZOueSJudExPQWAYV/YjWiy7VX3cY+qzZhJbSQC//KFYs9OuwXaqopVqrjchIrqtWO6xV3g==,iv:SiDLFsmaCE+xtzQVGKw2ykaWZCXiRqWQQiB/5yEKhX4=,tag:4ZhJAu5MjgAPVmmbHAWtAA==,type:str]
         mediamanagerDbPassword: ENC[AES256_GCM,data:OUhUftwMOMJ9dWWrZuZGSeLBEpeVuOE2E0CQqQ==,iv:ZbyOrOmYu56c0r0HHJm4umEDo0lmu5sjrYD8E7ccqGE=,tag:98lCN9kWMWHSzcGaBJClVg==,type:str]
         mediamanagerAdminEmail: ENC[AES256_GCM,data:71nl2IO9rsJeng1Sg8BGDlYVjO0/Ig==,iv:hLGCxZujf2D7dQBDcEV0YNc4urqsNuvTmWEFytp0f0k=,tag:QVXspJM7JUj/mipPlQPcbw==,type:str]
+    pinepods:
+        pinepodsDbPassword: ENC[AES256_GCM,data:+mGzQpUUx4ma//hQ2yZXmriDizGoSLTLPp7pEyK+KUaA1bIqyzOyiuHUHuFzfyq2,iv:tFntdlonNdgfjFm4G9vdDnRG1GsB7Eet2Q87QH9a+rA=,tag:F6WmaJQ7mmnGWci/5sgI1g==,type:str]
 sops:
     age:
         - enc: |
@@ -30,7 +32,7 @@ sops:
             TjkDZIzUsCpO9n4JHkqZB24KMiRsVJcVLrr3sxUVyU1vlcFgtE3yzA==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
-    lastmodified: "2026-10-24T14:20:10Z"
-    mac: ENC[AES256_GCM,data:0kDm+MFCW5GycbXG3/V3cb+rs1VW/kTrJWfxKoEN0NaCNPYs++co+aXTR+86a5OpeqNjVaR6MpnDalTBMAY5ekquWsrppV/t8guDupYunzGFZDF6J+gQR32qR0agF5GeubV9Ldy+3Zo9npq3zW0cRzx+dA79vndjOj8Zwb/NAXw=,iv:hblI9ONLSHGt2Vp0oF+7J03Jfs1q82z014mvDOAZvlk=,tag:NmFSDjlqykVUa4ZEvJ2COA==,type:str]
+    lastmodified: "2026-11-18T09:58:09Z"
+    mac: ENC[AES256_GCM,data:wbJOoDZnPCFSu0oY91QnOlSCJqPZThsPAHHhrsZ3yxuu9fQaSlxEaVcmo4zYROy1cZPmnY8wlketZ8UuuOiZoGAQBWqPucg/HmK1p9HA/Dv+FTMIJA6vLefJGjQfSn+BmAoHNXfNDT2c814DKOOLvo+6E/Lpyw/69K/5P9wwxlI=,iv:C6UUg5eBrt9g1KZF7TP1WpjXNqhNueg+vU3xRFPGYzI=,tag:AKz4vYJvggAf4fV3dyu09A==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.2
