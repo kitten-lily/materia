@@ -1,0 +1,30 @@
+# db-dump: nightly logical dumps of bow's databases into the db-dumps volume,
+# which restic carries off-host (#194). No Secrets: the dump units reference
+# the podman secrets the grimmory/mediamanager components already own.
+
+[Settings]
+# Same reason as restic-backup (BUG-004): materia's default restart of a
+# changed .container expects the unit to end up active, which a oneshot
+# dump isn't. Changes take effect at the next 23:30 run.
+NoRestart = true
+
+[Defaults]
+dbDumpOnCalendar = "*-*-* 23:30:00"
+
+[[Services]]
+Service = "db-dump-grimmory.service"
+Stopped = true
+Oneshot = true
+
+[[Services]]
+Service = "db-dump-mediamanager.service"
+Stopped = true
+Oneshot = true
+
+[[Services]]
+Service = "db-dump-trigger.service"
+Stopped = true
+
+[[Services]]
+Service = "db-dump.timer"
+Static = true
