@@ -17,7 +17,8 @@ current T2 path: Pangolin on flutterina → tailnet → `tailscale-gateway` serv
 forward → `pinepods:8040` on `newt-net`.
 
 **Decision (2026-11-18): PinePods replaces audiobookshelf for podcasts.**
-Audiobookshelf keeps audiobooks only. Subscriptions move across as OPML.
+Audiobookshelf keeps audiobooks only. Subscriptions are re-added by hand in
+PinePods. There was no OPML export (user, 2026-11-18).
 abs's podcast library is deleted first, and its `Podcasts` mount is dropped
 before PinePods takes the directory over (see "Cutover sequence").
 
@@ -108,22 +109,26 @@ exists, so there is no BUG-005 bind-source risk. Backups get a new sibling:
 Each step is a separate, verified state on bow. Never combine steps 3 and 5
 in one push.
 
-1. **Export** abs podcast subscriptions as OPML (abs UI → podcast library →
-   OPML export). Keep the file off-repo.
+1. ~~**Export** abs podcast subscriptions as OPML.~~ Skipped: the library was
+   deleted without an export. Subscriptions are re-added by hand (step 6).
 2. **Delete** the abs podcast library in the abs UI.
 3. **Commit A:** remove `Volume=/var/lib/materia-data/Podcasts:/podcasts:z`
    from `audiobookshelf.container.gotmpl` and update its comments. Push and run
    materia on bow.
    `verify:` `podman inspect audiobookshelf --format '{{range .Mounts}}{{.Source}} {{end}}'`
    has no `Podcasts`, `materia-update` shows no FATA, and audiobooks still play.
-4. **Host prep:** empty `Podcasts/` (`sudo find /var/lib/materia-data/Podcasts
+4. **Host prep:** first save the show folder names (`ls -1
+   /var/lib/materia-data/Podcasts`) as the re-subscribe checklist. With no
+   OPML, they are the only remaining record of the subscriptions. Keep the
+   list off-repo. Then empty `Podcasts/` (`sudo find /var/lib/materia-data/Podcasts
    -mindepth 1 -delete`, after a `du -sh` and a last look), then `sudo mkdir -p
    /var/lib/materia-data/pinepods-backups`.
    `verify:` `find /var/lib/materia-data/Podcasts -mindepth 1 | wc -l` → 0, and
    `test -d /var/lib/materia-data/pinepods-backups`.
 5. **Commit B:** assign PinePods (Task 6).
-6. **Import** the OPML in PinePods (Settings → Import).
-   `verify:` the subscription count equals the abs count noted at step 1.
+6. **Re-subscribe by hand** in PinePods (search → subscribe), working from
+   the step 4 checklist.
+   `verify:` every show on the checklist appears in PinePods' podcast list.
 
 ### Runs non-root via PUID/PGID=1000, not `User=`
 
@@ -325,8 +330,8 @@ Each task ends with a runnable `verify:`.
 3. **Vault:** `sops --set` `components.pinepods.pinepodsDbPassword` in
    `attributes/bow.yml`. `verify:` `sops -d attributes/bow.yml | yq
    '.components.pinepods | keys'`.
-4. **abs cutover, steps 1–4** of "Cutover sequence" (OPML export, delete
-   library, Commit A, host prep). `verify:` as listed per step.
+4. **abs cutover, steps 2–4** of "Cutover sequence" (delete library,
+   Commit A, host prep; there was no OPML export). `verify:` as listed per step.
 5. **`db:backup` parameterization + pinepods row** (see Backups). `verify:`
    `mise db:backup --target <bow>` still dumps grimmory + mediamanager unchanged
    *before* pinepods exists (that entry is skipped as not running). After
@@ -338,7 +343,7 @@ Each task ends with a runnable `verify:`.
    `systemctl is-active pinepods pinepods-postgres pinepods-valkey`.
    `podman healthcheck run pinepods`. The gateway journal shows `advertised:`.
 7. **Pangolin resource + first admin** per the exposure section, then the
-   **OPML import** (cutover step 6).
+   **manual re-subscribe** (cutover step 6).
    `verify:` `curl -sI https://pinepods.<baseDomain>/` → 200 (not a 302 to
    pangolin after SSO is turned off). Run the traefik-config check on
    flutterina's site. `curl --http3-only -sI` gives the same status.
@@ -355,8 +360,9 @@ Remove `pinepods` from `Hosts.bow` and the serve.json forward, then push.
 materia stops and removes the units. Volumes and `pinepods-backups` remain
 until deleted by hand. Returning podcasts to abs means reverting Commit A.
 Before that, `sudo chown -R` `Podcasts/` back to abs's owner (abs runs as
-root) and let abs's `:z` relabel it. Then re-create the abs library and import
-the OPML.
+root) and let abs's `:z` relabel it. Then re-create the abs library and
+re-subscribe there (PinePods can export OPML, which makes this direction
+easy).
 
 ## Smoke test results (2026-11-18, Tasks 1 + 1b, local rootless podman)
 
@@ -401,8 +407,8 @@ feeds). It will live inside `Podcasts/.bin` on bow, and must not be deleted as
 2. **Disk.** bow's LVM data disk was ~94% used during #70. Emptying the old
    abs `Podcasts/` frees some space. Check `df -h /var/lib/materia-data` before
    Task 6, and set the app's download-retention settings.
-3. **Listening history.** OPML carries subscriptions only. Played or
-   in-progress state from abs is lost. Acceptable unless you say otherwise.
+3. **Listening history.** It is not migrated. Played and in-progress state
+   from abs was lost along with the library. Accepted.
 
 ## Review log
 
