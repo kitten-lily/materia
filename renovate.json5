@@ -80,15 +80,18 @@
       // and upstream ships no cross-version updater. GHCR also gets image tags
       // BEFORE their GitHub release is published (v0.5.21-beta did), and the
       // official installer refuses unpublished releases. So: never automerge,
-      // wait 3 days, and merge only when the silentsuite-release check is green
-      // (published release whose server-image.json indexDigest = the pin).
+      // and merge only when the silentsuite-release check is green (published
+      // release whose server-image.json indexDigest = the pin). No
+      // minimumReleaseAge: Renovate has no reliable release timestamps for
+      // GHCR images, and without one it can hold the update forever; the
+      // release gate already covers the "tag before release" race.
       // Take `mise db:backup --target core@bow` before merging. The regex
-      // accepts vX.Y.Z-beta and vX.Y.Z-beta.N and ignores the selfhost-<sha>
-      // and bare-<sha> tags.
+      // accepts vX.Y.Z-beta, vX.Y.Z-beta.N and a future plain vX.Y.Z (a
+      // mandatory -beta would silently match nothing then, as jellyfin's
+      // scheme change did), and ignores the selfhost-<sha>/bare-<sha> tags.
       matchPackageNames: ["ghcr.io/silent-suite/silentsuite-server"],
-      versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-beta(\\.(?<build>\\d+))?$",
+      versioning: "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(-beta(\\.(?<build>\\d+))?)?$",
       automerge: false,
-      minimumReleaseAge: "3 days",
     },
   ],
 
