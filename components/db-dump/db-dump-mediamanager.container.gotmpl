@@ -11,7 +11,7 @@ Image=docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5
 Network=newt-net
 # Shared label (:z): both dump units write this volume at the same time.
 Volume=db-dumps.volume:/dumps:z
-Volume={{ m_dataDir "db-dump" }}/dump.sh:/db-dump.sh:ro,z
+Volume={{ m_dataDir "db-dump" }}/dump.bash:/db-dump.sh:ro,z
 # Created by the mediamanager component; referenced here, never declared,
 # so db-dump never owns (or removes) it.
 Secret=materia-mediamanagerDbPassword,type=env,target=PGPASSWORD

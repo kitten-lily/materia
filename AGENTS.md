@@ -212,7 +212,7 @@ components/
     mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
   db-dump/                       # nightly logical DB dumps into a named volume restic carries off-host (bow-only, #194)
     MANIFEST.toml                # no Secrets (references grimmory/mediamanager's), NoRestart, Stopped+Oneshot dumps, static timer
-    dump.sh                      # shared dump script: counts.pre, dump, counts.post, .done, all via atomic renames
+    dump.bash                    # shared dump script (not .sh: see the Script-resource gotcha): counts.pre, dump, counts.post, .done via atomic renames
     db-dump-grimmory.container.gotmpl     # mariadb-dump --databases grimmory, same image pin as grimmory-mariadb
     db-dump-mediamanager.container.gotmpl # pg_dump mediamanager, same image pin as mediamanager-postgres
     db-dumps.volume              # systemd-db-dumps: <name>.sql/.counts.pre/.counts.post/.done (root, 0700/0600)
@@ -412,6 +412,16 @@ shell; see the `env = false` gotcha.
   before assuming it "just works" — there is no local materia template
   renderer to catch this; it only surfaces as a runtime failure on the
   actual host.
+- **A `.sh` file in a component is a materia *Script*, not a data file.**
+  materia maps the `.sh` extension to `ResourceTypeScript`
+  (`pkg/components/component.go`, v0.8.1) and installs it into its
+  `scripts_dir`, not `{{ m_dataDir }}`. On bow that install failed with
+  `openat .dump.sh.<id>.materia_tmp: read-only file system` and aborted
+  the whole run (`8/14 steps completed`), the same blast radius as every
+  other single-resource failure here (#194). A helper script meant to be
+  bind-mounted into a container must use another extension
+  (`db-dump/dump.bash`). An unrecognised extension is a plain data file
+  under the component's data dir.
 - **`.gotmpl` suffix is stripped.** `config.yml.gotmpl` installs as
   `config.yml`. Only the last `.gotmpl` is stripped; `conf.gotmpl.gotmpl`
   installs as `conf.gotmpl`.
