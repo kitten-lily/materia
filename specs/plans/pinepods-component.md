@@ -12,7 +12,7 @@ step that needs host-side state happens *before* the commit that needs it.
 Add a `pinepods` component running
 [PinePods](https://github.com/madeofpendletonwool/PinePods) 0.9.2, a Rust
 podcast manager with a web UI, native apps, and a built-in gPodder-compatible
-sync API. It runs on `bow` and is exposed at `pinepods.<baseDomain>` through the
+sync API. It runs on `bow` and is exposed at `pods.<baseDomain>` through the
 current T2 path: Pangolin on flutterina → tailnet → `tailscale-gateway` serve
 forward → `pinepods:8040` on `newt-net`.
 
@@ -210,7 +210,7 @@ The app gets `DB_PASSWORD` via `secretEnv`. Non-secret env:
 `DEBUG_MODE=true` (see below), `SEARCH_API_URL`/`PEOPLE_API_URL` (upstream
 hosted defaults, accepted 2026-11-18: search queries go to
 `*.pinepods.online`), and `HOSTNAME` plus `PINEPODS_PUBLIC_URL`, both
-`https://pinepods.{{ .baseDomain }}`. Without `PINEPODS_PUBLIC_URL` the sync
+`https://pods.{{ .baseDomain }}`. Without `PINEPODS_PUBLIC_URL` the sync
 settings report `server_url_configured:false` and show sync apps a URL guessed
 from the request host.
 
@@ -234,7 +234,16 @@ first visit, and we do that right after deploy (see the exposure step below).
   (`RestartedBy`), which briefly drops every forwarded connection and triggers
   the `advertise-services` re-advertise. Check the unit journal for
   `advertised:` afterwards.
-- Pangolin resource `pinepods.<baseDomain>`: **site `flutterina`**, host
+- **Tailnet grant (missed in the first draft, found on deploy):** add
+  `tcp:8040` to the policy's `tag:server → tag:gateway` grant (Tailscale
+  admin console, not in this repo). Without it the gateway refuses
+  flutterina, Pangolin marks the target `unhealthy`, and Traefik answers
+  `503 no available server`. Added by the user on 2026-11-18. The target
+  turned healthy 12 s later.
+- Pangolin's target health check probes `/api/health` by **status code
+  only**, which is 200 even when unhealthy. Podman's body-checking
+  `HealthCmd` on bow is the real signal.
+- Pangolin resource `pods.<baseDomain>`: **site `flutterina`**, host
   `<bow-ts-ip>:8040`. Change site *and* host (the T2 retarget gotcha). Verify
   through `/api/v1/traefik-config` in the `app` container.
 - **SSO off.** Native PinePods apps and gPodder clients (AntennaPod, Kasts)
@@ -346,7 +355,7 @@ Each task ends with a runnable `verify:`.
    `podman healthcheck run pinepods`. The gateway journal shows `advertised:`.
 7. **Pangolin resource + first admin** per the exposure section, then the
    **manual re-subscribe** (cutover step 6).
-   `verify:` `curl -sI https://pinepods.<baseDomain>/` → 200 (not a 302 to
+   `verify:` `curl -sI https://pods.<baseDomain>/` → 200 (not a 302 to
    pangolin after SSO is turned off). Run the traefik-config check on
    flutterina's site. `curl --http3-only -sI` gives the same status.
 8. **Docs:** AGENTS.md: add the pinepods layout entry. Rewrite the
@@ -394,6 +403,22 @@ That is a runtime-fetched, unpinned binary outside this repo's digest pinning.
 It is accepted as upstream behaviour (it runs as UID 1000, only for YouTube
 feeds). It will live inside `Podcasts/.bin` on bow, and must not be deleted as
 "stray files" during later cleanups.
+
+## Deploy log (2026-11-18)
+
+- **Task 6 (Commit B, `c86338a`):** materia on bow ran 13/13 steps green at
+  10:47 UTC. All three units were healthy, and the app answered through the
+  gateway. The gateway restart cut the triggering SSH session (see the
+  AGENTS.md gateway gotcha).
+- **Task 7:** the Pangolin resource was created via the API as
+  `pods.<baseDomain>` (hostname chosen by the user; resource 13, niceId
+  `bow-pinepods`), on site Flutterina → `<bow-ts-ip>:8040`, with SSO on.
+  It answered 503 until the tailnet grant was added (above). The user then
+  created the admin through SSO. A fresh `create_first` got `403`, and only
+  after that check was SSO turned off. Public result: `GET /` 200 over
+  HTTP/2 and HTTP/3, `/api/health` healthy.
+- `HOSTNAME`/`PINEPODS_PUBLIC_URL` moved from the planned `pinepods.` to
+  `pods.<baseDomain>` in a follow-up commit.
 
 ## Decisions (2026-11-18)
 

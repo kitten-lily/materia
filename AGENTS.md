@@ -197,6 +197,12 @@ components/
     config.toml.gotmpl            # templated backend config, mounted read-only via CONFIG_DIR (see gotchas)
     mediamanager-db.volume        # named volume for /var/lib/postgresql/data (root-owned, entrypoint chowns it)
     mediamanager-images.volume    # named volume for the poster cache at /images (UID 1000)
+  pinepods/                      # PinePods podcast server + gPodder sync, replaces abs podcasts (standalone, bow-only, #196)
+    MANIFEST.toml                # component manifest — Secrets (pinepodsDbPassword), Services
+    pinepods.container.gotmpl    # app, joins newt-net, PUID/PGID=1000 (not User=), rw Podcasts + pinepods-backups binds, body-checking HealthCmd, pods.<baseDomain>
+    pinepods-postgres.container.gotmpl # postgres 18 sidecar (same pin as mediamanager's, PGDATA override, DB name = user), Notify=healthy
+    pinepods-valkey.container.gotmpl # required valkey sidecar, ephemeral (no volume, smoke-tested), Notify=healthy
+    pinepods-db.volume            # named volume for /var/lib/postgresql/data (root-owned, entrypoint chowns it)
   buildbarn/                     # BuildStream cache server for krytis (standalone, bow-only, issue #28); clients reach it as Tailscale Service svc:bst-cache (#163)
     MANIFEST.toml                # component manifest — Secrets (jwtJwks, serverKeyPem), Services
     bb-storage.container.gotmpl   # CAS + ActionCache + FSAC, joins newt-net, bind mounts from LVM data disk
@@ -1424,6 +1430,17 @@ shell; see the `env = false` gotcha.
   relay (udp/40000) keeps it off DERP. Add a forward by editing
   `components/tailscale-gateway/serve/serve.json`; materia restarts the
   gateway (`RestartedBy`), which briefly drops every forwarded connection.
+  **A new port also needs a tailnet grant, which is outside this repo.**
+  The policy's `tag:server → tag:gateway` grant lists each app port
+  (Tailscale admin console → Access controls). With only the `serve.json`
+  forward, the gateway refuses flutterina's connections. Pangolin then
+  marks the target `unhealthy`, and Traefik answers `503 no available
+  server`, while the app looks fine from any peer the policy does allow
+  (e.g. the workstation). Caught on #196 (PinePods, `tcp:8040`). Add the
+  grant in the same change as the forward, and check that the Pangolin
+  target turns `healthy` before relying on the route. This also means the
+  same SSH session that triggers materia gets cut when the gateway
+  restarts: SSH to bow goes through its port-22 forward.
 - **containerboot (tailscale image v1.104.2) drops a Tailscale Service's
   advertisement on every restart, and only sometimes restores it.** Two
   upstream behaviours combine: (1) on shutdown it unadvertises every
@@ -1980,15 +1997,18 @@ in both port-23 (OpenSSH) and port-22 (RFC4716) formats.
   DB image change, and `--compare` checks the counts afterwards. **Read
   the Renovate dashboard's lookup failures**: an image that stops getting
   lookups is frozen, not current.
-- **Pangolin SSO is OFF for grimmory, audiobookshelf and jellyfin — only
-  Media Manager has it.** Earlier versions of this file said SSO was
+- **Pangolin SSO is OFF for grimmory, audiobookshelf, jellyfin and
+  pinepods — only Media Manager has it.** Earlier versions of this file said SSO was
   "kept ON" for the three media apps; the live dashboard (Pangolin API,
   2026-10-23) has `sso: 0` on every resource except Media Manager, and
   each app's own login is the only auth layer. Any non-browser client
   hits the same failure as beszel-agent #23: Pangolin's SSO answers an
   unauthenticated request with a `302` to its interactive login page,
   which native apps talking straight to the API (Jellyfin TV/mobile
-  clients, the Audiobookshelf app, OPDS/e-reader sync) cannot follow.
+  clients, the Audiobookshelf app, OPDS/e-reader sync, PinePods' apps
+  and gPodder clients) cannot follow. PinePods kept SSO **on** only until
+  its first admin existed: its `POST /api/data/create_first` is
+  unauthenticated (#196).
   Before turning SSO on for a resource, confirm every client of it is a
   browser; Media Manager is browser-only, which is why it can keep it.
 - **Audiobookshelf: standalone on `newt-net`, audiobooks only — no
