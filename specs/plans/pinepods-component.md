@@ -430,9 +430,11 @@ feeds). It will live inside `Podcasts/.bin` on bow, and must not be deleted as
   pre-counts == post-counts. The first unattended dump is the 23:30 UTC
   timer run. The same change fixed `restore-test`'s cleanup, which had
   leaked silentsuite's throwaway server (`e1a71f2`).
-- **Left to close #196:** run `mise db:restore-test --target <bow>` after the
-  first nightly dump + restic run, and check that pinepods restores within
-  [pre, post].
+- **Restore test passed (2026-11-19):** `mise db:restore-test --target
+  core@bow` on snapshot `c524ffda` (00:00 UTC). The pinepods dump from 23:30
+  loaded into a throwaway postgres 18.7: 59 tables, every row count within
+  [pre, post]. All other DBs passed too. Nothing was left on bow afterwards
+  (the `e1a71f2` cleanup fix). #196 closed.
 
 ## Decisions (2026-11-18)
 
