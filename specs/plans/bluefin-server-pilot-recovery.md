@@ -5,6 +5,11 @@ evidence: [results](bluefin-server-pilot-results.md). Written 2026-11-09
 against release v26.11.1701 and the upstream docs at commit
 `b928b45bd7a0633de04febf3d654fa084c182e00` (`docs/skills/usb-installer.md`,
 `ddi-installer.md`, `secure-boot-keys.md`, `homelab-profile.md`).
+Re-checked 2026-11-20 against the re-pinned release v26.11.2506 (commit
+`d7f2890`): of those docs only `usb-installer.md` changed, dropping the
+first-boot nonroot-owner step and stating that the installed system asks for
+a new root password on its first start. That matches the console-password
+policy below, so no procedure changes.
 
 Scope: the disposable pilot machines only. Production hosts are never a
 recovery dependency, and nothing here touches bow or flutterina.
@@ -169,7 +174,7 @@ is a fleet credential; none of it goes into this repo.
 
 | Input | Where | Notes |
 | --- | --- | --- |
-| Verified release artifacts | `~/.cache/bluefin-pilot/v26.11.1701/` on melog | hashes and signing-key fingerprint are in the results file, so a re-download can be re-verified |
+| Verified release artifacts | `~/.cache/bluefin-pilot/v26.11.2506/` on melog | hashes and signing-key fingerprint are in the results file, so a re-download can be re-verified |
 | Rendered Ignition per node | `~/.cache/bluefin-pilot/render/` (private, never committed) | re-renderable from the templates plus the secrets below |
 | Console root password per node | Proton Pass, pilot-only vault (`bluefin-pilot`) | one item per node |
 | Pilot SSH key (root on pilot nodes) | Proton Pass, pilot-only vault | not the fleet `core` key |

@@ -2,7 +2,9 @@
 
 Plan: [bluefin-server-pilot.md](bluefin-server-pilot.md). Issue #179.
 Artifacts are cached outside the repo on the operator workstation under
-`~/.cache/bluefin-pilot/v26.11.1701/` (not tracked).
+`~/.cache/bluefin-pilot/<version>/` (not tracked). **Pinned release:
+v26.11.2506** (re-pinned 2026-11-20, see "Re-pin" under Phase 0 step 3); the
+v26.11.1701 evidence below is kept as the record of the first verification.
 
 ## Phase summary
 
@@ -139,9 +141,87 @@ containerd/runc/crictl shipped in the kubeadm sysext; Cilium **v1.20.2**
 (`quay.io/cilium/cilium:v1.20.2` in the homelab manifests); kured
 **1.23.0** (digest-pinned). All sysexts report `ARCHITECTURE=x86-64`.
 
-Second release for update testing: candidate **v26.11.1714** (latest, same
-day). Upstream cut four releases on 2026-11-06 alone, so "latest" will move;
-re-pin and check its Kubernetes minor before Phase 5.
+Second release for update testing: superseded by the re-pin below; pick it
+at Phase 5 from releases newer than v26.11.2506 and check its Kubernetes
+minor first.
+
+### Step 3 (repeat): re-pin to v26.11.2506 — pass, 2026-11-20
+
+Why: upstream moved 47 commits between the old pin (`b928b45`) and the newest
+release (`d7f2890`, v26.11.2506, published 2026-11-20 07:30 UTC; 48 releases
+in two weeks, numbered by CI run). Reviewed `compare/b928b45...d7f2890`; most
+commits are dependency bumps and CI fixes. Relevant to the pilot:
+
+| Upstream change | Effect |
+| --- | --- |
+| #591 join loop skips candidates that cannot prove the passphrase; a restarted join no longer trusts a bare token | correctness and security fix for joining |
+| #663 kubeadm sysext raises `fs.inotify.max_user_instances` 8192 and `max_user_watches` 1048576 | prevents "too many open files" once pods run |
+| #648 Secure Boot `.auth` files signed with attributes 0x27 instead of 0x67 (#612: firmware rejected the enroll) | see the control run below: did not reproduce on melog's firmware |
+| #595 release gate on A/B slot headroom; k0s keeps two images | background for Phase 5 |
+| Tailscale 1.104.5 → 1.104.7, runc 1.3.6 → 1.3.7 | patch bumps |
+
+Unchanged (so F2, F3 and the network decisions stand): the homelab templates
+are byte-identical (same sha256 for `homelab-control-plane.bu`/`.ign` and
+`homelab-node.bu`/`.ign`); the extracted homelab manifests are identical
+(`diff -rq`); Kubernetes v1.35.10; Cilium v1.20.2; kured 1.23.0 (same digest);
+the Podman sysext still has no Quadlet generator and no system units; the
+Tailscale sysext still ships `tailscaled.service` disabled by preset.
+
+Verification, same procedure as before:
+
+- Trust root from the new pinned commit,
+  `files/os/sysupdate-keys/import-pubring.gpg`: byte-identical to the one from
+  `b928b45` (sha256 `9d5a35be…3f239`), same key
+  `7A87 E575 D29F 60A4 9B20 D475 709B 5477 95F9 9C34`.
+- `gpgv --keyring ./trust/import-pubring.gpg SHA256SUMS.gpg SHA256SUMS` →
+  `Good signature`, made 2026-11-20 08:18 CET. `SHA256SUMS` sha256
+  `4615a9ee…b299`.
+- `sha256sum --check --ignore-missing SHA256SUMS` → all 12 selected assets
+  `OK`, exit 0. `gh attestation verify` on the installer → exit 0.
+- GitHub reports the release `immutable: false`, as before; the hashes below
+  are the pin.
+
+| Asset | sha256 |
+| --- | --- |
+| `bluefin-server-installer_26.11.2506.raw` | `68bac3c0e9ab4312b3e1d1d1a7b786916253fe619b30db0d0fe8c1da3525db14` |
+| `kubeadm_26.11.2506.raw.zst` | `e49c715d52dca1e71a0274c869fd45aeafb6e303ed567963476ee81f981fd7da` |
+| `homelab_26.11.2506.raw.zst` | `3ef02f12331a57a27e93a70025abfdc7bafd4945a5ac1ee5b3ab09040ed10066` |
+| `podman_26.11.2506.raw.zst` | `853f59a6642d4a226313b2946747b5e89faf7615c67fef015fb6af2333bfe115` |
+| `tailscale_26.11.2506.raw.zst` | `64685f39dd7620027aed17916e475313b893c86fbfdf6efb74bd2f7b76dd99a3` |
+| `argo-workflows_26.11.2506.raw.zst` | `28ebd30d0638e3743d77adcc625eb982e2131ac00c680059c5696955fd8dacf9` |
+| `mcp_26.11.2506.raw.zst` | `01f6690ce1f40dd3a6226eefab3c9e084a74293d9158e36239325b700b504539` |
+| `kubestellar_26.11.2506.raw.zst` | `2c8ab7667bf5f404d742d11bbf8ba09ed2c4d4309c8f1524426a2e1f9d5125f8` |
+| `homelab-control-plane.bu` | `74f91db8018ab7842cc870d4afd1b2db0fcaae47ea714db1ded8abd0e77e2875` |
+| `homelab-node.bu` | `531aaf4344e75421750bcd70532f651801f057e051b3adc7df8036cd4ad2e62d` |
+| `homelab-control-plane.ign` | `1e337b4c8336337fd2c133f77f0b2f0a9361f9362b47bf69ad29b0811e91c786` |
+| `homelab-node.ign` | `57db9d6ca0817dbae57aa410c308b8eb53eaf245a1bbe29533f360f8fcbf7bd3` |
+
+Versions from the extracted sysexts: Kubernetes **v1.35.10**, runc **1.3.7**,
+Cilium **v1.20.2**, kured **1.23.0**, Tailscale **1.104.7**.
+
+UEFI boot under SMM-protected Secure Boot firmware (the run the first test
+deferred to Phase 1): QEMU `q35,smm=on` with
+`-global driver=cfi.pflash01,property=secure,value=on`,
+`OVMF_CODE_4M.secboot.fd` and a fresh `OVMF_VARS_4M.secboot.fd`. (A first try
+had the device name wrong, `cfi.flash01`; QEMU warned `invalid class name`,
+so that run was discarded and redone from fresh variables.)
+
+- v26.11.2506: first boot printed `Custom Secure Boot keys successfully
+  enrolled, rebooting the system now!`; second boot reached the installer's
+  disk prompt with no Secure Boot warning, which per upstream happens only
+  when Secure Boot is on with the Bluefin certificate in `db`.
+- Control, v26.11.1701 on identical firmware and fresh variables: **the same
+  result**, enrollment and a silent pass. #612's rejection does not reproduce
+  with this OVMF build, so it depends on the firmware. The earlier claim in
+  this session that 1701 "would most likely fail" under the SMM build was an
+  inference and was wrong. Whether Hetzner's firmware is affected stays a
+  Phase 4 check; on the pinned v26.11.2506 it is fixed either way.
+- Both runs stopped at the disk prompt via QMP `quit`; target disks stayed at
+  ~200 KB. Run files: `~/.cache/bluefin-pilot/vm/uefi-test-2506/` and
+  `~/.cache/bluefin-pilot/vm/uefi-control-1701/`.
+
+This also covers the Phase 1 item "Secure Boot under the SMM build" from the
+first UEFI test.
 
 ### Step 4: recovery procedures — written; checks pending
 

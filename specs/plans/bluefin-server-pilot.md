@@ -61,9 +61,14 @@ identities, domains and outbound integrations to avoid duplicate side effects.
 
 ## Release and deliverables
 
-Initial candidate: [v26.11.1701](https://github.com/projectbluefin/server/releases/tag/v26.11.1701),
-published 2026-11-06 from commit
-`b928b45bd7a0633de04febf3d654fa084c182e00`.
+Pinned release: [v26.11.2506](https://github.com/projectbluefin/server/releases/tag/v26.11.2506),
+published 2026-11-20 from commit
+`d7f2890f8eacfe71c30477e7a038f9a4043a5b3b`. Re-pinned on 2026-11-20 from the
+initial candidate v26.11.1701 (commit `b928b45`), to pick up upstream fixes
+to homelab joining, kubeadm-node inotify limits and Secure Boot key files;
+see the results file for the 47-commit review and re-verification.
+Upstream ships several releases a day, so the pin is deliberate: change it
+only with the same review and re-verification.
 Pin downloaded asset hashes and the trusted signing-key fingerprint, not just
 the tag: the GitHub API reports this release as `immutable: false`.
 Use templates and sysexts from the same release. Record Kubernetes/Cilium
@@ -463,7 +468,7 @@ a separate rollout after the evidence has been reviewed.
 ## Sources
 
 - [Official Beta announcement, November 3](https://docs.projectbluefin.io/blog/bluefin-server-beta/)
-- [Pinned release and installation assets](https://github.com/projectbluefin/server/releases/tag/v26.11.1701)
-- [Pinned homelab templates and behavior](https://github.com/projectbluefin/server/blob/b928b45bd7a0633de04febf3d654fa084c182e00/docs/skills/homelab-profile.md)
-- [Pinned runtime extension contract](https://github.com/projectbluefin/server/blob/b928b45bd7a0633de04febf3d654fa084c182e00/docs/skills/systemd-sysext-extensions.md)
-- [Pinned install/update architecture](https://github.com/projectbluefin/server/blob/b928b45bd7a0633de04febf3d654fa084c182e00/docs/skills/ddi-installer.md)
+- [Pinned release and installation assets](https://github.com/projectbluefin/server/releases/tag/v26.11.2506)
+- [Pinned homelab templates and behavior](https://github.com/projectbluefin/server/blob/d7f2890f8eacfe71c30477e7a038f9a4043a5b3b/docs/skills/homelab-profile.md)
+- [Pinned runtime extension contract](https://github.com/projectbluefin/server/blob/d7f2890f8eacfe71c30477e7a038f9a4043a5b3b/docs/skills/systemd-sysext-extensions.md)
+- [Pinned install/update architecture](https://github.com/projectbluefin/server/blob/d7f2890f8eacfe71c30477e7a038f9a4043a5b3b/docs/skills/ddi-installer.md)
