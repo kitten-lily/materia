@@ -27,17 +27,25 @@ _snapshot="${usage_snapshot:-}"
 
 read -r -d '' _payload <<'PAYLOAD_EOF' || true
 set -euo pipefail
-VOLS=/var/lib/containers/storage/volumes
+# Host paths. The env overrides exist only for the local test harness (#200);
+# on a host none is set.
+VOLS=${VOLS:-/var/lib/containers/storage/volumes}
 DUMPS=$VOLS/systemd-db-dumps/_data
-RQ=/etc/containers/systemd/restic-backup/restic-backup.container
+RQ=${RQ:-/etc/containers/systemd/restic-backup/restic-backup.container}
+QDIR=${DBS_QUADLET_DIR:-/etc/containers/systemd}
 # name|kind|server quadlet|db user
 DBS=(
-  "grimmory|mariadb|/etc/containers/systemd/grimmory/grimmory-mariadb.container|grimmory"
-  "mediamanager|postgres|/etc/containers/systemd/mediamanager/mediamanager-postgres.container|mediamanager"
-  "silentsuite|postgres|/etc/containers/systemd/silentsuite/silentsuite-postgres.container|silentsuite"
-  "pinepods|postgres|/etc/containers/systemd/pinepods/pinepods-postgres.container|pinepods"
+  "grimmory|mariadb|$QDIR/grimmory/grimmory-mariadb.container|grimmory"
+  "mediamanager|postgres|$QDIR/mediamanager/mediamanager-postgres.container|mediamanager"
+  "silentsuite|postgres|$QDIR/silentsuite/silentsuite-postgres.container|silentsuite"
+  "pinepods|postgres|$QDIR/pinepods/pinepods-postgres.container|pinepods"
 )
-APP_VOLUMES=(systemd-grimmory-data systemd-mediamanager-images systemd-silentsuite-data)
+if [[ -n ${DB_NAMES:-} ]]; then
+  keep=()
+  for entry in "${DBS[@]}"; do [[ " $DB_NAMES " == *" ${entry%%|*} "* ]] && keep+=("$entry"); done
+  DBS=("${keep[@]}")
+fi
+read -r -a APP_VOLUMES <<<"${APP_VOLUMES:-systemd-grimmory-data systemd-mediamanager-images systemd-silentsuite-data}"
 MAX_AGE_H=36
 
 step() { echo "==> $*"; }
@@ -77,11 +85,19 @@ RHOST=$(sed -n 's/^Environment=RESTIC_HOST=//p' "$RQ")
 restic() { podman run "${rargs[@]}" -v "$work:/work" --entrypoint restic "$RIMG" --no-cache "$@"; }
 
 # --- 1. one snapshot ---------------------------------------------------------
+# --path keeps only snapshots that include the volumes path; --group-by host
+# makes --latest 1 return exactly one (the newest), whatever else each
+# snapshot's path set holds (#200).
 if [[ -n $SNAPSHOT ]]; then
-  json=$(restic snapshots --no-lock --json "$SNAPSHOT") || true
+  json=$(restic snapshots --no-lock --json "$SNAPSHOT" 2>"$work/snapshots.err") && lrc=0 || lrc=$?
 else
-  json=$(restic snapshots --no-lock --json --host "$RHOST" --latest 1)
+  json=$(restic snapshots --no-lock --json --host "$RHOST" --path "$VOLS" --group-by host --latest 1 2>"$work/snapshots.err") && lrc=0 || lrc=$?
 fi
+if (( lrc != 0 )) && ! grep -q 'no matching ID found' "$work/snapshots.err"; then
+  echo "error: snapshot lookup failed: $(grep -m1 . "$work/snapshots.err")" >&2; exit 1
+fi
+n=$(grep -o '"id":"[0-9a-f]*"' <<<"$json" | wc -l)
+(( n <= 1 )) || { echo "error: expected one snapshot, got $n" >&2; exit 1; }
 id=$(grep -o '"id":"[0-9a-f]*"' <<<"$json" | head -1 | cut -d'"' -f4) || true
 stime=$(grep -o '"time":"[^"]*"' <<<"$json" | head -1 | cut -d'"' -f4) || true
 [[ -n $id && -n $stime ]] || { echo "error: no snapshot ${SNAPSHOT:-for host $RHOST} in the repository" >&2; exit 1; }
@@ -92,10 +108,25 @@ now=$(date +%s)
 for entry in "${DBS[@]}"; do
   IFS='|' read -r name _ _ _ <<<"$entry"
   for f in sql counts.pre counts.post done; do
-    restic dump --no-lock "$id" "$DUMPS/$name.$f" > "$work/$name.$f" 2>/dev/null ||
-      { flunk "$name.$f missing from snapshot"; continue 2; }
+    if ! restic dump --no-lock "$id" "$DUMPS/$name.$f" > "$work/$name.$f" 2>"$work/$name.$f.err"; then
+      # Only restic's not-found message means the file is absent; anything
+      # else (repository, auth, pack errors) is reported as a dump failure.
+      if grep -q 'not found in snapshot' "$work/$name.$f.err"; then flunk "$name.$f missing from snapshot"
+      else flunk "$name.$f: restic dump failed: $(grep -m1 . "$work/$name.$f.err")"; fi
+      rm -f "$work/$name.sql"; continue 2
+    fi
   done
-  done_at=$(cat "$work/$name.done")
+  # A dump of an emptied or renamed database still succeeds (#200).
+  if [[ ! -s $work/$name.counts.pre ]]; then
+    flunk "$name: dump has 0 tables"; rm -f "$work/$name.sql"
+  elif (( $(awk -F '\t' '{s += $2} END {print s + 0}' "$work/$name.counts.pre") == 0 )); then
+    flunk "$name: dump has 0 rows"; rm -f "$work/$name.sql"
+  fi
+  done_at=$(head -c 40 "$work/$name.done" | tr -d '\n')
+  # date -d accepts "" and many other strings, so check dump.bash's exact format.
+  if [[ ! $done_at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    flunk "$name.done is not a timestamp: '$done_at'"; continue
+  fi
   age_h=$(( (now - $(date -d "$done_at" +%s)) / 3600 ))
   if (( age_h <= MAX_AGE_H )); then pass "$name dump finished $done_at (${age_h} h ago)"
   else flunk "$name dump is stale: finished $done_at (${age_h} h ago, max ${MAX_AGE_H} h)"; fi
@@ -163,7 +194,17 @@ for vol in "${APP_VOLUMES[@]}"; do
   rest=$work/restore$live
   [[ -d $rest ]] || { flunk "$vol: not in the snapshot"; continue; }
   # Only files untouched since the snapshot can be compared byte for byte.
-  (cd "$live" && find . -type f ! -newermt "@$(date -d "$stime" +%s)" -print0 | sort -z | xargs -0 -r sha256sum) > "$work/$vol.live"
+  if ! (cd "$live" && find . -type f ! -newermt "@$(date -d "$stime" +%s)" -print0) > "$work/$vol.list"; then
+    flunk "$vol: could not list the live copy"; rm -rf "$work/restore"; continue
+  fi
+  # One file at a time: a file deleted since find is no longer "unchanged" and
+  # drops out; any other hashing failure is a failure, not a smaller sample.
+  : > "$work/$vol.live"; hashfail=0
+  while IFS= read -r -d '' f; do
+    if h=$(cd "$live" && sha256sum -- "$f" 2>/dev/null); then printf '%s\n' "$h" >> "$work/$vol.live"
+    elif [[ -e $live/$f ]]; then flunk "$vol: cannot hash live file $f"; hashfail=1; fi
+  done < <(sort -z "$work/$vol.list")
+  if (( hashfail )); then rm -rf "$work/restore"; continue; fi
   n=$(wc -l < "$work/$vol.live")
   if (( n == 0 )); then
     pass "$vol: restored; no files older than the snapshot to compare"
