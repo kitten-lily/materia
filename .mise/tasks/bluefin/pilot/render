@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+#MISE description="Render a Bluefin pilot node's Ignition config from the pinned homelab template (#179)"
+
+#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
+
+# Design: specs/plans/bluefin-server-pilot-phase1.md. Output goes to
+# ~/.cache/bluefin-pilot/render/<vm>/ (mode 0700/0600) and is never committed:
+# it embeds the pilot SSH public key, the root password hash and, for the
+# node, the join passphrase file.
+
+set -euo pipefail
+
+_vm="${usage_vm:?pilot VM required, use --vm}"
+case "$_vm" in
+  bluefin-pilot-cp) _role=control-plane; _ip=10.77.0.10; _mac_lan=52:54:00:77:00:10 ;;
+  bluefin-pilot-node) _role=node; _ip=10.77.0.11; _mac_lan=52:54:00:77:00:11 ;;
+  *) echo "error: unknown pilot VM '$_vm' (expected bluefin-pilot-cp or bluefin-pilot-node)" >&2; exit 1 ;;
+esac
+
+_rel=v26.11.2506
+_cache="${HOME}/.cache/bluefin-pilot"
+_relcache="${_cache}/${_rel}"
+_secrets="${_cache}/secrets"
+_out="${_cache}/render/${_vm}"
+_butane=(mise exec butane@0.29.0 -- butane --strict)
+_cp_ip=10.77.0.10
+_metallb=10.77.0.240-10.77.0.250
+
+# sha256 of the pinned release's templates (results, Phase 0 step 3 repeat).
+declare -A _tmpl_sha=(
+  [control-plane]=74f91db8018ab7842cc870d4afd1b2db0fcaae47ea714db1ded8abd0e77e2875
+  [node]=531aaf4344e75421750bcd70532f651801f057e051b3adc7df8036cd4ad2e62d
+)
+_tmpl="${_relcache}/homelab-${_role}.bu"
+[[ -f "$_tmpl" ]] || { echo "error: $_tmpl missing; download and verify the pinned release first" >&2; exit 1; }
+echo "${_tmpl_sha[$_role]}  ${_tmpl}" | sha256sum --check --quiet \
+  || { echo "error: $_tmpl does not match the pinned sha256" >&2; exit 1; }
+
+_pubkey="${_secrets}/ssh-root.pub"
+_hash="${_secrets}/root-password.hash"
+for f in "$_pubkey" "$_hash"; do
+  [[ -s "$f" ]] || { echo "error: $f missing or empty" >&2; exit 1; }
+done
+
+mkdir -p "$_out"; chmod 700 "$_out"
+umask 077
+
+# homelab.conf.template additions (appended after the upstream content).
+_conf_extra="
+# --- Bluefin pilot (#179), see specs/plans/bluefin-server-pilot-phase1.md
+HOMELAB_KURED=no"
+if [[ "$_role" == control-plane ]]; then
+  _conf_extra+="
+HOMELAB_METALLB_ADDRESSES=${_metallb}"
+else
+  _conf_extra+="
+HOMELAB_CONTROL_PLANE=${_cp_ip}"
+fi
+
+_network="[Match]
+MACAddress=${_mac_lan}
+
+[Network]
+Address=${_ip}/24
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+"
+
+_kubelet="KUBELET_EXTRA_ARGS=--node-ip=${_ip}
+"
+
+# Upstream default init.yaml (kubeadm sysext, v26.11.2506) plus the pilot's
+# endpoint, SANs, advertise address and node name (design, "Machines and
+# network"). Written before the first init, so kubeadm-init-config leaves it.
+_init="apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: ${_cp_ip}
+  bindPort: 6443
+nodeRegistration:
+  name: bluefin-pilot-cp
+  criSocket: unix:///run/containerd/containerd.sock
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+clusterName: bluefin
+kubernetesVersion: v1.35.10
+imageRepository: registry.k8s.io
+controlPlaneEndpoint: ${_cp_ip}:6443
+apiServer:
+  certSANs:
+  - ${_cp_ip}
+  - bluefin-pilot-cp
+networking:
+  dnsDomain: cluster.local
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/12
+controllerManager:
+  extraArgs:
+  - name: flex-volume-plugin-dir
+    value: /var/lib/kubelet/volumeplugins
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
+"
+
+export PILOT_PUBKEY PILOT_CONF_EXTRA PILOT_HOSTNAME PILOT_NETWORK PILOT_KUBELET PILOT_INIT
+PILOT_PUBKEY="$(cat "$_pubkey")"
+PILOT_CONF_EXTRA="$_conf_extra"
+PILOT_HOSTNAME="${_vm}
+"
+PILOT_NETWORK="$_network"
+PILOT_KUBELET="$_kubelet"
+PILOT_INIT="$_init"
+
+_bu="${_out}/config.bu"
+yq eval '
+  .passwd.users[0].ssh_authorized_keys = [strenv(PILOT_PUBKEY)]
+  | (.storage.files[] | select(.path == "/etc/bluefin/homelab.conf.template") | .contents.inline) += strenv(PILOT_CONF_EXTRA)
+  | .systemd.units += [
+      {"name": "systemd-sysupdate.timer", "mask": true},
+      {"name": "systemd-sysupdate-reboot.timer", "mask": true}
+    ]
+  | .storage.files += [
+      {"path": "/etc/hostname", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_HOSTNAME)}},
+      {"path": "/etc/systemd/network/10-pilot-lan.network", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_NETWORK)}},
+      {"path": "/etc/default/kubelet", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_KUBELET)}}
+    ]
+' "$_tmpl" > "$_bu"
+
+if [[ "$_role" == control-plane ]]; then
+  yq eval -i '.storage.files += [{"path": "/etc/kubernetes/bluefin/init.yaml", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_INIT)}}]' "$_bu"
+fi
+
+# The placeholder key line must be gone and no other key may be present.
+if grep -q 'REPLACE with your SSH public key' "$_bu"; then
+  echo "error: SSH key placeholder still present in $_bu" >&2; exit 1
+fi
+
+"${_butane[@]}" < "$_bu" > "${_out}/config.ign"
+# systemd-firstboot needs a crypt(5) hash with no trailing newline
+# (upstream tpm2-credential-sealing.md, "Node access"); openssl passwd adds one.
+tr -d '\n' < "$_hash" > "${_out}/passwd.hashed-password.root"
+[[ "$(head -c3 "${_out}/passwd.hashed-password.root")" == '$6$' ]] \
+  || { echo "error: root password hash is not a SHA-512 crypt hash" >&2; exit 1; }
+
+# The node's join passphrase, once the control plane has shown it and it is in
+# the pilot vault (item join-passphrase, field password).
+if [[ "$_role" == node ]]; then
+  if _pp="$(pass-cli item view --vault-name bluefin-pilot --item-title join-passphrase --field password 2>/dev/null)" && [[ -n "$_pp" ]]; then
+    printf '%s' "$_pp" > "${_out}/bluefin-cluster.passphrase"
+    echo "join passphrase written"
+  else
+    rm -f "${_out}/bluefin-cluster.passphrase"
+    echo "note: no join-passphrase in the pilot vault yet; the node cannot join until it is stored and this is re-run"
+  fi
+  unset _pp
+fi
+
+chmod 600 "${_out}"/*
+echo "rendered ${_out}/config.ign ($(wc -c < "${_out}/config.ign") bytes)"

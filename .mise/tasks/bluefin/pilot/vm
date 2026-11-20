@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2054 # commas belong to the QEMU options
+#MISE description="Create, install, start and stop the local Bluefin pilot VMs on the workstation (#179)"
+
+#USAGE arg "<action>" help="create | install | start | stop | destroy | status"
+#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
+#USAGE flag "--no-reboot" help="start: exit QEMU on the first guest reset"
+#USAGE flag "--offline" help="start: bring up both NICs with the link down (recovery check L1)"
+#USAGE flag "--reinstall" help="install: firmware already holds the Bluefin keys; skip the enroll stage (recovery procedure L3)"
+
+# Design: specs/plans/bluefin-server-pilot-phase1.md ("Tooling", "Machines and
+# network"). Everything lives under ~/.cache/bluefin-pilot/vm/<vm>/; nothing
+# here touches a block device or any path outside that directory.
+#
+# install = stage 1 (enroll Secure Boot keys) + stage 2 (unattended install);
+# both run with -no-reboot so each guest reset ends QEMU. start = stage 3, the
+# configured boot of the installed disk with every credential present from its
+# very first boot (systemd-firstboot applies passwd.* only then).
+
+set -euo pipefail
+
+_action="${usage_action:?action required}"
+_vm="${usage_vm:?pilot VM required, use --vm}"
+[[ "$_vm" =~ ^bluefin-pilot-[a-z0-9-]+$ ]] || { echo "error: refusing non-pilot name '$_vm'" >&2; exit 1; }
+case "$_vm" in
+  bluefin-pilot-cp)   _cpus=4; _mem=8192; _os_size=64G; _data=(8G 8G); _ssh=2210; _id=10 ;;
+  bluefin-pilot-node) _cpus=2; _mem=4096; _os_size=40G; _data=(8G);    _ssh=2211; _id=11 ;;
+  *) echo "error: unknown pilot VM '$_vm'" >&2; exit 1 ;;
+esac
+
+_rel=v26.11.2506
+_cache="${HOME}/.cache/bluefin-pilot"
+_dir="${_cache}/vm/${_vm}"
+_render="${_cache}/render/${_vm}"
+_installer="${_cache}/${_rel}/bluefin-server-installer_26.11.2506.raw"
+_installer_sha=68bac3c0e9ab4312b3e1d1d1a7b786916253fe619b30db0d0fe8c1da3525db14
+_code=/usr/share/edk2/ovmf/OVMF_CODE_4M.secboot.fd
+_vars_tmpl=/usr/share/edk2/ovmf/OVMF_VARS_4M.secboot.fd
+_mac_wan="52:54:00:77:01:${_id}"
+_mac_lan="52:54:00:77:00:${_id}"
+_mcast=230.77.0.1:7700
+
+case "$_dir" in "${_cache}/vm/bluefin-pilot-"*) ;; *) echo "error: bad VM dir $_dir" >&2; exit 1 ;; esac
+
+# SMBIOS type 11 credential, as upstream's dogfood-installer.sh passes them.
+cred() { printf 'type=11,value=io.systemd.credential.binary:%s=%s' "$1" "$(base64 -w0 < "$2")"; }
+
+running() { [[ -f "${_dir}/qemu.pid" ]] && kill -0 "$(cat "${_dir}/qemu.pid")" 2>/dev/null; }
+
+qmp() {
+  python3 -I - "${_dir}/qmp.sock" "$@" <<'EOF'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile("rw"); f.readline()
+for cmd in [{"execute": "qmp_capabilities"}] + [json.loads(a) for a in sys.argv[2:]]:
+    f.write(json.dumps(cmd) + "\n"); f.flush()
+    while True:
+        r = json.loads(f.readline())
+        if "event" not in r:
+            break
+    if "error" in r:
+        print(json.dumps(r["error"]), file=sys.stderr); sys.exit(1)
+EOF
+}
+
+# Firmware, machine and disks common to every run.
+base_args() {
+  local i
+  _args=(qemu-system-x86_64 -name "$_vm" -machine q35,smm=on,accel=kvm -cpu host
+    -smp "$_cpus" -m "$_mem"
+    -global driver=cfi.pflash01,property=secure,value=on
+    -drive "if=pflash,format=raw,unit=0,readonly=on,file=${_code}"
+    -drive "if=pflash,format=raw,unit=1,file=${_dir}/vars.fd"
+    -drive "file=${_dir}/os.qcow2,if=none,id=os,format=qcow2"
+    -device virtio-blk-pci,drive=os,serial=bluefin-os)
+  for i in "${!_data[@]}"; do
+    _args+=(-drive "file=${_dir}/data$((i + 1)).qcow2,if=none,id=data$((i + 1)),format=qcow2"
+      -device "virtio-blk-pci,drive=data$((i + 1)),serial=bluefin-data$((i + 1))")
+  done
+  _args+=(-display none -vga std
+    -serial "file:${_dir}/serial.log" -serial "file:${_dir}/probe.log"
+    -qmp "unix:${_dir}/qmp.sock,server,nowait")
+}
+
+net_args() {
+  _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22"
+    -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}"
+    -netdev "socket,id=lan,mcast=${_mcast},localaddr=127.0.0.1"
+    -device "virtio-net-pci,netdev=lan,mac=${_mac_lan}")
+}
+
+firstboot_creds() {
+  local kv
+  for kv in firstboot.locale=C.UTF-8 firstboot.keymap=us firstboot.timezone=UTC; do
+    printf '%s' "${kv#*=}" > "${_dir}/cred-${kv%%=*}"
+    _args+=(-smbios "$(cred "${kv%%=*}" "${_dir}/cred-${kv%%=*}")")
+  done
+  _args+=(-smbios "$(cred passwd.hashed-password.root "${_render}/passwd.hashed-password.root")")
+}
+
+case "$_action" in
+create)
+  [[ -e "${_dir}/os.qcow2" ]] && { echo "error: ${_dir} already exists; destroy it first" >&2; exit 1; }
+  mkdir -p "$_dir"
+  qemu-img create -q -f qcow2 "${_dir}/os.qcow2" "$_os_size"
+  for i in "${!_data[@]}"; do qemu-img create -q -f qcow2 "${_dir}/data$((i + 1)).qcow2" "${_data[$i]}"; done
+  cp "$_vars_tmpl" "${_dir}/vars.fd"
+  echo "created ${_dir}"
+  ;;
+
+install)
+  running && { echo "error: $_vm is running" >&2; exit 1; }
+  [[ -f "${_dir}/os.qcow2" && -f "${_dir}/vars.fd" ]] || { echo "error: run create first" >&2; exit 1; }
+  [[ -s "${_render}/passwd.hashed-password.root" ]] || { echo "error: run bluefin:pilot:render first" >&2; exit 1; }
+  echo "verifying installer sha256..."
+  echo "${_installer_sha}  ${_installer}" | sha256sum --check --quiet
+  rm -f "${_dir}/installer.qcow2"
+  qemu-img create -q -f qcow2 -F raw -b "$_installer" "${_dir}/installer.qcow2"
+
+  # Unattended sysinstall drop-in: the image drop-in's ExecStart plus
+  # --confirm=no and the OS disk by its virtio serial (never /dev/vdX).
+  _target=/dev/disk/by-id/virtio-bluefin-os
+  cat > "${_dir}/sysinstall.conf" <<EOF
+[Service]
+StandardInput=null
+StandardError=journal+console
+ExecStart=
+ExecStart=systemd-sysinstall --variables=yes --erase=yes --reboot=no --mute-console=yes --definitions=/run/bluefin/installer/bluefin/repart.d --kernel=\${BLUEFIN_INSTALL_KERNEL} --set-credential=bluefin.prompt-root-password:1 --confirm=no ${_target}
+ExecStopPost=/bin/bash -c 'echo "PROBE sysinstall=\$\${SERVICE_RESULT} \$\${EXIT_STATUS}" > /dev/ttyS1; lsblk -o NAME,PARTLABEL,FSTYPE,SIZE ${_target} > /dev/ttyS1 2>&1'
+EOF
+
+  _stages=(enroll install); [[ -n "${usage_reinstall:-}" ]] && _stages=(install)
+  for stage in "${_stages[@]}"; do
+    : > "${_dir}/serial.log"; : > "${_dir}/probe.log"
+    base_args
+    _args+=(-drive "file=${_dir}/installer.qcow2,if=none,id=usb0,format=qcow2"
+      -device qemu-xhci -device usb-storage,drive=usb0,bootindex=0
+      -nic none -no-reboot
+      -smbios "$(cred systemd.unit-dropin.systemd-sysinstall.service "${_dir}/sysinstall.conf")")
+    firstboot_creds
+    echo "stage ${stage}: booting installer (QEMU exits on the guest's reset)..."
+    if ! timeout 1500 "${_args[@]}"; then
+      echo "error: stage ${stage} did not end with a reset within 25 min; see ${_dir}/serial.log" >&2; exit 1
+    fi
+    cp "${_dir}/serial.log" "${_dir}/serial-${stage}.log"; cp "${_dir}/probe.log" "${_dir}/probe-${stage}.log"
+    if [[ "$stage" == enroll ]]; then
+      grep -q "successfully enrolled" "${_dir}/serial.log" \
+        || { echo "error: stage enroll ended without key enrollment; see serial-enroll.log" >&2; exit 1; }
+      echo "stage enroll: Secure Boot keys enrolled"
+    fi
+  done
+  grep -q 'PROBE sysinstall=success 0' "${_dir}/probe-install.log" \
+    || { echo "error: sysinstall did not report success; see probe-install.log and serial-install.log" >&2; exit 1; }
+  rm -f "${_dir}/installer.qcow2"
+  echo "installed. probe:"; sed 's/^/  /' "${_dir}/probe-install.log"
+  ;;
+
+start)
+  running && { echo "error: $_vm is already running" >&2; exit 1; }
+  [[ -s "${_render}/config.ign" ]] || { echo "error: run bluefin:pilot:render first" >&2; exit 1; }
+  [[ -e "${_dir}/installer.qcow2" ]] && { echo "error: installer overlay still present; install did not finish" >&2; exit 1; }
+  : > "${_dir}/serial.log"; : > "${_dir}/probe.log"
+  base_args; net_args
+  _args+=(-smbios "$(cred ignition.config "${_render}/config.ign")")
+  firstboot_creds
+  [[ -s "${_render}/bluefin-cluster.passphrase" ]] \
+    && _args+=(-smbios "$(cred bluefin-cluster.passphrase "${_render}/bluefin-cluster.passphrase")")
+  [[ -n "${usage_no_reboot:-}" ]] && _args+=(-no-reboot)
+  _args+=(-daemonize -pidfile "${_dir}/qemu.pid")
+  "${_args[@]}"
+  if [[ -n "${usage_offline:-}" ]]; then
+    qmp '{"execute":"set_link","arguments":{"name":"wan","up":false}}' '{"execute":"set_link","arguments":{"name":"lan","up":false}}'
+    echo "both NICs link down"
+  fi
+  echo "started ${_vm} (pid $(cat "${_dir}/qemu.pid")); ssh -i ~/.cache/bluefin-pilot/secrets/ssh-root -p ${_ssh} root@127.0.0.1"
+  ;;
+
+stop)
+  running || { echo "$_vm is not running"; exit 0; }
+  qmp '{"execute":"system_powerdown"}'
+  for _ in $(seq 1 60); do running || { echo "stopped"; exit 0; }; sleep 2; done
+  echo "no clean shutdown after 120 s; forcing"; qmp '{"execute":"quit"}' || true
+  ;;
+
+destroy)
+  running && { echo "error: stop $_vm first" >&2; exit 1; }
+  [[ -d "$_dir" ]] || { echo "nothing to destroy"; exit 0; }
+  rm -rf -- "$_dir"
+  echo "destroyed ${_dir}"
+  ;;
+
+status)
+  if running; then echo "$_vm running (pid $(cat "${_dir}/qemu.pid")), ssh port ${_ssh}"; else echo "$_vm not running"; fi
+  [[ -d "$_dir" ]] && du -sh "$_dir"/*.qcow2 2>/dev/null || true
+  ;;
+
+*) echo "error: unknown action '$_action'" >&2; exit 1 ;;
+esac

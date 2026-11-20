@@ -1,0 +1,44 @@
+# Bluefin pilot (#179) Phase 1 step 4: persistent-volume fixture.
+# Writes a deterministic 1 MiB file (`yes bluefin-pilot | head -c 1048576`)
+# to a local-path PVC on the worker once, then keeps running so the file can
+# be checksummed again after the node reboots. Expected sha256:
+#   yes bluefin-pilot | head -c 1048576 | sha256sum
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pilot-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fixture
+  namespace: pilot-storage
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pvc-writer
+  namespace: pilot-storage
+spec:
+  # nodeSelector, not nodeName: WaitForFirstConsumer binds only after the
+  # scheduler picks a node, and nodeName bypasses the scheduler.
+  nodeSelector: {kubernetes.io/hostname: bluefin-pilot-node}
+  containers:
+  - name: writer
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      [ -f /data/fixture ] || { yes bluefin-pilot | head -c 1048576 > /data/fixture.tmp && mv /data/fixture.tmp /data/fixture; }
+      exec sleep infinity
+    volumeMounts:
+    - {name: data, mountPath: /data}
+  volumes:
+  - name: data
+    persistentVolumeClaim: {claimName: fixture}
