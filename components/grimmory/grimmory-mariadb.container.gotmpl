@@ -27,9 +27,22 @@ Environment=MARIADB_USER=grimmory
 # /var/lib/mysql is the official MariaDB data dir (NOT /config, the
 # linuxserver convention upstream's compose used).
 Volume=grimmory-mariadb-config.volume:/var/lib/mysql:z
+# Ready = accepting TCP connections, so After=grimmory-mariadb.service in the
+# app and in db-dump-grimmory means the server is up (#199). The image's
+# healthcheck.sh --connect needs no credentials (access denied counts as
+# connected); --innodb_initialized would need the healthcheck user, which
+# this minimus-initialised datadir doesn't have. The entrypoint's init server
+# runs with --skip-networking, so the probe can't pass during init. JSON
+# form: execs directly, nothing to mis-quote (podman 5.7.1).
+Notify=healthy
+HealthCmd=["healthcheck.sh","--connect"]
+HealthInterval=10s
+HealthRetries=12
+HealthStartPeriod=30s
 
 [Service]
 Restart=always
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target default.target

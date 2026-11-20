@@ -1,5 +1,9 @@
 [Unit]
 Description=Run every DB dump (restart workaround for RemainAfterExit, see BUG-004)
+# A Persistent=true catch-up run at boot must not ping before DNS works
+# (#199).
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
