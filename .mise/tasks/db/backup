@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Back up the grimmory MariaDB + MediaManager/PinePods Postgres databases on a host (logical dump, row counts, raw volume), or compare row counts against an earlier backup"
+#MISE description="Back up the grimmory MariaDB + MediaManager/PinePods/SilentSuite Postgres databases on a host (logical dump, row counts, raw volume), or compare row counts against an earlier backup"
 
 #USAGE flag "--target <target>" required=#true help="ssh destination of the host (user@host), e.g. core@bow"
 #USAGE flag "--compare <compare>" help="backup directory from an earlier run (/var/lib/db-backups/<stamp>): only re-count rows and diff against it"
@@ -29,14 +29,16 @@ _compare="${usage_compare:-}"
 
 read -r -d '' _payload <<'PAYLOAD_EOF' || true
 set -euo pipefail
-# name|kind|container|db service|app service|podman secret|volume|db user|server quadlet
+# name|kind|container|db service|app service|podman secret|volume|db user|db name|server quadlet
+# db name: the Postgres database counts connect to and pg_dumpall starts
+# from (#201); unused for mariadb, which dumps --all-databases.
 # The client image is read from the installed server quadlet, so it is
 # always the pin Renovate last bumped (this task has no pins of its own).
 DBS=(
-  "grimmory|mariadb|grimmory-mariadb|grimmory-mariadb.service|grimmory.service|materia-mariadbRootPassword|systemd-grimmory-mariadb-config|root|/etc/containers/systemd/grimmory/grimmory-mariadb.container"
-  "mediamanager|postgres|mediamanager-postgres|mediamanager-postgres.service|mediamanager.service|materia-mediamanagerDbPassword|systemd-mediamanager-db|mediamanager|/etc/containers/systemd/mediamanager/mediamanager-postgres.container"
-  "silentsuite|postgres|silentsuite-postgres|silentsuite-postgres.service|silentsuite.service|materia-silentsuiteDbPassword|systemd-silentsuite-db|silentsuite|/etc/containers/systemd/silentsuite/silentsuite-postgres.container"
-  "pinepods|postgres|pinepods-postgres|pinepods-postgres.service|pinepods.service|materia-pinepodsDbPassword|systemd-pinepods-db|pinepods|/etc/containers/systemd/pinepods/pinepods-postgres.container"
+  "grimmory|mariadb|grimmory-mariadb|grimmory-mariadb.service|grimmory.service|materia-mariadbRootPassword|systemd-grimmory-mariadb-config|root|grimmory|/etc/containers/systemd/grimmory/grimmory-mariadb.container"
+  "mediamanager|postgres|mediamanager-postgres|mediamanager-postgres.service|mediamanager.service|materia-mediamanagerDbPassword|systemd-mediamanager-db|mediamanager|mediamanager|/etc/containers/systemd/mediamanager/mediamanager-postgres.container"
+  "silentsuite|postgres|silentsuite-postgres|silentsuite-postgres.service|silentsuite.service|materia-silentsuiteDbPassword|systemd-silentsuite-db|silentsuite|silentsuite|/etc/containers/systemd/silentsuite/silentsuite-postgres.container"
+  "pinepods|postgres|pinepods-postgres|pinepods-postgres.service|pinepods.service|materia-pinepodsDbPassword|systemd-pinepods-db|pinepods|pinepods|/etc/containers/systemd/pinepods/pinepods-postgres.container"
 )
 
 step() { echo "==> $*"; }
@@ -47,7 +49,7 @@ image_of() { sed -n 's/^Image=//p' "$1" | head -1; }
 
 # Exact row count per table, "<schema>.<table> <count>", sorted.
 counts() {
-  local kind=$1 ctr=$2 secret=$3 user=$4 img=$5
+  local kind=$1 ctr=$2 secret=$3 user=$4 db=$5 img=$6
   case "$kind" in
     mariadb)
       podman run --rm --network newt-net --secret "$secret,type=env,target=MYSQL_PWD" "$img" sh -c "
@@ -55,20 +57,20 @@ counts() {
         | mariadb -h $ctr -u$user -N" | sort ;;
     postgres)
       podman run --rm --network newt-net --secret "$secret,type=env,target=PGPASSWORD" "$img" sh -c "
-        psql -h $ctr -U $user -d $user -Atc \"SELECT format('SELECT %L || chr(9) || count(*) FROM %I.%I;', schemaname || '.' || relname, schemaname, relname) FROM pg_stat_user_tables\" \
-        | psql -h $ctr -U $user -d $user -At" | sort ;;
+        psql -h $ctr -U $user -d $db -Atc \"SELECT format('SELECT %L || chr(9) || count(*) FROM %I.%I;', schemaname || '.' || relname, schemaname, relname) FROM pg_stat_user_tables\" \
+        | psql -h $ctr -U $user -d $db -At" | sort ;;
   esac
 }
 
 dump() {
-  local kind=$1 ctr=$2 secret=$3 user=$4 img=$5
+  local kind=$1 ctr=$2 secret=$3 user=$4 db=$5 img=$6
   case "$kind" in
     mariadb)
       podman run --rm --network newt-net --secret "$secret,type=env,target=MYSQL_PWD" "$img" \
         mariadb-dump -h "$ctr" -u"$user" --all-databases --single-transaction --routines --events --triggers ;;
     postgres)
       podman run --rm --network newt-net --secret "$secret,type=env,target=PGPASSWORD" "$img" \
-        pg_dumpall -h "$ctr" -U "$user" ;;
+        pg_dumpall -h "$ctr" -U "$user" -l "$db" ;;
   esac
 }
 
@@ -78,11 +80,16 @@ if [[ -n "$COMPARE" ]]; then
   [[ -d "$COMPARE" ]] || fail "no such backup directory: $COMPARE"
   rc=0
   for entry in "${DBS[@]}"; do
-    IFS='|' read -r name kind ctr _svc _app secret _vol user quadlet <<<"$entry"
+    IFS='|' read -r name kind ctr _svc _app secret _vol user db quadlet <<<"$entry"
     [[ -f "$COMPARE/$name.counts" ]] || { echo "    skip  $name (not in backup)"; continue; }
     running "$ctr" || { echo "    FAIL  $name: container $ctr not running"; rc=1; continue; }
     step "$name: comparing row counts with $COMPARE/$name.counts"
-    counts "$kind" "$ctr" "$secret" "$user" "$(image_of "$quadlet")" > "/tmp/$name.counts.now"
+    # Guard the file first: under set -e/pipefail, image_of on a missing file
+    # would exit inside the command substitution before any message.
+    [[ -r $quadlet ]] || { echo "    FAIL  $name: $quadlet missing"; rc=1; continue; }
+    img=$(image_of "$quadlet")
+    [[ -n $img ]] || { echo "    FAIL  $name: no Image= in $quadlet"; rc=1; continue; }
+    counts "$kind" "$ctr" "$secret" "$user" "$db" "$img" > "/tmp/$name.counts.now"
     # Fail on a missing table or fewer rows; more rows is normal app activity.
     awk -F '\t' -v name="$name" '
       NR == FNR { before[$1] = $2; next }
@@ -105,15 +112,16 @@ dir="/var/lib/db-backups/$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -m 0700 "$dir"
 step "backing up into $dir (free on /: $(df -h --output=avail / | tail -1 | tr -d ' '))"
 for entry in "${DBS[@]}"; do
-  IFS='|' read -r name kind ctr svc app secret vol user quadlet <<<"$entry"
+  IFS='|' read -r name kind ctr svc app secret vol user db quadlet <<<"$entry"
   if ! running "$ctr"; then echo "    skip  $name ($ctr not running on this host)"; continue; fi
 
   step "$name: logical dump"
+  [[ -r $quadlet ]] || fail "$name: $quadlet missing"
   img=$(image_of "$quadlet"); [[ -n $img ]] || fail "$name: no Image= in $quadlet"
-  ( umask 077; dump "$kind" "$ctr" "$secret" "$user" "$img" > "$dir/$name.sql" )
+  ( umask 077; dump "$kind" "$ctr" "$secret" "$user" "$db" "$img" > "$dir/$name.sql" )
   [[ -s "$dir/$name.sql" ]] || fail "$name: empty dump"
   step "$name: row counts"
-  counts "$kind" "$ctr" "$secret" "$user" "$img" > "$dir/$name.counts"
+  counts "$kind" "$ctr" "$secret" "$user" "$db" "$img" > "$dir/$name.counts"
   echo "    $(wc -l < "$dir/$name.counts") tables, $(awk -F '\t' '{s += $2} END {print s + 0}' "$dir/$name.counts") rows"
 
   step "$name: raw volume export (stops $app and $svc briefly)"
