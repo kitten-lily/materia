@@ -30,7 +30,10 @@ Volume=pinepods-db.volume:/var/lib/postgresql/data:Z
 # Gate the app's start on the DB accepting connections. A fresh initdb takes
 # ~30 s (smoke test). The app also retries on its own; this is the backstop.
 Notify=healthy
-HealthCmd=pg_isready -U pinepods -d pinepods
+# TCP, not the socket: on a fresh volume the entrypoint's temporary init
+# server listens on the socket only, so a socket probe passes before the
+# real server is up (#205).
+HealthCmd=pg_isready -h 127.0.0.1 -U pinepods -d pinepods
 HealthInterval=5s
 HealthRetries=20
 HealthTimeout=5s

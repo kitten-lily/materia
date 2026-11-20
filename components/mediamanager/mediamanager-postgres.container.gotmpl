@@ -38,7 +38,10 @@ Volume=mediamanager-db.volume:/var/lib/postgresql/data:z
 # Gate the app's start on the DB actually accepting connections — see the
 # Requires=/After= note in mediamanager.container.gotmpl.
 Notify=healthy
-HealthCmd=pg_isready -U mediamanager -d mediamanager
+# TCP, not the socket: on a fresh volume the entrypoint's temporary init
+# server listens on the socket only, so a socket probe passes before the
+# real server is up (#205).
+HealthCmd=pg_isready -h 127.0.0.1 -U mediamanager -d mediamanager
 HealthInterval=5s
 HealthRetries=20
 HealthTimeout=5s

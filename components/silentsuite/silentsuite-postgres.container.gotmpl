@@ -19,7 +19,10 @@ Volume=silentsuite-db.volume:/var/lib/postgresql/data:Z
 ShmSize=128m
 Exec=postgres -c max_connections=200
 Notify=healthy
-HealthCmd=pg_isready -U silentsuite -d silentsuite
+# TCP, not the socket: on a fresh volume the entrypoint's temporary init
+# server listens on the socket only, so a socket probe passes before the
+# real server is up (#205).
+HealthCmd=pg_isready -h 127.0.0.1 -U silentsuite -d silentsuite
 HealthInterval=5s
 HealthRetries=20
 HealthTimeout=5s
