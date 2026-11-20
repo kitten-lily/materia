@@ -193,9 +193,20 @@ kubelet and VXLAN all go over the tailnet. Verified with `hcloud firewall
 describe bluefin-pilot`. Remove it in the pilot cleanup.
 
 Operator actions: the `bluefin-pilot` Proton Pass vault was created on
-2026-11-09 (`pass-cli vault list` shows it; it holds no items yet). Still
-open: apply the `tag:bluefin-pilot` tailnet policy (recovery doc, T2), which
-is needed before Phase 1 enrolls a node.
+2026-11-09 (`pass-cli vault list` shows it; it holds no items yet). The
+tailnet policy was applied on 2026-11-20 (recovery doc, T2), with two
+changes from the proposal after comparing it with the live policy: no
+separate operator grant (the existing `autogroup:member` → `*` grant already
+covers operator devices), and `tag:bluefin-pilot` added to the `nodeAttrs`
+`ipPool` target (`100.64.0.0/12`), so pilot nodes cannot get addresses inside
+Gerbil's `100.89.128.0/20` tunnel range. The policy carries `tests` asserting
+pilot ↔ production denial. Auth key generated (reusable, 7-day expiry, not
+ephemeral, pre-approved, `tag:bluefin-pilot` only) and stored in the
+`bluefin-pilot` vault as `tailscale-auth-key`, field `key`; read back with
+`pass-cli item view --vault-name bluefin-pilot --item-title
+tailscale-auth-key --field key` (exit 0, one 61-character line starting
+`tskey-auth-`; value not printed). **Phase 0 operator prerequisites are
+complete.**
 
 ## Findings
 

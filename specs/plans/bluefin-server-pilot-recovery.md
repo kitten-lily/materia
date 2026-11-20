@@ -192,5 +192,5 @@ vault and items is an operator step.
 | Procedures and restore inputs recorded | done (this file) |
 | Console access with guest networking disconnected | pending: needs an installed node with a console password (Phase 1), via L1 with `-nic none` |
 | Recovery boot from the installer on the disposable VM | pending: needs an installed node (Phase 1), via L3, confirming the data disks survive |
-| Pilot-only VPN enrollment policy | proposed (T2), not applied: tailnet admin change |
+| Pilot-only VPN enrollment policy | applied 2026-11-20 (results, Phase 0 step 5), plus `tag:bluefin-pilot` in the `ipPool` target |
 | Separate secrets | pilot vault `bluefin-pilot` created 2026-11-09; items added as each secret is generated |
