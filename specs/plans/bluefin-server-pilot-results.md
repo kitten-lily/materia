@@ -10,8 +10,8 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 
 | Phase | Status | Evidence |
 | --- | --- | --- |
-| 0 — Baseline, release, recovery | **in progress** (steps 1, 2, 3, 5 pass; 4 procedures written, its checks run in Phase 1) | below |
-| 1 — Local control plane + worker | not started | |
+| 0 — Baseline, release, recovery | **pass** (step 4's two checks ran in Phase 1, 2026-11-20) | below |
+| 1 — Local control plane + worker | **pass** 2026-11-20 | below |
 | 2 — Host VPN + cross-site networking | not started | |
 | 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
 | 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
@@ -223,7 +223,7 @@ so that run was discarded and redone from fresh variables.)
 This also covers the Phase 1 item "Secure Boot under the SMM build" from the
 first UEFI test.
 
-### Step 4: recovery procedures — written; checks pending
+### Step 4: recovery procedures — pass (checks ran in Phase 1, see "Phase 1 step 6")
 
 Procedures and restore inputs:
 [bluefin-server-pilot-recovery.md](bluefin-server-pilot-recovery.md).
@@ -287,6 +287,53 @@ ephemeral, pre-approved, `tag:bluefin-pilot` only) and stored in the
 tailscale-auth-key --field key` (exit 0, one 61-character line starting
 `tskey-auth-`; value not printed). **Phase 0 operator prerequisites are
 complete.**
+
+## Phase 1 — 2026-11-20
+
+Design: [bluefin-server-pilot-phase1.md](bluefin-server-pilot-phase1.md).
+Tooling: `mise bluefin:pilot:render`, `mise bluefin:pilot:vm`. Fixtures:
+`provisioning/bluefin/fixtures/`. Release v26.11.2506, both VMs on melog
+under SMM Secure Boot OVMF, control plane `10.77.0.10`, worker `10.77.0.11`
+on the loopback-bound QEMU multicast segment.
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| 1 Render | pass | butane 0.29.0 `--strict` exit 0 for both; control plane 6.3 KB, worker 2.4 KB |
+| 2 Install + first boot | pass | both: unattended `sysinstall=success 0`; `bootctl`: `Secure Boot: enabled (user)`; `/usr` = `/dev/mapper/usr` erofs; sysexts merged (cp: kubeadm, homelab, argo-workflows, mcp, kubestellar; worker: kubeadm, homelab); `systemctl --failed` empty; both sysupdate timers `masked`; `passwd -S root` = `P`; no kured DaemonSet |
+| 3 Init, join, dataplane | pass | cp `Ready` 61 s after first boot; worker `Ready` 61 s after its first boot (threshold 20 min); InternalIPs `10.77.0.10`/`.11`; join log `got a join token … endpoint=10.77.0.10:6443`; `ciliumnodes` and `cilium-dbg node list` show only `10.77.0.x`; pod↔pod across nodes both ways, Service-by-name backed only by the other node's pod both ways, `kubernetes.default` → `10.96.0.1` from both; `cilium-dbg status` OK; `/readyz` ok |
+| 4 Components, storage | pass | applier `all enabled components applied`; 39 pods, none failing; `local-path` default; PVC fixture on the worker sha256 `3326f462…668b` = expected, unchanged after both worker reboots |
+| 4b Add-on access | pass, 13/13 | Gateway `10.77.0.240` (pool); TLS for argo/mcp/kubestellar verifies against `homelab-ca`; port 80 → `301 https://`; Argo 401 / 200 with `kubectl create token`; MCP 401 / read OK with `mcp-client`, tool list read-only, write refused and no object created; Console `/auth/github` 401 / 3xx with `kc_auth` cookie; Console login not in the journal |
+| 5 Reboots | pass | worker 105 s and 111 s to both `Ready`; control plane 32 s and 27 s (threshold 10 min); node UIDs unchanged; no failed units; fixture checksum unchanged. One CoreDNS replica needed ~3 min to pass readiness after the last control-plane reboot (inside the 10-minute pod threshold) |
+| 6a Console, no network | pass | both NICs link down via QMP `set_link` (`no-carrier`, SSH timed out); root logged in on tty1 with the vault password (`uid=0(root)`); links restored, both nodes `Ready` 12 s later |
+| 6b Reinstall worker, keep data | pass | node deleted (K1), OS disk reinstalled from the installer with enrolled firmware (L3, `--reinstall`), worker rejoined and `Ready` 158 s after the reinstall began with a new node UID; data disk xfs UUID `0b47be81…` and fixture sha256 `22b92180…` unchanged; root password applied on the fresh disk's first boot |
+
+Defects found and fixed during the run (all in the pilot tooling, none
+upstream):
+
+- **Root password hash with a trailing newline.** `openssl passwd -6` ends
+  its output with `\n`; upstream requires a crypt(5) hash with none. Root
+  stayed locked (`!unprovisioned`), so console login failed, and sshd (no
+  PAM) also refused the key for the locked account. The credential applies
+  only on an installed disk's first boot, so the control plane was
+  reinstalled. `render` now strips the newline and checks the `$6$` prefix.
+- **SSH offered the agent's keys first.** The workstation agent's four
+  security keys used up sshd's attempts before the pilot key. The pilot ssh
+  config (`~/.cache/bluefin-pilot/secrets/ssh_config`) sets
+  `IdentitiesOnly yes` and `IdentityAgent none`.
+- **PVC fixture used `nodeName`.** With `WaitForFirstConsumer` the PVC binds
+  only after the scheduler picks a node; `nodeName` bypasses the scheduler, so
+  it stayed `Pending`. The fixture uses a `nodeSelector`.
+- **`install` assumed fresh firmware.** A reinstall over enrolled firmware
+  has no enrollment reset; `vm install --reinstall` skips that stage.
+
+Observations to follow up:
+
+- The worker takes ~5× longer than the control plane to reboot (105–111 s
+  vs 21–22 s to a new boot). Not a failure; look at its shutdown journal
+  before Phase 5's timing thresholds.
+- The secrets added to the `bluefin-pilot` vault: `ssh-root`,
+  `root-console-password`, `join-passphrase` (alongside
+  `tailscale-auth-key`).
 
 ## Findings
 
