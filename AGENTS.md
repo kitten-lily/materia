@@ -233,6 +233,15 @@ components/
     db-dumps.volume              # systemd-db-dumps: <name>.sql/.counts.pre/.counts.post/.done (root, 0700/0600)
     db-dump-trigger.service.gotmpl # systemctl restart of every dump unit + healthchecks.io db-dump-<host> pings
     db-dump.timer.gotmpl         # dbDumpOnCalendar, default 23:30, before restic's 00:00 run
+  sqlite-dump/                   # nightly consistent SQLite copies on flutterina (Pangolin, Beszel), the db-dump counterpart (#195)
+    MANIFEST.toml                # no Secrets, NoRestart, Stopped+Oneshot dumps, static timer
+    dump.cjs                     # `dump`: VACUUM INTO from a read-only connection, integrity_check, counts, .done with sha256s; `check`: verify a restored copy
+    sqlite-dump-pangolin.container.gotmpl # pinned Pangolin image (Node + better-sqlite3), Network=none, systemd-pangolin-config by name (no Requires= on the app)
+    sqlite-dump-beszel.container.gotmpl   # same image, systemd-beszel-data: data.db only (auxiliary.db is just _logs)
+    sqlite-dumps.volume          # systemd-sqlite-dumps: <name>.sqlite/.counts/.done (root, 0700/0600)
+    sqlite-dump-trigger.service.gotmpl # systemctl restart of both dump units + healthchecks.io db-dump-<host> pings
+    sqlite-dump.timer.gotmpl     # sqliteDumpOnCalendar, default 23:30
+    test/compat.bash             # dump + check on a WAL fixture; sqlite-dump-compat.yml runs it after every Pangolin bump
 images/
   restic-backup/
     Dockerfile                   # scratch + static restic + static openssh + wrapper

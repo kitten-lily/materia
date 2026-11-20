@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Verify each components/db-dump quadlet uses the same Image= pin as the database server it dumps (#201)"
+#MISE description="Verify each components/db-dump quadlet uses the same Image= pin as the database server it dumps (#201), and each components/sqlite-dump quadlet the Pangolin app's pin (#195)"
 
 # A dump must run the server's own image (client and server versions match).
 # Renovate bumps both lines in one PR, but a hand edit or a split package
@@ -40,5 +40,24 @@ for d in "${dumps[@]}"; do
   fi
 done
 
+# sqlite-dump (#195): the tool image is Pangolin's (Node + better-sqlite3),
+# whatever database a unit copies, so the pairing is fixed.
+app=components/pangolin/app.container.gotmpl
+sqlite=(components/sqlite-dump/*.container.gotmpl)
+if (( ${#sqlite[@]} )); then
+  ai=$(image_of "$app")
+  [[ -n $ai ]] || { err "no Image= in $app"; bad=1; }
+  for d in "${sqlite[@]}"; do
+    name=$(basename "$d" .container.gotmpl)
+    di=$(image_of "$d")
+    if [[ -n $ai && $di != "$ai" ]]; then
+      err "$name: Image= differs from pangolin app"
+      echo "  $d: $di"
+      echo "  $app: $ai"
+      bad=1
+    fi
+  done
+fi
+
 (( bad == 0 )) || exit 1
-echo "OK — ${#dumps[@]} db-dump quadlets match their servers"
+echo "OK — ${#dumps[@]} db-dump quadlets match their servers, ${#sqlite[@]} sqlite-dump quadlets match the pangolin app"

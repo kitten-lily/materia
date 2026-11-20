@@ -1,0 +1,4 @@
+[Volume]
+# Nightly consistent SQLite copies of flutterina's databases (#195). restic
+# backs up every podman named volume, so this one goes off-host with no
+# restic change. Root-owned: the dump runs as root in the Pangolin image.

@@ -1,5 +1,5 @@
 [Hosts.flutterina]
-Components = ["pangolin", "beszel-hub"]
+Components = ["pangolin", "beszel-hub", "sqlite-dump"]
 Roles = ["base", "tunneled", "tailnet"]
 
 # Flatcar's btrfs OEM partitions are noise in beszel's storage pools.

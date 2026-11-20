@@ -1,0 +1,30 @@
+[Unit]
+Description=Consistent copy of the Beszel SQLite database
+# Ordering only: a dump must never start or stop the app (stopping app takes
+# the whole edge down via Requires=). A missing DB fails the dump, and the
+# trigger reports it.
+After=beszel-hub.service
+
+[Container]
+ContainerName=sqlite-dump-beszel
+# Same pin as components/pangolin/app.container.gotmpl (check:db-dump-images
+# enforces it), so Renovate bumps both in one PR. It is the tool image: Node +
+# better-sqlite3. sqlite-dump-compat.yml rechecks it on every bump.
+Image=docker.io/fosrl/pangolin:ee-1.26.0@sha256:c65b8b4656b3336cea3f2647fc20da955764cd18103c51b2ea6164bbb054e0de
+Network=none
+# By podman volume name, not beszel-data.volume: a .volume reference would add a
+# Requires= on the app component's volume unit. Read-write: a read-only SQLite
+# connection still uses the WAL index (-shm), and creates -wal/-shm if absent.
+Volume=systemd-beszel-data:/src:z
+Volume=sqlite-dumps.volume:/dumps:z
+Volume={{ m_dataDir "sqlite-dump" }}/dump.cjs:/dump.cjs:ro,z
+Environment=NODE_PATH=/app/node_modules
+Entrypoint=node
+Exec=/dump.cjs dump beszel /src/data.db
+
+[Service]
+# Oneshot pattern copied from db-dump (BUG-004, #31). Never started by
+# materia (Stopped = true); only sqlite-dump-trigger.service restarts it.
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=15min

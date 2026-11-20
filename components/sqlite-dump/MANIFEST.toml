@@ -1,0 +1,31 @@
+# sqlite-dump: nightly consistent copies of flutterina's SQLite databases
+# (Pangolin, Beszel) into a named volume that restic carries off-host (#195).
+# The SQLite counterpart of bow's db-dump. Plan:
+# specs/plans/issue-195-flutterina-sqlite-dumps.md. No Secrets.
+
+[Settings]
+# Same reason as restic-backup and db-dump (BUG-004): materia's default
+# restart of a changed .container expects the unit to end up active, which a
+# oneshot dump isn't. Changes take effect at the next 23:30 run.
+NoRestart = true
+
+[Defaults]
+sqliteDumpOnCalendar = "*-*-* 23:30:00"
+
+[[Services]]
+Service = "sqlite-dump-pangolin.service"
+Stopped = true
+Oneshot = true
+
+[[Services]]
+Service = "sqlite-dump-beszel.service"
+Stopped = true
+Oneshot = true
+
+[[Services]]
+Service = "sqlite-dump-trigger.service"
+Stopped = true
+
+[[Services]]
+Service = "sqlite-dump.timer"
+Static = true

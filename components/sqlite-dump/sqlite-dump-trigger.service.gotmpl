@@ -1,0 +1,15 @@
+[Unit]
+Description=Run every SQLite dump (restart workaround for RemainAfterExit, see BUG-004)
+# A Persistent=true catch-up run at boot must not ping before DNS works.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# healthchecks.io check db-dump-<host> (same slug convention as bow's
+# db-dump): /start, then success or /fail. Pings never fail the job.
+ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null {{ .hcPingURL }}/db-dump-{{ m_facts "host.hostname" }}/start
+# restart (not start) re-runs a oneshot that is still active from last
+# night, waits for each to finish, and exits non-zero if any fails.
+ExecStart=/usr/bin/systemctl restart sqlite-dump-pangolin.service sqlite-dump-beszel.service
+ExecStopPost=-/usr/bin/bash -c 'url="{{ .hcPingURL }}/db-dump-{{ m_facts "host.hostname" }}"; [ "$$EXIT_STATUS" = "0" ] || url="$$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "$$url"'
