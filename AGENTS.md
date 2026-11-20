@@ -217,10 +217,11 @@ components/
     usb-drive-boot.service       # WantedBy=multi-user.target; ConditionPathExists on the label, starts the unlock unit for a drive attached at boot
     mnt-usb.mount                # pulled in by the unlock service; Options=nofail (see gotchas)
   silentsuite/                   # SilentSuite E2E calendar/contacts/tasks sync server + Postgres 16 sidecar (standalone, bow-only, #192)
-    MANIFEST.toml                # Secrets: silentsuiteDbPassword, silentsuiteDbIni, silentsuiteBootstrapToken, silentsuiteRegistrationToken (from `mise silentsuite:init-secrets`)
-    silentsuite.container.gotmpl # server, newt-net, no PublishPort, TRUSTED_PROXY_IPS=10.89.0.0/16, strict is_etebase healthcheck; reg token behind {{ if exists }}
+    MANIFEST.toml                # Secrets: silentsuiteDbPassword, silentsuiteDbIni, silentsuiteBootstrapToken, silentsuiteRegistrationToken (from `mise silentsuite:init-secrets`; the bootstrap token is removed after --close, --bootstrap re-adds it)
+    silentsuite.container.gotmpl # server, newt-net, no PublishPort, TRUSTED_PROXY_IPS=10.89.0.0/16, CORS app.silentsuite.io only, strict is_etebase healthcheck; both tokens behind {{ if exists }}
+    healthcheck.py               # the HealthCmd: exit 0 only on exactly 200 from is_etebase (mounted; in RestartedBy)
     silentsuite-postgres.container.gotmpl # postgres 16.16-alpine (upstream's tested major), default PGDATA
-    etebase-server.ini.gotmpl    # allowed_hosts silentsuite.<baseDomain> + localhost; NO password (merged from the silentsuiteDbIni secret)
+    etebase-server.ini.gotmpl    # allowed_hosts silentsuite.<baseDomain> + localhost; NEVER a password: the silentsuiteDbIni secret supplies it, and this file is read after it, so it would win
     silentsuite-data.volume      # /data: secret.txt (Django SECRET_KEY), media, static (etebase UID 100 via copy-up)
     silentsuite-db.volume        # Postgres data
   db-dump/                       # nightly logical DB dumps into a named volume restic carries off-host (bow-only, #194)

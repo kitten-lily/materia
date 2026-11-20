@@ -85,7 +85,9 @@
       // minimumReleaseAge: Renovate has no reliable release timestamps for
       // GHCR images, and without one it can hold the update forever; the
       // release gate already covers the "tag before release" race.
-      // Take `mise db:backup --target core@bow` before merging. The regex
+      // Take `mise db:backup --target core@bow` before merging (the nightly
+      // db-dump, #194, is a fallback if that was forgotten, not a
+      // replacement). The regex
       // accepts vX.Y.Z-beta, vX.Y.Z-beta.N and a future plain vX.Y.Z (a
       // mandatory -beta would silently match nothing then, as jellyfin's
       // scheme change did), and ignores the selfhost-<sha>/bare-<sha> tags.

@@ -382,7 +382,8 @@ Built per `issue-192-silentsuite-component.md`. Live on bow at
 ## Open questions / unverified
 
 - iOS requirement (blocking, user decision).
-- `/data` ownership under rootful podman (check on bow's first start).
+- ~~`/data` ownership under rootful podman~~: resolved on deploy
+  (2026-11-18): `/data` is 100:101, the etebase user, via copy-up.
 - Backup prerequisite (see Proposed component).
 - Audit lineage: none found (2026-11-17). EteSync's two NLnet NGI0 PET
   grants (iOS app 2019, Etebase protocol redesign 2020) mention no audit,
