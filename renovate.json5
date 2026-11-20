@@ -81,7 +81,8 @@
       // BEFORE their GitHub release is published (v0.5.21-beta did), and the
       // official installer refuses unpublished releases. So: never automerge,
       // and merge only when the silentsuite-release check is green (published
-      // release whose server-image.json indexDigest = the pin). No
+      // release whose server-image.json indexDigest = the pin). The check is
+      // advisory: nothing blocks merging a red one, so look before merging. No
       // minimumReleaseAge: Renovate has no reliable release timestamps for
       // GHCR images, and without one it can hold the update forever; the
       // release gate already covers the "tag before release" race.

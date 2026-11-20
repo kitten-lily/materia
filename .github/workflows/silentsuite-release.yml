@@ -2,7 +2,9 @@ name: silentsuite-release
 
 # The SilentSuite server pin must be a published GitHub release whose
 # server-image.json indexDigest equals the pinned digest (#192). Renovate
-# never automerges this image (renovate.json5); this check is the gate.
+# never automerges this image (renovate.json5). The check is ADVISORY: main
+# has no ruleset requiring it (#204, option A), so a red check on a Renovate
+# PR means "do not merge" and only the person merging enforces that.
 on:
   push:
     branches: [main]
