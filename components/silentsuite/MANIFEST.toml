@@ -3,16 +3,18 @@
 # test results: specs/plans/silentsuite-investigation.md.
 #
 # Secrets MUST stay above the first table header (TOML scoping gotcha).
-# Written by `mise silentsuite:init-secrets`. silentsuiteRegistrationToken
-# only exists after `--close`; until then materia skips it (no attribute, no
-# secret) and the quadlet's `exists` guard leaves it out.
+# Written by `mise silentsuite:init-secrets`. Both tokens are optional, and
+# the quadlet's `exists` guards leave out whichever is absent (materia then
+# creates no secret for it): silentsuiteRegistrationToken exists only after
+# `--close`; silentsuiteBootstrapToken is removed once signups are closed and
+# comes back only with `--bootstrap` (#202).
 Secrets = ["silentsuiteDbPassword", "silentsuiteDbIni", "silentsuiteBootstrapToken", "silentsuiteRegistrationToken"]
 
 [Defaults]
 
 [[Services]]
 Service = "silentsuite.service"
-RestartedBy = ["silentsuite.container", "etebase-server.ini"]
+RestartedBy = ["silentsuite.container", "etebase-server.ini", "healthcheck.py"]
 
 [[Services]]
 Service = "silentsuite-postgres.service"

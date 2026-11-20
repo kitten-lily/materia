@@ -16,19 +16,34 @@ Network=newt-net
 Volume=silentsuite-data.volume:/data:Z
 Volume={{ m_dataDir "silentsuite" }}/etebase-server.ini:/etc/etebase-server/etebase-server.ini:ro,Z
 Volume={{ m_dataDir "silentsuite" }}/healthcheck.py:/healthcheck.py:ro,Z
-# The DB password, as an ini fragment merged over the file above. Hand-written
+# The DB password, as an ini fragment. The server reads
+# [ETEBASE_EASY_CONFIG_PATH, ./etebase-server.ini, /etc/etebase-server/...]
+# and later files win, so the templated ini above wins on any key both set:
+# this fragment supplies only `password`, and the templated ini must never set
+# it (a `password =` there would silently override the vault). Hand-written
 # rather than secretMount: the default mode 0444 is what the non-root etebase
 # user needs to read it.
 Secret=materia-silentsuiteDbIni,type=mount,target=/run/secrets/db.ini
 Environment=ETEBASE_EASY_CONFIG_PATH=/run/secrets/db.ini
-# The proxy peer is tailscale-gateway on newt-net, whose IP changes: trust
-# podman's named-network pool so the server sees the real scheme (no HTTPS
-# redirect loop) and client IP. Any newt-net container could set these
-# headers; they are all ours.
+# The proxy peer is tailscale-gateway on newt-net, whose IP changes, so this
+# trusts podman's whole named-network pool: the server then sees the real
+# scheme (no HTTPS redirect loop) and client IP. That trust reaches further
+# than newt-net: the gateway forwards raw TCP, so any tailnet peer the policy
+# grants :3735 can send its own X-Forwarded-For/-Proto. Impact: the logged
+# client IP and scheme. Keep the tailnet grant for :3735 to tag:server only.
 Environment=TRUSTED_PROXY_IPS=10.89.0.0/16
+# Browser origins allowed to call the API with credentials. Upstream's
+# default also allows previewapp.silentsuite.io and http://localhost:3000/3001
+# (dev). Only the hosted web app is used; native clients don't need CORS.
+Environment=CORS_ALLOWED_ORIGINS=https://app.silentsuite.io
 Environment=ETEBASE_DISABLE_DJANGO_ADMIN=true
 # The first signup must pass ?bootstrap_token=... while no account exists.
+# Inert once an account exists and signups are closed, so it is removed from
+# the vault after --close (#202) and only re-added by
+# `mise silentsuite:init-secrets --bootstrap` for a re-bootstrap.
+{{- if exists "silentsuiteBootstrapToken" }}
 {{ secretEnv "silentsuiteBootstrapToken" "ETEBASE_BOOTSTRAP_ADMIN_TOKEN" }}
+{{- end }}
 # Added by `mise silentsuite:init-secrets --close`: every later signup then
 # needs a header no client can send, which closes signups.
 {{- if exists "silentsuiteRegistrationToken" }}
