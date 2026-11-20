@@ -52,13 +52,14 @@ ssh -p 23 \
   -o StrictHostKeyChecking=yes \
   "${_sub_user}@${_server}" install-ssh-key < "$_tmpdir/id_ed25519.pub"
 
-# Inject the private key straight into the vault via `sops --set`, not a
+# Inject the private key straight into the vault via `sops set`, not a
 # manual copy-paste into `sops edit`. A multi-line private key pasted by
 # hand into an interactive editor is exactly the kind of thing that picks
 # up CRLF/whitespace corruption from terminal reflow (BUG-003: a key that
 # passed permission checks but failed "error in libcrypto" on load).
 # `jq -Rs .` JSON-encodes the raw key bytes exactly (embedded \n escapes,
-# no reflow); `sops --set` decrypts, sets, and re-encrypts in place.
+# no reflow); `sops set --value-stdin` decrypts, sets, and re-encrypts in
+# place, reading the value from stdin so it never appears in ps (#203).
 #
 # Guarantee a trailing newline: OpenSSH's ssh_config IdentityFile loader
 # fails with "error in libcrypto" on an ed25519 key whose final line
@@ -71,12 +72,11 @@ ssh -p 23 \
 if [[ $(tail -c 1 "$_tmpdir/id_ed25519" | wc -l) -eq 0 ]]; then
   printf '\n' >> "$_tmpdir/id_ed25519"
 fi
-_key_json=$(jq -Rs . < "$_tmpdir/id_ed25519")
-sops --set "[\"components\"][\"restic-backup\"][\"storageBoxSshKey\"] ${_key_json}" "$_vault"
+jq -Rs . < "$_tmpdir/id_ed25519" | sops set --value-stdin "$_vault" '["components"]["restic-backup"]["storageBoxSshKey"]'
 
 _repository="sftp://${_sub_user}@${_server}:23/restic"
-_repo_json=$(jq -Rn --arg v "$_repository" '$v')
-sops --set "[\"components\"][\"restic-backup\"][\"resticRepository\"] ${_repo_json}" "$_vault"
+# Not secret, but the same stdin pattern as every other vault write.
+jq -Rn --arg v "$_repository" '$v' | sops set --value-stdin "$_vault" '["components"]["restic-backup"]["resticRepository"]'
 
 gum style --foreground 2 "==> key installed for ${_sub_user} and written to $_vault:"
 gum style --foreground 2 "    components.restic-backup.storageBoxSshKey"

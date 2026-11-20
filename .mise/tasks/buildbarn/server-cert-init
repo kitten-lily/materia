@@ -42,8 +42,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
   -subj "/CN=${_hostname}" \
   -addext "subjectAltName=DNS:${_hostname}"
 
-_key_json=$(jq -Rs . <"$_tmpdir/server.key")
-sops --set "[\"components\"][\"buildbarn\"][\"serverKeyPem\"] ${_key_json}" "$_vault"
+# On sops' stdin, never as an argument: ps shows argv (#203).
+jq -Rs . <"$_tmpdir/server.key" | sops set --value-stdin "$_vault" '["components"]["buildbarn"]["serverKeyPem"]'
 
 cp "$_tmpdir/server.crt" "$_cert_dir/server.crt"
 

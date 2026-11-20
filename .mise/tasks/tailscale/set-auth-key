@@ -54,7 +54,8 @@ export SOPS_AGE_KEY
 # The suffix is part of the stored value: secretEnv cannot append it, and an
 # OAuth secret without ephemeral=false registers an ephemeral node, which is
 # deleted when offline and comes back with a new tailnet IP.
-jq -Rn --arg s "${_secret}?ephemeral=false&preauthorized=true" '$s' \
+# printf is a builtin, so the secret reaches jq on stdin, not argv (#203).
+printf %s "${_secret}?ephemeral=false&preauthorized=true" | jq -Rs . \
   | sops set --value-stdin "$_vault" '["globals"]["tailscaleAuthKey"]'
 unset _secret
 
