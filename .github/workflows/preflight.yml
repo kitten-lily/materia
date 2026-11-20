@@ -67,3 +67,15 @@ jobs:
           echo
           echo "fix locally: mise check:known-hosts --fix   (then commit)"
           exit 1
+
+  db-dump-image-parity:
+    name: db-dump image pins match their servers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Each db-dump quadlet must run its server's exact Image= (#201). Same
+      # file as `mise check:db-dump-images`, run directly (no mise in CI).
+      - name: db-dump image parity
+        run: bash .mise/tasks/check/db-dump-images

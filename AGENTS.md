@@ -258,7 +258,7 @@ mise.toml                       # pinned toolchain (age, sops, fnox, hcloud, but
 fnox.toml                       # fnox secret injection (Proton Pass provider)
 .sops.yaml                      # SOPS creation rules (age recipient)
 renovate.json5                  # Renovate config (image + plugin updates)
-.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, db/restore-test, silentsuite/init-secrets, clean)
+.mise/tasks/                    # mise file tasks (ign, server/new, server/adopt-render, hz/*, ipxe/*, bench/*, tailscale/set-auth-key, usb-drive/enroll, db/backup, db/restore-test, check/known-hosts, check/db-dump-images, silentsuite/init-secrets, clean)
 ```
 
 ## Multi-server model

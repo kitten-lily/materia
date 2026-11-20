@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Verify each components/db-dump quadlet uses the same Image= pin as the database server it dumps (#201)"
+
+# A dump must run the server's own image (client and server versions match).
+# Renovate bumps both lines in one PR, but a hand edit or a split package
+# rule can separate them. The pairing comes from each dump quadlet's own
+# After=<server>.service line, so there is no hand-kept map. Plain bash, grep
+# and sed: preflight CI runs this file directly, without mise.
+
+set -euo pipefail
+shopt -s nullglob
+
+gha=${GITHUB_ACTIONS:-}
+err() { if [[ -n $gha ]]; then echo "::error::$*"; else echo "error: $*" >&2; fi; }
+
+image_of() { sed -n 's/^Image=//p' "$1" | head -1; }
+
+dumps=(components/db-dump/db-dump-*.container.gotmpl)
+(( ${#dumps[@]} )) || { err "no components/db-dump/db-dump-*.container.gotmpl found (run from the repo root)"; exit 1; }
+
+bad=0
+for d in "${dumps[@]}"; do
+  name=$(basename "$d" .container.gotmpl)
+  units=$(sed -n 's/^After=//p' "$d" | tr ' ' '\n' | grep -v '^network-online\.target$' | grep -v '^$' || true)
+  servers=()
+  for u in $units; do
+    [[ $u == *.service ]] || continue
+    for q in components/*/"${u%.service}".container.gotmpl; do servers+=("$q"); done
+  done
+  if (( ${#servers[@]} == 0 )); then err "$name: no server unit in After= with a components/*/<unit>.container.gotmpl"; bad=1; continue; fi
+  if (( ${#servers[@]} > 1 )); then err "$name: After= matches more than one server quadlet: ${servers[*]}"; bad=1; continue; fi
+  server=$(basename "${servers[0]}" .container.gotmpl)
+  di=$(image_of "$d"); si=$(image_of "${servers[0]}")
+  if [[ -z $di || -z $si ]]; then err "$name: missing Image= (dump '${di}', $server '${si}')"; bad=1; continue; fi
+  if [[ $di != "$si" ]]; then
+    err "$name: Image= differs from $server"
+    echo "  $d: $di"
+    echo "  ${servers[0]}: $si"
+    bad=1; continue
+  fi
+done
+
+(( bad == 0 )) || exit 1
+echo "OK — ${#dumps[@]} db-dump quadlets match their servers"
