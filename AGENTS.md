@@ -770,12 +770,17 @@ shell; see the `env = false` gotcha.
   stay running.
 - **Upgrading materia on a running host is a state migration, not an image-line
   edit.** The two `.bu` templates and `server:adopt-render` pin
-  `ghcr.io/stryan/materia:v0.8.0@sha256:…` (#105, #173), and Renovate updates
-  all three, but Butane/adopt-render changes never reach an already-installed
-  quadlet. Run `mise materia:sync-image --target <user@host>` first, inspect
-  the v0.8 plan, then repeat with `--apply`; it reads the repository pin,
-  rejects `Unknown`/`Disable` plans, updates the live quadlet and verifies the
-  new run, digest and failed-unit set.
+  `ghcr.io/stryan/materia:v0.8.1@sha256:…` (#105, #173, #181), and Renovate
+  updates all three, but Butane/adopt-render changes never reach an
+  already-installed quadlet. Run `mise materia:sync-image --target <user@host>`
+  first, inspect the plan, then repeat with `--apply`; it reads the repository
+  pin, rejects `Unknown`/`Disable` plans, updates the live quadlet and verifies
+  the new run, digest and failed-unit set. **A Renovate bump of the pin
+  upgrades nothing by itself:** #181 moved the pins to v0.8.1 on 2026-11-07,
+  and all three hosts were still on v0.8.0 until they were synced by hand on
+  2026-11-20 (bow, krytis-runner, flutterina; every plan "No changes made").
+  After merging a materia bump, run the task on each host. krytis-runner's
+  target is `root@krytis-runner`.
 
   Two independent migration traps made a direct v0.7 → v0.8 edit destructive
   (#173, BUG-015/BUG-016). First, v0.7's
