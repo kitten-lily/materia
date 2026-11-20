@@ -1,0 +1,37 @@
+name: sqlite-dump-compat
+
+# dump.cjs (#195) runs on the pinned Pangolin image and needs its Node and
+# better-sqlite3. Pangolin digest/patch/minor bumps automerge without waiting
+# for checks (renovate.json5, ignoreTests), so this reports AFTER such a
+# merge: a red run on main means tonight's flutterina SQLite dumps will fail
+# (the db-dump-flutterina /fail ping is the second alert).
+on:
+  push:
+    branches: [main]
+    paths:
+      - components/pangolin/app.container.gotmpl
+      - components/sqlite-dump/**
+      - .github/workflows/sqlite-dump-compat.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - components/pangolin/app.container.gotmpl
+      - components/sqlite-dump/**
+      - .github/workflows/sqlite-dump-compat.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-dump-compat:
+    name: dump.cjs works on the pinned Pangolin image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run the compatibility check
+        run: |
+          image=$(sed -n 's/^Image=//p' components/pangolin/app.container.gotmpl | head -1)
+          bash components/sqlite-dump/test/compat.bash components/sqlite-dump/dump.cjs "$image"
