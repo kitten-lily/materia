@@ -24,7 +24,6 @@ components:
     silentsuite:
         silentsuiteDbPassword: ENC[AES256_GCM,data:VKWM4Obopkc5tXzu8N3cPyZXT6TvLqeUSd/ugm/cmURr+Nms8GOXdg==,iv:qFyFDuKl9rzT4OzXW8fld9WYSRRDBuTFNmYqKBIGSo0=,tag:u6TF7o6loivUZUTvIbFPoA==,type:str]
         silentsuiteDbIni: ENC[AES256_GCM,data:dH78BxDTAeN3I9aAnUSM6csCNX9Qe7WkYPuCasxmGC4VnSGWIUJ0U9Ep4ezIPp36KYbf5/wNrNEfgnl8SXVE,iv:+sw4PNO9dP8UGlyUJNMnAwf05OFiJATKb5FbqS2g5/s=,tag:N9cLZj+aRYQjV4Mwf8oIfA==,type:str]
-        silentsuiteBootstrapToken: ENC[AES256_GCM,data:a/FoUJ6zPVM2FGHjqmOLhHhbOWwIdyTd3szdBZ2aIiTm7INPdVnV1w==,iv:vC/sIaS/o114SUguYe4JatgM0GtHLhIHzDoSAZBWwZI=,tag:N0vPSlFhj1P41nNuuyuE3g==,type:str]
         silentsuiteRegistrationToken: ENC[AES256_GCM,data:V4ar1mfPUzCdOz/qirPWSYlUrYjJdFIZjgZNxPHqgzPiohyducjXeA==,iv:sE5nM/fodfk+YzB4KsXI1uOznkgIcKbY2fF6Oc45V7U=,tag:s9eX/iiPslKDZ0lK0skLXA==,type:str]
 sops:
     age:
@@ -37,7 +36,7 @@ sops:
             TjkDZIzUsCpO9n4JHkqZB24KMiRsVJcVLrr3sxUVyU1vlcFgtE3yzA==
             -----END AGE ENCRYPTED FILE-----
           recipient: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
-    lastmodified: "2026-11-18T13:43:41Z"
-    mac: ENC[AES256_GCM,data:MaWi+7BjHWwUOg+k9cP2xEVDxsCBWr3cm69MxXO70nFGhlANS2BC0twDW5ISRr0Aj3Qqld8jXbgRc8qAsMWfNoG1vtOObL902orYtAQXnhTexH0JMVf2bJMisSjonZfEFCo4vmX27COkeCCrFyoXlNVtMowd/AtBYUsxUBdBByI=,iv:KWjFXOn3lx+6NTJPAcPNVzTnqgOe9L6Jc5+5fCBZv1o=,tag:CYckobj7bjyF93SC4bblTA==,type:str]
+    lastmodified: "2026-11-20T10:41:46Z"
+    mac: ENC[AES256_GCM,data:xtgGjZoaiHRcfN3CblWrUAccRddKqlxgvCgiDgz6GZxL5vxKkHpTxvmW1IEd1bP5GhjhACJRTbVElxYSpnSId6Vik3rxBZXLQCfP/I7CmTYgwBeqFVfof+mwhLl0K96XwLqRMGOxEdXh4RhPiQunQ6VYpPHCOicH8eZ+mmjezGw=,iv:CBpp974uBzgXwh3yGqD1g2s8dEgGCZBaubNsQDCC+PM=,tag:E7T8ipZXCaWdctPzwhMDvw==,type:str]
     unencrypted_suffix: _unencrypted
     version: 3.13.2
