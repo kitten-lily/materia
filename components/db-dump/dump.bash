@@ -7,8 +7,10 @@
 #   <name>.sql          the dump (application database only)
 #   <name>.counts.post  row counts after the dump
 #   <name>.done         UTC completion time, written last
-# Everything is written as .tmp and renamed only on success, so a failed or
-# killed run leaves the previous set untouched. A restore is valid when
+# Everything is written as .tmp and renamed only on success, so a run that
+# fails before the renames leaves the previous set untouched. <name>.done is
+# removed before the first rename, so a run killed during the renames leaves
+# no .done and a mixed set never looks fresh (#199). A restore is valid when
 # <name>.done is fresh and every restored table count lies in [pre, post].
 set -euo pipefail
 : "${DB_KIND:?}" "${DB_HOST:?}" "${DB_NAME:?}" "${DB_USER:?}"
@@ -16,7 +18,10 @@ set -euo pipefail
 out=/dumps/$DB_NAME
 umask 077
 chmod 0700 /dumps
-# A run killed with SIGKILL can't clean up after itself; the next one does.
+# A killed run can't clean up after itself, and that includes SIGTERM: bash
+# is PID 1 here (the entrypoints exec it) and ignores SIGTERM, so `podman
+# stop` kills it after 10 s and the EXIT trap may not run. The next run cleans
+# up; restores never read .tmp files.
 rm -f "$out".*.tmp
 trap 'rm -f "$out".*.tmp' EXIT
 
@@ -53,6 +58,7 @@ dump > "$out.sql.tmp"
 counts > "$out.counts.post.tmp"
 [[ -s $out.sql.tmp ]] || { echo "empty dump" >&2; exit 1; }
 
+rm -f "$out.done"
 mv "$out.counts.pre.tmp" "$out.counts.pre"
 mv "$out.sql.tmp" "$out.sql"
 mv "$out.counts.post.tmp" "$out.counts.post"
