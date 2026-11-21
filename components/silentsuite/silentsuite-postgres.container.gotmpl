@@ -9,7 +9,7 @@ ContainerName=silentsuite-postgres
 # default PGDATA /var/lib/postgresql/data, so no override (unlike 18).
 # Take `mise db:backup` before changing this image; a major bump needs a
 # pg_dump/pg_upgrade path (BUG-010).
-Image=docker.io/library/postgres:16.16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
+Image=docker.io/library/postgres:16.16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
 Network=newt-net
 Environment=POSTGRES_DB=silentsuite
 Environment=POSTGRES_USER=silentsuite
