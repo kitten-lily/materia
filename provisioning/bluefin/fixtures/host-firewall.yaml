@@ -18,6 +18,13 @@ spec:
     # NIC names differ per machine (enp0s5 on one VM, enp0s4 on the other):
     # "en+" is Cilium's prefix wildcard, so every node's NIC is covered.
     devices: "tailscale0,en+"
+    # Socket load-balancing only in the host namespace (Phase 3, F10). With
+    # kube-proxy replacement Cilium otherwise resolves ClusterIPs at
+    # connect() inside pods and skips per-packet Service translation there,
+    # so a packet a pod FORWARDS to a ClusterIP (the Tailscale operator's L4
+    # proxy DNATs tailnet traffic to its Service) is never translated and
+    # goes nowhere. Tailscale's operator docs require this for Cilium KPR.
+    bpf-lb-sock-hostns-only: "true"
     # Enforcing since Phase 2 step 3c. Audit mode is node-wide: it also turns
     # every pod-level deny policy into audit-only.
     policy-audit-mode: "false"
