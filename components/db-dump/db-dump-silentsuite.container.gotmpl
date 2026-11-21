@@ -7,7 +7,7 @@ After=silentsuite-postgres.service
 [Container]
 ContainerName=db-dump-silentsuite
 # Same pin as silentsuite-postgres.container.gotmpl, so Renovate bumps both.
-Image=docker.io/library/postgres:16.16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
+Image=docker.io/library/postgres:16.16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
 Network=newt-net
 # Shared label (:z): both dump units write this volume at the same time.
 Volume=db-dumps.volume:/dumps:z
