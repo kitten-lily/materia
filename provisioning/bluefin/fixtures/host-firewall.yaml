@@ -1,0 +1,125 @@
+# Bluefin pilot (#179) Phase 2: Cilium host firewall.
+# Design: specs/plans/bluefin-server-pilot-phase2.md ("Cilium configuration").
+#
+# The homelab applier re-renders cilium-config on every boot with
+# enable-host-firewall 'false' and devices '', so the override lives in a
+# CiliumNodeConfig, which the applier never touches. Agents load it only when
+# recreated: `kubectl -n kube-system rollout restart ds/cilium`.
+# Phase 2 started with policy-audit-mode "true" (step 3b) and enforces from 3c.
+apiVersion: cilium.io/v2
+kind: CiliumNodeConfig
+metadata:
+  name: pilot-host-firewall
+  namespace: kube-system
+spec:
+  nodeSelector: {}
+  defaults:
+    enable-host-firewall: "true"
+    # NIC names differ per machine (enp0s5 on one VM, enp0s4 on the other):
+    # "en+" is Cilium's prefix wildcard, so every node's NIC is covered.
+    devices: "tailscale0,en+"
+    # Enforcing since Phase 2 step 3c. Audit mode is node-wide: it also turns
+    # every pod-level deny policy into audit-only.
+    policy-audit-mode: "false"
+---
+# Ingress to the pilot hosts. Each identity gets explicit ports; everything
+# else to the host is dropped once the policy is enforced.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: pilot-host
+spec:
+  # Every node's host endpoint. A hostname selector matched nothing: on this
+  # cluster the host endpoint carries only reserved:host, none of the Node's
+  # labels (cilium-dbg endpoint get <host EP>), so the policy selected no host
+  # and enforcement stayed Disabled. Every node here is a pilot node.
+  nodeSelector: {}
+  ingress:
+  # The node itself.
+  - fromEntities: [host]
+  # Other nodes: API, kubelet, health, VXLAN, MetalLB memberlist (7946), and
+  # Cilium's node health pings. The control plane's host carries the
+  # kube-apiserver identity, not remote-node (seen in audit mode on the
+  # worker), so it is listed too; without it every rule here missed it.
+  - fromEntities: [remote-node, kube-apiserver]
+    toPorts:
+    - ports:
+      - {port: "6443", protocol: TCP}
+      - {port: "10250", protocol: TCP}
+      - {port: "4240", protocol: TCP}
+      - {port: "8472", protocol: UDP}
+      - {port: "7946", protocol: TCP}
+      - {port: "7946", protocol: UDP}
+  - fromEntities: [remote-node, kube-apiserver]
+    icmps:
+    - fields:
+      - {type: 8, family: IPv4}
+  # Cilium health endpoints.
+  - fromEntities: [health]
+    toPorts:
+    - ports:
+      - {port: "4240", protocol: TCP}
+  # Pods: the API Service's endpoint is the control plane's host address;
+  # metrics-server scrapes kubelets.
+  - fromEntities: [cluster]
+    toPorts:
+    - ports:
+      - {port: "6443", protocol: TCP}
+      - {port: "10250", protocol: TCP}
+      # Hubble Relay reaches each agent's Hubble server via the hubble-peer
+      # Service (host network, 4244). Missed by the audit window because the
+      # relay's connection predated it; it crash-looped once enforced.
+      - {port: "4244", protocol: TCP}
+  # Not admitted: the host-network metrics/health ports (cilium 9879,
+  # cilium-envoy 9964, operator 9234/9963, etcd 2381, MetalLB 9120,
+  # controller-manager 10257, scheduler 10259). Nothing scrapes them while
+  # homelab monitoring is off; enabling it must add the scrape ports here.
+  # Replies from pods to connections the host opened (Cilium's Envoy L7 proxy
+  # connects to backends from the node's cilium_host address). The host
+  # firewall did not treat these as replies and denied them, so every L7
+  # policy test got 503 from Envoy. Limited to the kernel's ephemeral range
+  # (net.ipv4.ip_local_port_range 32768-60999 on both nodes): the only host
+  # listeners in it are cilium-agent and containerd on 127.0.0.1 and
+  # tailscaled's peer API on the tailnet address.
+  - fromEntities: [cluster]
+    toPorts:
+    - ports:
+      - {port: "32768", endPort: 60999, protocol: TCP}
+  # Pods pinging the node (seen in audit mode during the connectivity test).
+  - fromEntities: [cluster]
+    icmps:
+    - fields:
+      - {type: 8, family: IPv4}
+  # The tailnet: SSH, API, join (a joining node is not yet a remote-node),
+  # kubelet.
+  - fromCIDR: [100.64.0.0/10]
+    toPorts:
+    - ports:
+      - {port: "22", protocol: TCP}
+      - {port: "6443", protocol: TCP}
+      - {port: "6447", protocol: TCP}
+      - {port: "10250", protocol: TCP}
+  - fromCIDR: [100.64.0.0/10]
+    icmps:
+    - fields:
+      - {type: 8, family: IPv4}
+  # ICMP errors from anywhere: destination unreachable (type 3, which carries
+  # "fragmentation needed" for path-MTU discovery) and time exceeded (11).
+  # Drop monitoring showed type-3 replies from outside denied at the host;
+  # blocking them breaks PMTU over Tailscale's 1280-byte MTU.
+  - fromEntities: [all]
+    icmps:
+    - fields:
+      - {type: 3, family: IPv4}
+      - {type: 11, family: IPv4}
+  # Tailscale's outer transport, for direct peer connections.
+  - fromEntities: [world]
+    toPorts:
+    - ports:
+      - {port: "41641", protocol: UDP}
+  # Test-harness exception: the workstation's SSH port forward arrives from
+  # the QEMU user-net host. On the Hetzner node SSH is tailnet-only.
+  - fromCIDR: [10.0.2.2/32]
+    toPorts:
+    - ports:
+      - {port: "22", protocol: TCP}

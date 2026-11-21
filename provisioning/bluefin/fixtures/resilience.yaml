@@ -1,0 +1,121 @@
+# Bluefin pilot (#179) Phase 2 step 4: resilience fixture.
+# - blob-server (worker) serves a deterministic 64 MiB stream on :9000 behind
+#   Service "blob"; blob-client (control plane) fetches it through the Service
+#   every 15 s and logs "<UTC time> ok|FAIL <sha256 prefix> <seconds>".
+#   Expected sha256: head -c 67108864 /dev/zero | sha256sum -> 3b6a07d0d404fab4…
+# - longlived-server (worker) accepts one connection on :9100 and logs every
+#   line it receives; longlived-client (control plane) keeps one connection
+#   open, sending a timestamp every 5 s, and logs when the connection drops.
+# The servers are Deployments, so pods evicted from an unreachable worker
+# (default 300 s toleration) are recreated once it returns; as bare pods
+# they were lost for good in the first whole-NIC run.
+# Image pinned by digest (same agnhost as the other fixtures).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pilot-resilience
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blob-server
+  namespace: pilot-resilience
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: blob-server}
+  template:
+    metadata:
+      labels: {app: blob-server}
+    spec:
+        nodeSelector: {kubernetes.io/hostname: bluefin-pilot-node}
+        containers:
+        - name: server
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+          command: ["/bin/sh", "-c"]
+          args:
+          - |
+            head -c 67108864 /dev/zero > /tmp/blob
+            while true; do nc -l -p 9000 < /tmp/blob; done
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blob
+  namespace: pilot-resilience
+spec:
+  selector: {app: blob-server}
+  ports: [{port: 9000, targetPort: 9000}]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: blob-client
+  namespace: pilot-resilience
+spec:
+  nodeSelector: {kubernetes.io/hostname: bluefin-pilot-cp}
+  containers:
+  - name: client
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      while true; do
+        t0=$(date +%s)
+        s=$(timeout 120 nc -w 5 blob.pilot-resilience.svc.cluster.local 9000 | sha256sum | cut -c1-16)
+        t=$(( $(date +%s) - t0 ))
+        if [ "$s" = 3b6a07d0d404fab4 ]; then r=ok; else r=FAIL; fi
+        echo "$(date -u +%FT%TZ) $r $s ${t}s"
+        sleep 15
+      done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: longlived-server
+  namespace: pilot-resilience
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: longlived-server}
+  template:
+    metadata:
+      labels: {app: longlived-server}
+    spec:
+        nodeSelector: {kubernetes.io/hostname: bluefin-pilot-node}
+        containers:
+        - name: server
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+          command: ["/bin/sh", "-c"]
+          args:
+          - |
+            while true; do echo "$(date -u +%FT%TZ) listening"; nc -l -p 9100; echo "$(date -u +%FT%TZ) connection closed"; done
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: longlived
+  namespace: pilot-resilience
+spec:
+  selector: {app: longlived-server}
+  ports: [{port: 9100, targetPort: 9100}]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: longlived-client
+  namespace: pilot-resilience
+spec:
+  nodeSelector: {kubernetes.io/hostname: bluefin-pilot-cp}
+  containers:
+  - name: client
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      while true; do
+        echo "$(date -u +%FT%TZ) connecting"
+        while true; do date -u +%FT%TZ; sleep 5; done | nc longlived.pilot-resilience.svc.cluster.local 9100
+        echo "$(date -u +%FT%TZ) connection lost"
+        sleep 5
+      done
