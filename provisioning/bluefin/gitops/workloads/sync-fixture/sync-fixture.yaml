@@ -1,0 +1,42 @@
+# Bluefin pilot (#179) Phase 3 step 1: GitOps sync fixture.
+# A ConfigMap whose "revision" is changed by a pushed commit, and a consumer
+# that logs the revision it was started with. Reloader (a homelab component)
+# rolls the Deployment when the ConfigMap changes, so a push shows up as a new
+# pod logging the new revision. Image pinned by digest (same agnhost as the
+# other pilot fixtures).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sync-fixture
+data:
+  revision: "1"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sync-fixture
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sync-fixture}
+  template:
+    metadata:
+      labels: {app: sync-fixture}
+    spec:
+      containers:
+      - name: echo
+        image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "$(date -u +%FT%TZ) started with revision $REVISION"
+          while true; do sleep 3600; done
+        env:
+        - name: REVISION
+          valueFrom:
+            configMapKeyRef: {name: sync-fixture, key: revision}
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 32Mi}

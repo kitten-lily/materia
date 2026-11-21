@@ -1,0 +1,24 @@
+# Bluefin pilot (#179) Phase 3 step 1: the GitOps sync fixture.
+# The template's root Application "homelab-root" syncs this directory
+# (HOMELAB_ARGOCD_ROOT_PATH=provisioning/bluefin/gitops/apps). Design:
+# specs/plans/bluefin-server-pilot-phase3.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-sync-fixture
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kitten-lily/materia.git
+    targetRevision: main
+    path: provisioning/bluefin/gitops/workloads/sync-fixture
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pilot-sync
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
