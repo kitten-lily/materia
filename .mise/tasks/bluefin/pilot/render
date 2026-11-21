@@ -4,6 +4,8 @@
 #USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
 #USAGE flag "--topology <topology>" default="lan" help="lan (Phase 1: shared segment, static IPs) or tailnet (Phase 2: Tailscale only)"
 #USAGE flag "--tailnet-suffix <suffix>" help="tailnet MagicDNS suffix (default: from this workstation's tailscale status)"
+#USAGE flag "--data-fs-uuid <uuid>" help="ext4 UUID of pilot_data/data (tailnet control plane only)"
+#USAGE flag "--backup-fs-uuid <uuid>" help="ext4 UUID of the backup disk (tailnet worker only)"
 
 # Design: specs/plans/bluefin-server-pilot-phase1.md (lan) and
 # specs/plans/bluefin-server-pilot-phase2.md (tailnet). Output goes to
@@ -22,6 +24,20 @@ esac
 
 _topology="${usage_topology:-lan}"
 case "$_topology" in lan|tailnet) ;; *) echo "error: --topology must be lan or tailnet" >&2; exit 1 ;; esac
+
+_uuid_pattern='^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$'
+if [[ -v usage_data_fs_uuid ]]; then
+  [[ "$_topology" == tailnet && "$_role" == control-plane ]] \
+    || { echo "error: --data-fs-uuid requires --topology tailnet and --vm bluefin-pilot-cp" >&2; exit 1; }
+  [[ "$usage_data_fs_uuid" =~ $_uuid_pattern ]] \
+    || { echo "error: --data-fs-uuid must be an ext4 filesystem UUID" >&2; exit 1; }
+fi
+if [[ -v usage_backup_fs_uuid ]]; then
+  [[ "$_topology" == tailnet && "$_role" == node ]] \
+    || { echo "error: --backup-fs-uuid requires --topology tailnet and --vm bluefin-pilot-node" >&2; exit 1; }
+  [[ "$usage_backup_fs_uuid" =~ $_uuid_pattern ]] \
+    || { echo "error: --backup-fs-uuid must be an ext4 filesystem UUID" >&2; exit 1; }
+fi
 
 _rel=v26.11.2506
 _cache="${HOME}/.cache/bluefin-pilot"
@@ -186,6 +202,62 @@ Enabled=true
     PILOT_DROPIN_PATH="/etc/systemd/system/${u}.service.d/50-pilot.conf" \
       yq eval -i '.storage.files += [{"path": strenv(PILOT_DROPIN_PATH), "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_DROPIN)}}]' "$_bu"
   done
+
+  _disk=
+  if [[ -v usage_data_fs_uuid ]]; then
+    _sysext_dir="${_cache}/sysext"
+    export PILOT_LVM_IMAGE="pilot-lvm2_${_rel#v}.raw"
+    _image="${_sysext_dir}/${PILOT_LVM_IMAGE}"
+    [[ -f "$_image" ]] \
+      || { echo "error: $_image missing; run 'mise bluefin:pilot:lvm2-sysext'" >&2; exit 1; }
+    # EROFS superblock magic 0xe0f5e1e2, little-endian at byte offset 1024.
+    if [[ "$(od -An -v -tx1 -j 1024 -N 4 "$_image" | tr -d '[:space:]')" != e2e1f5e0 ]]; then
+      echo "error: $_image is not an EROFS image; rebuild with 'mise bluefin:pilot:lvm2-sysext'" >&2
+      exit 1
+    fi
+    _butane+=(--files-dir "$_sysext_dir")
+    export PILOT_LVM_ACTIVATE
+    PILOT_LVM_ACTIVATE="$(cat "${_repo}/provisioning/bluefin/lvm2/pilot-lvm-activate.service")"
+    yq eval -i '
+      .storage.files += [
+        {"path": ("/var/lib/extensions/" + strenv(PILOT_LVM_IMAGE)), "mode": 420, "overwrite": true, "contents": {"local": strenv(PILOT_LVM_IMAGE)}},
+        {"path": "/etc/systemd/system/pilot-lvm-activate.service", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_LVM_ACTIVATE)}}
+      ]
+      | .storage.directories += [
+        {"path": "/var/lib/pilot-lvm2/backup", "mode": 448},
+        {"path": "/var/lib/pilot-lvm2/archive", "mode": 448}
+      ]
+    ' "$_bu"
+    _disk=data
+    _disk_dir="${_repo}/provisioning/bluefin/lvm2"
+    _disk_uuid="${usage_data_fs_uuid,,}"
+  elif [[ -v usage_backup_fs_uuid ]]; then
+    _disk=backup
+    _disk_dir="${_repo}/provisioning/bluefin/backup"
+    _disk_uuid="${usage_backup_fs_uuid,,}"
+  fi
+
+  if [[ -n "$_disk" ]]; then
+    # Use storage paths and an explicit wants symlink for the escaped unit name.
+    # strenv passes the literal backslash through YAML serialization, where a
+    # double-quoted \x2d would otherwise be decoded as a hyphen.
+    _mount_unit='var-lib-pilot\x2d'"${_disk}.mount"
+    export PILOT_MOUNT_PATH PILOT_MOUNT_LINK PILOT_MOUNT_CONTENTS PILOT_DISK_DROPIN_PATH PILOT_DISK_DROPIN
+    PILOT_MOUNT_PATH="/etc/systemd/system/${_mount_unit}"
+    PILOT_MOUNT_LINK="/etc/systemd/system/multi-user.target.wants/${_mount_unit}"
+    PILOT_MOUNT_CONTENTS="$(sed "s|@FS_UUID@|${_disk_uuid}|g" "${_disk_dir}/${_mount_unit}")"
+    PILOT_DISK_DROPIN_PATH="/etc/systemd/system/kubelet.service.d/60-pilot-${_disk}.conf"
+    PILOT_DISK_DROPIN="$(cat "${_disk_dir}/kubelet-pilot-${_disk}.conf")"
+    yq eval -i '
+      .storage.files += [
+        {"path": strenv(PILOT_MOUNT_PATH), "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_MOUNT_CONTENTS)}},
+        {"path": strenv(PILOT_DISK_DROPIN_PATH), "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_DISK_DROPIN)}}
+      ]
+      | .storage.links += [
+        {"path": strenv(PILOT_MOUNT_LINK), "target": strenv(PILOT_MOUNT_PATH), "overwrite": true}
+      ]
+    ' "$_bu"
+  fi
 fi
 
 # The placeholder key line must be gone and no other key may be present.
@@ -197,7 +269,7 @@ fi
 # systemd-firstboot needs a crypt(5) hash with no trailing newline
 # (upstream tpm2-credential-sealing.md, "Node access"); openssl passwd adds one.
 tr -d '\n' < "$_hash" > "${_out}/passwd.hashed-password.root"
-[[ "$(head -c3 "${_out}/passwd.hashed-password.root")" == '$6$' ]] \
+[[ "$(head -c3 "${_out}/passwd.hashed-password.root")" == "\$6\$" ]] \
   || { echo "error: root password hash is not a SHA-512 crypt hash" >&2; exit 1; }
 
 # The node's join passphrase, once the control plane has shown it and it is in
