@@ -319,6 +319,12 @@ cost of the workaround.
    against pilot endpoints; the Phase 2 denial tests still pass with
    `hostNetwork` in use. Confirm SSH works over the tailnet and that the
    provider console still reaches a login with `tailscaled` stopped.
+   **Comparison arm:** run an Envoy Gateway edge on the same node through
+   the same checks and through steps 4 and 5, plus one tailnet-only route
+   via the Tailscale operator and a run with the control plane stopped.
+   See [bluefin-edge-ingress-investigation.md](bluefin-edge-ingress-investigation.md),
+   which also defines an optional variant with the control plane on a
+   separate disposable cloud node.
 4. Restore the isolated edge state into a fresh pod on a clean volume, then
    test two restarts while Kubernetes traffic is active: (a) kill the app
    container's process, so the kubelet restarts that container only while the
