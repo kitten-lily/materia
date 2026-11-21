@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+#MISE description="Verify a BuildStream artifact round trip and negative checks against the pilot Buildbarn (#179)"
+#USAGE flag "--host <fqdn>" help="Pilot Buildbarn tailnet FQDN"
+#USAGE flag "--cert <path>" help="Pinned Buildbarn server certificate PEM"
+#USAGE flag "--push-token-file <path>" help="File containing a bare push JWT"
+#USAGE flag "--pull-token-file <path>" help="File containing a bare pull JWT"
+#USAGE flag "--image <ref>" help="BuildStream 2 image (default: BST2_IMAGE from $KRYTIS_REPO/mise.toml)"
+#USAGE flag "--blob-mib <mib>" default="64" help="Size of the round-trip file in MiB"
+#USAGE flag "--oversize-mib <mib>" default="150" help="Size of the oversize file in MiB"
+
+# Proves a checksum-matched artifact round trip and tests authentication,
+# authorization, the single-blob size limit and TLS hostname verification.
+# Mint bare JWTs with the pilot private key in the bluefin-pilot vault item
+# buildbarn-jwt-private-key. Sign {role: push|pull, iat} (iat in Unix seconds)
+# with EdDSA, following .mise/tasks/buildbarn/mint-token's signing procedure.
+# Podman pulls a large BuildStream image on the first run. Set KRYTIS_REPO to
+# a krytis checkout to default --image to its pinned BST2_IMAGE.
+
+# Phase checks are dispatched by name in run_phase.
+# shellcheck disable=SC2329
+set -euo pipefail
+umask 077
+
+die() {
+    printf 'ERROR %s\n' "$1" >&2
+    exit 2
+}
+
+host=${usage_host:?--host is required}
+[[ "$host" =~ ^[[:alnum:]-]+(\.[[:alnum:]-]+)+$ ]] || die '--host must be an FQDN'
+host_label=${host%%.*}
+blob_mib=${usage_blob_mib:-64}
+oversize_mib=${usage_oversize_mib:-150}
+for size in "$blob_mib" "$oversize_mib"; do
+    [[ "$size" =~ ^[1-9][0-9]{0,11}$ ]] || die 'sizes must be positive integers in MiB (up to 12 digits)'
+done
+
+cert=$(realpath -e -- "${usage_cert:?--cert is required}" 2>/dev/null) || die 'cannot resolve --cert'
+push_token=$(realpath -e -- "${usage_push_token_file:?--push-token-file is required}" 2>/dev/null) ||
+    die 'cannot resolve --push-token-file'
+pull_token=$(realpath -e -- "${usage_pull_token_file:?--pull-token-file is required}" 2>/dev/null) ||
+    die 'cannot resolve --pull-token-file'
+for input in "$cert" "$push_token" "$pull_token"; do
+    [[ -f "$input" && -r "$input" && -s "$input" ]] || die 'certificate and token files must be readable and nonempty'
+done
+
+image=${usage_image:-}
+krytis_mise=${KRYTIS_REPO:+$KRYTIS_REPO/mise.toml}
+if [[ -z "$image" && -n "$krytis_mise" && -r "$krytis_mise" ]]; then
+    image=$(sed -nE 's/^[[:space:]]*BST2_IMAGE[[:space:]]*=[[:space:]]*\{[[:space:]]*default[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$krytis_mise" 2>/dev/null)
+fi
+[[ -n "$image" && "$image" != -* ]] || die 'provide a BuildStream image ref with --image'
+command -v podman >/dev/null || die 'podman is required'
+printf 'INFO target %s.<tailnet>\n' "$host_label"
+
+workdir=$(mktemp -d 2>/dev/null) || die 'cannot create workspace'
+# KEEP_WORKDIR=1 keeps the workspace and its raw BuildStream logs for
+# debugging (they contain the tailnet name: do not paste them anywhere).
+if [[ -n ${KEEP_WORKDIR:-} ]]; then
+    trap 'printf "INFO workspace kept\n" >&2' EXIT
+else
+    trap 'rm -rf -- "$workdir" 2>/dev/null' EXIT
+fi
+cd -- "$workdir" 2>/dev/null || die 'cannot enter workspace'
+mkdir elements 2>/dev/null
+cat > project.conf <<'EOF'
+name: pilot-roundtrip
+min-version: '2.0'
+element-path: elements
+EOF
+
+create_element() {
+    local name=$1 dir=$2 mib=$3
+    mkdir -- "$dir"
+    head -c "$((mib * 1024 * 1024))" /dev/urandom > "$dir/payload"
+    sha256sum < "$dir/payload" > "$name.sha256"
+    cat > "elements/$name.bst" <<EOF
+kind: import
+sources:
+- kind: local
+  path: $dir/
+EOF
+}
+
+create_element blob files "$blob_mib"
+create_element oversize oversize-files "$oversize_mib"
+create_element pullonly pullonly-files 1
+
+configure() {
+    local phase=$1 endpoint=$2 push=$3 token=$4
+    cache="$workdir/cache-$phase"
+    mkdir -- "$cache" || return
+    token_mount=()
+    if [[ -n "$token" ]]; then
+        token_mount=(-v "$token:/tokens/token:ro,z")
+    fi
+    {
+        printf 'artifacts:\n  servers:\n'
+        local port type
+        for port in 7981 7982; do
+            type=index
+            [[ "$port" == 7981 ]] || type=storage
+            printf '  - url: https://%s:%s\n    type: %s\n    push: %s\n' "$endpoint" "$port" "$type" "$push"
+            printf '    auth:\n      server-cert: /certs/server.crt\n'
+            if [[ -n "$token" ]]; then
+                printf '      access-token: /tokens/token\n'
+            fi
+        done
+    } > buildstream.conf
+}
+
+run_bst() {
+    local log=$1
+    shift
+    # Import elements stage files without executing sandboxed commands, so
+    # the container gets /dev/fuse without --privileged.
+    podman run --rm --network=host --security-opt label=disable --device /dev/fuse \
+        -v "$workdir:/src:z" -v "$cache:/root/.cache/buildstream:z" \
+        -v "$cert:/certs/server.crt:ro,z" "${token_mount[@]}" \
+        -w /src "$image" bst --config /src/buildstream.conf "$@" > "$log" 2>&1
+}
+
+# Podman's own errors and failures to invoke bst (125-127) must never count as
+# rejection. BuildStream 2 itself exits non-zero outside 1-124 too (seen: a
+# pull whose remotes all failed to initialise), so any other non-zero counts.
+bst_rejected() {
+    local status=0
+    run_bst "$@" || status=$?
+    ((status != 0 && (status < 125 || status > 127)))
+}
+
+check_push() {
+    configure push "$host" true "$push_token" || return
+    reason='build failed'
+    run_bst push-build.log build blob.bst || return
+    reason='artifact push failed'
+    run_bst push.log artifact push blob.bst || return
+    reason='pushed artifact was unavailable to the push token in a fresh cache'
+    configure push-verify "$host" false "$push_token" &&
+        run_bst push-verify.log artifact pull blob.bst &&
+        run_bst push-checkout.log artifact checkout blob.bst --directory /src/push-out &&
+        [[ -f push-out/payload ]]
+}
+
+check_pull() {
+    configure pull "$host" false "$pull_token" || return
+    reason='artifact pull failed'
+    run_bst pull.log artifact pull blob.bst || return
+    reason='artifact checkout failed'
+    run_bst checkout.log artifact checkout blob.bst --directory /src/out || return
+    reason='checked-out payload is missing or has a different SHA-256'
+    local actual
+    [[ -f out/payload ]] && actual=$(sha256sum < out/payload) &&
+        [[ "$actual" == "$(<blob.sha256)" ]]
+}
+
+check_no_token() {
+    configure no-token "$host" false '' || return
+    reason='anonymous pull was not rejected as UNAUTHENTICATED'
+    # BuildStream 2 drops a remote that fails to initialise and then reports
+    # "No artifact caches available"; the server's verdict is in the warning.
+    bst_rejected no-token.log artifact pull blob.bst &&
+        grep -q 'UNAUTHENTICATED' no-token.log
+}
+
+check_absent() {
+    local element=$1
+    reason="could not configure a fresh cache for the $element lookup"
+    configure "$element-verify" "$host" false "$pull_token" || return
+    reason="$element pull did not report a cache miss or BuildStream failure"
+    if run_bst "$element-pull.log" artifact pull "$element.bst"; then
+        # From an empty local cache, BuildStream 2 reports an artifact the
+        # server does not have as "SKIPPED Pull" (Pull Queue: skipped 1).
+        grep -Eq 'SKIPPED Pull|not found|not cached|cache miss' "$element-pull.log" || return
+    else
+        [[ $? -lt 125 ]] || return
+    fi
+    reason='known artifact could not be pulled after the negative lookup'
+    # The same credentials and remotes must still serve the positive artifact.
+    run_bst "$element-control.log" artifact pull blob.bst &&
+        run_bst "$element-control-checkout.log" artifact checkout blob.bst --directory "/src/$element-control-out" &&
+        [[ -f "$element-control-out/payload" ]]
+}
+
+check_pull_only() {
+    configure pull-only "$host" true "$pull_token" || return
+    reason='could not build the pull-only fixture'
+    run_bst pull-only-build.log build pullonly.bst || :
+    run_bst pull-only-local.log artifact checkout pullonly.bst --directory /src/pullonly-local || return
+    run_bst pull-only-push.log artifact push pullonly.bst || :
+    # gRPC status 7 is PERMISSION_DENIED (BuildStream prints only the number).
+    if grep -Eq 'Failed to upload blob [0-9a-f]+: 7$' pull-only-push.log; then
+        printf 'INFO pull-token-cannot-write upload refused with PERMISSION_DENIED (7)\n'
+    fi
+    check_absent pullonly
+}
+
+check_oversize() {
+    configure oversize "$host" true "$push_token" || return
+    run_bst oversize-build.log build oversize.bst || :
+    run_bst oversize-push.log artifact push oversize.bst || :
+    # gRPC status 3 is INVALID_ARGUMENT, Buildbarn's per-blob ceiling refusal.
+    if grep -Eq 'Failed to upload blob [0-9a-f]+: 3$|INVALID_ARGUMENT' \
+        oversize-build.log oversize-push.log; then
+        printf 'INFO oversize upload refused with INVALID_ARGUMENT (3)\n'
+    else
+        printf 'INFO oversize no size-related error found in BuildStream output\n'
+    fi
+    reason='could not build the oversize fixture'
+    run_bst oversize-local.log artifact checkout oversize.bst --directory /src/oversize-local || return
+    check_absent oversize
+}
+
+check_wrong_hostname() {
+    reason='could not resolve the target to an IPv4 address'
+    local ip
+    ip=$(getent hosts "$host" 2>/dev/null |
+        awk '$1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !seen++ {print $1}') || :
+    if [[ -z "$ip" ]]; then
+        ip=$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR == 1 {print $1}') || return
+    fi
+    [[ -n "$ip" ]] || return
+    reason='could not configure the IP-based remote'
+    configure wrong-hostname "$ip" false "$pull_token" || return
+    reason='IP-based pull did not fail with a TLS hostname verification error'
+    bst_rejected wrong-hostname.log artifact pull blob.bst &&
+        grep -Eiq 'hostname mismatch|peer name.*not in|no match found for server name|certificate.*(does not match|not valid for|IP SAN|hostname)' \
+            wrong-hostname.log
+}
+
+failed=0
+run_phase() {
+    local name=$1 check=$2 started=$SECONDS reason='could not configure phase'
+    # Only fixed diagnostics reach the terminal. Raw logs can contain the
+    # tailnet hostname and are removed with the workspace.
+    if "$check" 2>/dev/null; then
+        printf 'PASS %s\n' "$name"
+    else
+        printf 'FAIL %s: %s\n' "$name" "$reason"
+        failed=1
+    fi
+    printf 'INFO %s elapsed %ss\n' "$name" "$((SECONDS - started))"
+}
+
+run_phase push check_push
+run_phase pull check_pull
+run_phase no-token check_no_token
+run_phase pull-token-cannot-write check_pull_only
+run_phase oversize check_oversize
+run_phase wrong-hostname check_wrong_hostname
+exit "$failed"
