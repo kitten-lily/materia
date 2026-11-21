@@ -9,7 +9,7 @@ kind: ConfigMap
 metadata:
   name: sync-fixture
 data:
-  revision: "1"
+  revision: "2"
 ---
 apiVersion: apps/v1
 kind: Deployment
