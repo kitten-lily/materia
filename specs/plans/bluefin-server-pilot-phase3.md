@@ -250,7 +250,9 @@ the previous one being ready:
    policy, in audit mode first. Check the effective config on every agent
    and that nothing legitimate is dropped, then enforce. These live in etcd,
    so a reinstall loses them.
-2. Create the age key Secret in `argocd`. The key comes from the credential
+2. Create the age key Secret in `argocd`, and the Tailscale operator's
+   OAuth Secret `tailscale/operator-oauth` (keys `client_id`,
+   `client_secret`, from the vault item `tailscale-operator-oauth`). The key comes from the credential
    render put on the control plane, or from Proton Pass.
 3. Apply the KSOPS repo-server patch from a plaintext kustomization in git
    (`platform/argocd-ksops/`, no encrypted content, so it needs no KSOPS to
