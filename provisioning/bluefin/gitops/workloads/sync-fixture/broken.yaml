@@ -1,7 +1,0 @@
-# Phase 3 step 1 failure test: deliberately invalid (data must be a map).
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: sync-fixture-broken
-data:
-- not-a-map
