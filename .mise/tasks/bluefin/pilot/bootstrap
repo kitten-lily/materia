@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-#MISE description="Bootstrap a Bluefin pilot cluster for GitOps: age key, KSOPS, Argo CD tuning, root Application (#179)"
+#MISE description="Bootstrap a Bluefin pilot cluster for GitOps: Cilium host firewall, age key, KSOPS, Argo CD tuning, root Application (#179)"
 
 # Design: specs/plans/bluefin-server-pilot-phase3.md ("Bootstrap, outside
 # workload GitOps"). Idempotent; run once per new cluster and again after the
 # step 6 reinstall. Every step waits for the previous one to be ready. Runs
 # kubectl on the control plane over the harness SSH. The age key goes from the
 # bluefin-pilot vault to the API server on stdin only (never argv, never disk).
-#
-# Not here yet: the design's step 1 (the Phase 2 Cilium host-firewall objects,
-# audit then enforce); added before step 6, the first time a fresh cluster
-# needs it. The running Phase 2 cluster already has them.
+# The host firewall goes through audit before enforcement.
+# Options: --audit-seconds SECONDS (default 120), --accept-audit,
+# and --skip-firewall.
 
 set -euo pipefail
 
@@ -20,6 +19,173 @@ _ssa=(kubectl apply --server-side --force-conflicts --field-manager=pilot-bootst
 _root_repo=https://github.com/kitten-lily/materia.git
 _root_rev=main
 _root_path=provisioning/bluefin/gitops/apps
+
+_audit_seconds=120
+_accept_audit=false
+_skip_firewall=false
+while (( $# )); do
+  case "$1" in
+    --audit-seconds)
+      if [[ ! ${2:-} =~ ^[1-9][0-9]*$ ]]; then
+        echo '--audit-seconds requires a positive integer' >&2
+        exit 2
+      fi
+      _audit_seconds=$2
+      shift
+      ;;
+    --accept-audit) _accept_audit=true ;;
+    --skip-firewall) _skip_firewall=true ;;
+    *) printf 'Unknown bootstrap option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+_cilium_rollout() {
+  "${_ssh[@]}" 'kubectl -n kube-system rollout status ds/cilium --timeout=300s'
+}
+
+_cilium_exec() {
+  "${_ssh[@]}" "kubectl -n kube-system exec $1 -c cilium-agent -- ${*:2}" </dev/null
+}
+
+_verify_firewall() {
+  local audit=$1 pod status endpoint host_id inventory nodes
+  _agents=()
+  _host_ids=()
+  nodes=$("${_ssh[@]}" 'kubectl get nodes -o json' | jq -ce '[.items[].metadata.name] | sort') || return 1
+  inventory=$("${_ssh[@]}" 'kubectl -n kube-system get pods -l k8s-app=cilium -o json' |
+    jq -er --argjson nodes "$nodes" '
+      [.items[] | select(.metadata.deletionTimestamp == null)] as $pods |
+      if ($nodes | length) > 0 and ([$pods[].spec.nodeName] | sort) == $nodes
+         and all($pods[]; any(.status.conditions[]?; .type == "Ready" and .status == "True"))
+      then $pods[].metadata.name
+      else error("Expected one Ready Cilium agent on each node")
+      end') || return 1
+  mapfile -t _agents <<< "$inventory"
+
+  for pod in "${_agents[@]}"; do
+    status=$(_cilium_exec "$pod" cilium-dbg status --verbose) || return 1
+    # The fixture selects tailscale0 and the en+ prefix (the NIC name varies).
+    if ! grep -Eq '^[[:space:]]*Host firewall:[[:space:]]+Enabled[[:space:]]+\[([^]]*,[[:space:]]*)?tailscale0([[:space:]]*,[^]]*)?\]' <<< "$status" ||
+       ! grep -Eq '^[[:space:]]*Host firewall:[[:space:]]+Enabled[[:space:]]+\[([^]]*,[[:space:]]*)?en[^],[:space:]]*([[:space:]]*,[^]]*)?\]' <<< "$status" ||
+       ! grep -Eq '^[[:space:]]*Socket LB Coverage:[[:space:]]+Hostns-only[[:space:]]*$' <<< "$status"; then
+      printf '%s: unexpected firewall devices or socket LB coverage\n%s\n' "$pod" "$status" >&2
+      return 1
+    fi
+
+    # Cilium 1.20 exposes the host endpoint's realized policy in endpoint
+    # list JSON and its PolicyAuditMode option in endpoint config.
+    endpoint=$(_cilium_exec "$pod" cilium-dbg endpoint list -o json) || return 1
+    host_id=$(jq -er '
+      [.[] | select(any(.status.identity.labels[]?; . == "reserved:host"))] |
+      if length == 1 and (.[0].status.policy.realized["policy-enabled"] | IN("ingress", "both"))
+      then .[0].id | select(type == "number")
+      else error("Expected one host endpoint with ingress policy")
+      end' <<< "$endpoint") || return 1
+    status=$(_cilium_exec "$pod" cilium-dbg endpoint config "$host_id") || return 1
+    if ! grep -Eq "^[[:space:]]*PolicyAuditMode[[:space:]:=]+${audit}[[:space:]]*$" <<< "$status"; then
+      printf '%s: expected host PolicyAuditMode %s\n%s\n' "$pod" "$audit" "$status" >&2
+      return 1
+    fi
+    _host_ids+=("$host_id")
+    printf '%s: host ingress policy active, socket LB Hostns-only, audit %s\n' "$pod" "$audit"
+  done
+}
+
+# Agents report Ready before they have regenerated the host endpoint, so a
+# verification right after a restart can fail transiently: retry for ~2 min,
+# reporting only the last failure.
+_verify_firewall_settled() {
+  local audit=$1 err
+  err=$(mktemp)
+  for _ in $(seq 1 24); do
+    if _verify_firewall "$audit" 2>"$err"; then rm -f "$err"; return 0; fi
+    sleep 5
+  done
+  cat "$err" >&2; rm -f "$err"
+  return 1
+}
+
+_observe_firewall() {
+  local logs=$1 i rc verdicts failed=false audited=false
+  local -a monitors=()
+
+  echo "Observing host policy verdicts for ${_audit_seconds}s on every agent"
+  # The monitor streams over kubectl exec without a TTY. Bound the stream
+  # inside the agent so a quiet monitor also exits and returns status 124.
+  # Established connections may produce no verdicts during this window.
+  for i in "${!_agents[@]}"; do
+    _cilium_exec "${_agents[i]}" timeout "${_audit_seconds}s" cilium-dbg monitor \
+      --type policy-verdict --related-to "${_host_ids[i]}" > "$logs/$i" 2>&1 &
+    monitors+=("$!")
+  done
+
+  for i in "${!monitors[@]}"; do
+    rc=0
+    wait "${monitors[i]}" || rc=$?
+    if (( rc != 124 )); then
+      printf '%s: policy monitor exited early (status %s)\n' "${_agents[i]}" "$rc" >&2
+      cat "$logs/$i" >&2
+      failed=true
+    fi
+    if verdicts=$(grep -Ei '(^|[^[:alnum:]])(audited|action[[:space:]]+audit)([^[:alnum:]]|$)' "$logs/$i"); then
+      printf '%s: host audit verdicts\n%s\n' "${_agents[i]}" "$verdicts" >&2
+      audited=true
+    fi
+  done
+
+  if "$failed"; then return 1; fi
+  if "$audited" && ! "$_accept_audit"; then
+    echo 'Firewall remains in audit mode. Review the verdicts before retrying with --accept-audit.' >&2
+    return 1
+  fi
+}
+
+_bootstrap_firewall() (
+  local fixture="${_repo}/provisioning/bluefin/fixtures/host-firewall.yaml"
+  local specs_filter='[.[] | (.items // [.])[] | {kind, name: .metadata.name, spec}] | sort_by(.kind, .name)'
+  local desired live scratch
+  local -a _agents _host_ids
+
+  "${_ssh[@]}" 'kubectl wait --for=condition=Ready nodes --all --timeout=300s'
+  _cilium_rollout
+  desired=$(yq -o=json '.' "$fixture" | jq -cSs "$specs_filter")
+  live=$("${_ssh[@]}" 'kubectl -n kube-system get ciliumnodeconfig/pilot-host-firewall ciliumclusterwidenetworkpolicy/pilot-host --ignore-not-found -o json' |
+    jq -cSs "$specs_filter")
+  if [[ "$live" == "$desired" ]] && _verify_firewall_settled Disabled; then
+    echo 'Cilium host firewall already enforces the fixture; skipping audit and rollout'
+    return
+  fi
+
+  scratch=$(mktemp -d)
+  # Never leave the cluster in audit mode: once the audit fixture is applied,
+  # any failure re-applies the enforcing fixture before exiting.
+  _restore_enforcing() {
+    echo 'firewall step failed: restoring the enforcing fixture' >&2
+    "${_ssh[@]}" "${_ssa[*]} -f -" < "$fixture" >&2 || true
+    "${_ssh[@]}" 'kubectl -n kube-system rollout restart ds/cilium' >&2 || true
+    _cilium_rollout >&2 || true
+  }
+  trap 'rm -rf -- "$scratch"' EXIT
+  sed 's/^\([[:space:]]*policy-audit-mode: \)"false"$/\1"true"/' "$fixture" > "$scratch/audit.yaml"
+  "${_ssh[@]}" "${_ssa[*]} -f -" < "$scratch/audit.yaml"
+  "${_ssh[@]}" 'kubectl -n kube-system rollout restart ds/cilium'
+  _cilium_rollout || { _restore_enforcing; return 1; }
+  _verify_firewall_settled Enabled || { _restore_enforcing; return 1; }
+  _observe_firewall "$scratch" || { _restore_enforcing; return 1; }
+
+  "${_ssh[@]}" "${_ssa[*]} -f -" < "$fixture"
+  "${_ssh[@]}" 'kubectl -n kube-system rollout restart ds/cilium'
+  _cilium_rollout
+  _verify_firewall_settled Disabled
+)
+
+echo "== Cilium host firewall"
+if "$_skip_firewall"; then
+  echo 'skipped: --skip-firewall'
+else
+  _bootstrap_firewall
+fi
 
 echo "== age key Secret (argocd/pilot-sops-age)"
 pass-cli item view --vault-name bluefin-pilot --item-title sops-age-key --field note \
