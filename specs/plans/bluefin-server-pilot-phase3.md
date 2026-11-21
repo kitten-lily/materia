@@ -255,7 +255,11 @@ the previous one being ready:
 3. Apply the KSOPS repo-server patch from a plaintext kustomization in git
    (`platform/argocd-ksops/`, no encrypted content, so it needs no KSOPS to
    render). Wait for the repo-server rollout.
-4. Set `HOMELAB_ARGOCD_ROOT_*` and re-run the applier, which creates
+4. Tune polling: `argocd-cm` `timeout.reconciliation: 60s` and
+   `timeout.reconciliation.jitter: 10s`, then restart the application
+   controller. At the template's defaults a push takes up to ~7 min (step 1
+   result).
+5. Set `HOMELAB_ARGOCD_ROOT_*` and re-run the applier, which creates
    `homelab-root`.
 
 Before reinstalling a node, delete its old Tailscale device. The Phase 2
