@@ -1,0 +1,24 @@
+# Bluefin pilot (#179): MediaManager + PostgreSQL + Jellyfin and their scheduled backup (Phase 3 steps 3-5). KSOPS secrets, so server-side apply.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-media
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kitten-lily/materia.git
+    targetRevision: main
+    path: provisioning/bluefin/gitops/workloads/media
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pilot-media
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

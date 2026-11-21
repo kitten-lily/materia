@@ -1,0 +1,247 @@
+# Bluefin pilot (#179) Phase 3 step 5: backup and restore checks.
+# Apply by hand with kubectl after a scheduled backup has created a snapshot.
+# Read the PASS/FAIL results with kubectl -n pilot-media logs job/restore-check -c verify.
+# The fixture decrypts nothing itself. It uses the existing Kubernetes secrets.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restore-check
+  namespace: pilot-media
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: bluefin-pilot-cp
+      initContainers:
+      - name: restic-check
+        image: ghcr.io/kitten-lily/materia/restic-backup@sha256:21670b45e7c542be444dfec2d3d17a2379aad1ab5e26dccaa2cd1bfe48acf38e
+        command: [/usr/bin/restic]
+        args: [check, --read-data]
+        env:
+        - {name: RESTIC_REPOSITORY, value: "rest:http://rest-server.pilot-backup.svc.cluster.local:8000/pilot-media"}
+        - name: RESTIC_PASSWORD
+          valueFrom: {secretKeyRef: {name: backup, key: restic-password}}
+        - {name: RESTIC_CACHE_DIR, value: /tmp/restic-cache}
+        volumeMounts:
+        - {name: restore, mountPath: /restore}
+        - {name: tmp, mountPath: /tmp}
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 256Mi}
+      - name: restic-restore
+        image: ghcr.io/kitten-lily/materia/restic-backup@sha256:21670b45e7c542be444dfec2d3d17a2379aad1ab5e26dccaa2cd1bfe48acf38e
+        command: [/usr/bin/restic]
+        args: [restore, latest, --host, pilot-media, --target, /restore]
+        env:
+        - {name: RESTIC_REPOSITORY, value: "rest:http://rest-server.pilot-backup.svc.cluster.local:8000/pilot-media"}
+        - name: RESTIC_PASSWORD
+          valueFrom: {secretKeyRef: {name: backup, key: restic-password}}
+        - {name: RESTIC_CACHE_DIR, value: /tmp/restic-cache}
+        volumeMounts:
+        - {name: restore, mountPath: /restore}
+        - {name: tmp, mountPath: /tmp}
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 256Mi}
+      containers:
+      - name: verify
+        image: docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+        command: [/bin/bash, -c]
+        args:
+        - |
+          set -uo pipefail
+          umask 077
+          failed=0
+          fail() { printf 'FAIL %s: %s\n' "$1" "$2"; failed=1; }
+
+          video=/restore/backup/video
+          dump=/restore/backup/dumps/mediamanager
+          src=$video/Downloads/hardlink-src.mkv
+          dst=$video/Movies/hardlink-dst.mkv
+
+          if sed -E "s|^([[:xdigit:]]{64} [ *])/data/|\1$video/|" /sums/sums |
+            sha256sum --check --strict --status; then
+            echo 'PASS fixture checksums'
+          else
+            fail 'fixture checksums' 'missing file, invalid checksum list, or checksum mismatch'
+          fi
+
+          if src_hash=$(sha256sum 2>/dev/null < "$src") &&
+            dst_hash=$(sha256sum 2>/dev/null < "$dst") &&
+            [[ $src_hash == "$dst_hash" ]]; then
+            echo 'PASS hardlink contents'
+          else
+            fail 'hardlink contents' 'missing or unreadable file, or checksums differ'
+          fi
+          if [[ $src -ef $dst ]]; then
+            echo 'INFO hardlink pair shares one inode'
+          elif [[ -e $src && -e $dst ]]; then
+            echo 'INFO hardlink pair has distinct inodes'
+          else
+            echo 'INFO hardlink inode comparison unavailable'
+          fi
+
+          if [[ -s $dump.done && -f $dump.sql && -f $dump.counts.pre && -f $dump.counts.post ]]; then
+            echo 'PASS dump artifacts'
+          else
+            fail 'dump artifacts' 'expected a non-empty .done and all three dump files'
+          fi
+
+          # Root reads the restored dump, which was written with mode 0600.
+          # The temporary database server runs as postgres and accepts only socket connections.
+          pg() { psql -X -h /tmp -U postgres -v ON_ERROR_STOP=1 -At "$@"; }
+          stop_postgres() { su postgres -c 'pg_ctl -D /tmp/pgdata -m fast -w stop' >/dev/null 2>&1 || true; }
+          load_dump() {
+            su postgres -c 'initdb -D /tmp/pgdata --auth=trust' &&
+              su postgres -c 'pg_ctl -D /tmp/pgdata -l /tmp/pgdata/server.log -o "-c listen_addresses= -k /tmp" -w start' &&
+              pg -d postgres -c 'CREATE ROLE mediamanager LOGIN' &&
+              pg -d postgres -c 'CREATE DATABASE mediamanager OWNER mediamanager' &&
+              pg -d mediamanager < "$dump.sql"
+          }
+
+          counts_within_bounds() {
+            LC_ALL=C awk -F '\t' '
+              function less(a, b) {
+                return length(a) != length(b) ? length(a) < length(b) : ("x" a) < ("x" b)
+              }
+              NF != 2 || $2 !~ /^(0|[1-9][0-9]*)$/ { bad = 1; next }
+              phase == "pre"  { if ($1 in pre) bad = 1; pre[$1] = $2; next }
+              phase == "post" { if ($1 in post) bad = 1; post[$1] = $2; next }
+              {
+                table = $1
+                if (seen[table]++ || !(table in pre) || !(table in post)) {
+                  bad = 1
+                  next
+                }
+                low = pre[table]
+                high = post[table]
+                if (less(high, low)) {
+                  low = post[table]
+                  high = pre[table]
+                }
+                if (less($2, low) || less(high, $2)) bad = 1
+              }
+              END {
+                for (table in pre) if (!(table in seen)) bad = 1
+                for (table in post) if (!(table in seen)) bad = 1
+                exit bad
+              }
+            ' phase=pre "$dump.counts.pre" phase=post "$dump.counts.post" phase=restored /tmp/counts.restored
+          }
+
+          trap stop_postgres EXIT
+          if [[ -s $dump.sql ]] && load_dump >/tmp/load.log 2>&1; then
+            echo 'PASS PostgreSQL dump load'
+            if pg -d mediamanager -c "SELECT format('SELECT %L || chr(9) || count(*) FROM %I.%I;', schemaname || '.' || relname, schemaname, relname) FROM pg_stat_user_tables" |
+              pg -d mediamanager | LC_ALL=C sort >/tmp/counts.restored; then
+              if cmp -s /tmp/counts.restored "$dump.counts.post"; then
+                echo 'PASS PostgreSQL table counts (exact counts.post match)'
+              elif counts_within_bounds; then
+                echo 'PASS PostgreSQL table counts (within counts.pre and counts.post)'
+              else
+                fail 'PostgreSQL table counts' 'table set or row counts differ from the dump bounds'
+              fi
+            else
+              fail 'PostgreSQL table counts' 'could not query all restored tables'
+            fi
+
+            if marker_rows=$(pg -d mediamanager -c 'SELECT count(*) FROM public.pilot_marker' 2>/dev/null); then
+              if [[ $marker_rows == 1000 ]]; then
+                echo 'PASS public.pilot_marker row count'
+              else
+                fail 'public.pilot_marker row count' "expected 1000 rows, got $marker_rows"
+              fi
+            else
+              fail 'public.pilot_marker row count' 'could not query the restored table'
+            fi
+          else
+            if [[ -s /tmp/load.log ]]; then
+              fail 'PostgreSQL dump load' "$(tail -n 1 /tmp/load.log)"
+            else
+              fail 'PostgreSQL dump load' 'missing or empty SQL dump'
+            fi
+            fail 'PostgreSQL table counts' 'dump load failed'
+            fail 'public.pilot_marker row count' 'dump load failed'
+          fi
+
+          echo done
+          exit "$failed"
+        volumeMounts:
+        - {name: restore, mountPath: /restore, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+        - {name: fixture-sums, mountPath: /sums, readOnly: true}
+        resources:
+          requests: {cpu: 100m, memory: 512Mi}
+          limits: {memory: 512Mi}
+      volumes:
+      - name: restore
+        emptyDir: {sizeLimit: 2Gi}
+      - name: tmp
+        emptyDir: {}
+      - name: fixture-sums
+        configMap: {name: fixture-sums}
+---
+# Compare restic snapshots counts before and after this Job, between scheduled
+# backups. The dump init container fails authentication and the pod fails.
+# The restic container never starts, so the repository snapshot count stays unchanged.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backup-freshness-guard
+  namespace: pilot-media
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: dump
+        image: docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+        command: [bash, /db-dump/dump.bash]
+        env:
+        - {name: PGCONNECT_TIMEOUT, value: "10"}
+        - {name: DB_KIND, value: postgres}
+        - {name: DB_HOST, value: mediamanager-postgres}
+        - {name: DB_NAME, value: mediamanager}
+        - {name: DB_USER, value: mediamanager}
+        - name: PGPASSWORD
+          value: "deliberately-wrong"
+        volumeMounts:
+        - {name: dumps, mountPath: /dumps}
+        - {name: dump-script, mountPath: /db-dump, readOnly: true}
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {memory: 128Mi}
+      containers:
+      - name: restic
+        image: ghcr.io/kitten-lily/materia/restic-backup@sha256:21670b45e7c542be444dfec2d3d17a2379aad1ab5e26dccaa2cd1bfe48acf38e
+        env:
+        - {name: RESTIC_REPOSITORY, value: "rest:http://rest-server.pilot-backup.svc.cluster.local:8000/pilot-media"}
+        - {name: RESTIC_HOST, value: pilot-media}
+        - {name: BACKUP_PATHS, value: "/backup/dumps /backup/video /backup/jellyfin-config"}
+        - name: RESTIC_PASSWORD
+          valueFrom: {secretKeyRef: {name: backup, key: restic-password}}
+        volumeMounts:
+        - {name: dumps, mountPath: /backup/dumps, readOnly: true}
+        - {name: video, mountPath: /backup/video, readOnly: true}
+        - {name: jellyfin-config, mountPath: /backup/jellyfin-config, readOnly: true}
+        # scratch image: restic stages pack files in /tmp (production gotcha).
+        - {name: tmp, mountPath: /tmp}
+        resources:
+          requests: {cpu: 100m, memory: 256Mi}
+          limits: {memory: 256Mi}
+      volumes:
+      - name: dumps
+        persistentVolumeClaim: {claimName: dumps}
+      - name: video
+        persistentVolumeClaim: {claimName: video, readOnly: true}
+      - name: jellyfin-config
+        persistentVolumeClaim: {claimName: jellyfin-config, readOnly: true}
+      - name: dump-script
+        configMap: {name: db-dump-script}
+      - name: tmp
+        emptyDir: {sizeLimit: 1Gi}

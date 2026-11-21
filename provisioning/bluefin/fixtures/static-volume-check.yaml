@@ -1,0 +1,47 @@
+# Bluefin pilot (#179) Phase 3 step 3: static-volume checks, applied by hand
+# (like the Phase 2 fixtures), in pilot-media next to the workloads that use
+# the same claims. Needs ConfigMap fixture-sums (the LV's
+# .pilot-fixtures.sha256 with "video/" rewritten to "/data/"). Runs as UID 1000,
+# like MediaManager. Prints one PASS/FAIL line per check, then "done".
+apiVersion: v1
+kind: Pod
+metadata:
+  name: static-volume-check
+  namespace: pilot-media
+spec:
+  restartPolicy: Never
+  securityContext: {runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true}
+  containers:
+  - name: check
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+    command: [/bin/sh, -c]
+    args:
+    - |
+      r(){ if eval "$2" >/tmp/out 2>&1; then echo "PASS $1"; else echo "FAIL $1: $(tail -1 /tmp/out)"; fi; }
+      r "checksums via the rw video volume" "sha256sum -c /sums/sums"
+      r "hardlink pair is one inode" "[ \$(stat -c %i /data/Downloads/hardlink-src.mkv) = \$(stat -c %i /data/Movies/hardlink-dst.mkv) ]"
+      r "new hardlink Downloads->Movies works" "head -c 4096 /dev/urandom > /data/Downloads/probe && ln /data/Downloads/probe /data/Movies/probe && [ \$(stat -c %i /data/Downloads/probe) = \$(stat -c %i /data/Movies/probe) ] && rm /data/Downloads/probe /data/Movies/probe"
+      r "ro Movies sees the same movie" "[ \"\$(sha256sum < '/movies/Pilot Movie (2026)/Pilot Movie (2026).mkv')\" = \"\$(sha256sum < '/data/Movies/Pilot Movie (2026)/Pilot Movie (2026).mkv')\" ]"
+      r "ro TVShows sees the same episode" "[ \"\$(sha256sum < '/tvshows/Pilot Show/Season 01/Pilot Show S01E01.mkv')\" = \"\$(sha256sum < '/data/TVShows/Pilot Show/Season 01/Pilot Show S01E01.mkv')\" ]"
+      w(){ if touch "$2" 2>/tmp/err; then rm -f "$2"; echo "FAIL $1: write succeeded"; elif grep -q "Read-only file system" /tmp/err; then echo "PASS $1 ($(cat /tmp/err))"; else echo "FAIL $1: $(cat /tmp/err)"; fi; }
+      w "ro Movies refuses a write" /movies/write-probe
+      w "ro TVShows refuses a write" /tvshows/write-probe
+      grep -E " /(data|movies|tvshows) " /proc/mounts | sed 's/^/mount: /'
+      echo done
+    volumeMounts:
+    - {name: video, mountPath: /data}
+    - {name: movies, mountPath: /movies, readOnly: true}
+    - {name: tvshows, mountPath: /tvshows, readOnly: true}
+    - {name: sums, mountPath: /sums}
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 64Mi}
+  volumes:
+  - name: video
+    persistentVolumeClaim: {claimName: video}
+  - name: movies
+    persistentVolumeClaim: {claimName: movies-ro, readOnly: true}
+  - name: tvshows
+    persistentVolumeClaim: {claimName: tvshows-ro, readOnly: true}
+  - name: sums
+    configMap: {name: fixture-sums}

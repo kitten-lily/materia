@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Check that the Bluefin pilot's copy of db-dump's dump.bash matches the original (#179)"
+
+# provisioning/bluefin/gitops/workloads/media/dump.bash is a copy of
+# components/db-dump/dump.bash (kustomize cannot load files from outside the
+# kustomization directory), behind a 4-line header. A flagged pairing, like
+# known_hosts (AGENTS.md): this fails when the two drift apart.
+set -euo pipefail
+
+_repo="$(git rev-parse --show-toplevel)"
+_orig="${_repo}/components/db-dump/dump.bash"
+_copy="${_repo}/provisioning/bluefin/gitops/workloads/media/dump.bash"
+
+if tail -n +5 "$_copy" | cmp -s - "$_orig"; then
+  echo "OK — the pilot's dump.bash matches components/db-dump/dump.bash"
+else
+  echo "error: ${_copy#"${_repo}"/} differs from components/db-dump/dump.bash below its header" >&2
+  echo "fix: re-copy it, keeping the first 4 header lines" >&2
+  exit 1
+fi

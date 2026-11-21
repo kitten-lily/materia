@@ -1,0 +1,177 @@
+# Bluefin pilot (#179) Phase 3 step 3: static local volumes over the pilot
+# data LV (/var/lib/pilot-data on bluefin-pilot-cp, VG pilot_data). Design:
+# specs/plans/bluefin-server-pilot-phase3.md ("Data layout").
+#
+# - Every path is a directory that exists only inside the LV: if the LV is not
+#   mounted, kubelet fails with "path does not exist" instead of writing to
+#   the root disk. The LV root itself is never a volume.
+# - Each PV is pre-bound to exactly one claim (claimRef), so no other claim
+#   can bind a library, and Retain keeps the data if a claim is deleted.
+# - video/ is ONE read-write volume (MediaManager hardlinks Downloads into the
+#   libraries; hardlinks cannot cross mounts). Jellyfin gets read-only
+#   volumes over Movies/ and TVShows/ inside it.
+# - Ownership comes from the directories (fixtures script): no fsGroup on any
+#   consumer, or kubelet would chown the whole library recursively.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: pilot-static
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-video
+spec:
+  capacity: {storage: 10Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: video}
+  local: {path: /var/lib/pilot-data/video}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-movies-ro
+spec:
+  capacity: {storage: 10Gi}
+  accessModes: [ReadOnlyMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: movies-ro}
+  local: {path: /var/lib/pilot-data/video/Movies}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-tvshows-ro
+spec:
+  capacity: {storage: 10Gi}
+  accessModes: [ReadOnlyMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: tvshows-ro}
+  local: {path: /var/lib/pilot-data/video/TVShows}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-postgres
+spec:
+  capacity: {storage: 2Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: data-mediamanager-postgres-0}
+  local: {path: /var/lib/pilot-data/postgres}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-mediamanager-images
+spec:
+  capacity: {storage: 1Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: mediamanager-images}
+  local: {path: /var/lib/pilot-data/mediamanager-images}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-jellyfin-config
+spec:
+  capacity: {storage: 1Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: jellyfin-config}
+  local: {path: /var/lib/pilot-data/jellyfin-config}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-dumps
+spec:
+  capacity: {storage: 1Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-media, name: dumps}
+  local: {path: /var/lib/pilot-data/dumps}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-buildbarn
+spec:
+  capacity: {storage: 5Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-buildbarn, name: buildbarn}
+  local: {path: /var/lib/pilot-data/buildbarn}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-cp]}
+---
+# The restic REST server's repository, on the WORKER's own backup disk
+# (/var/lib/pilot-backup, ext4 on virtio-bluefin-data1), so a backup leaves
+# the control plane and survives the worker's OS reinstall (design D5).
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-restic
+spec:
+  capacity: {storage: 7Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: pilot-static
+  claimRef: {namespace: pilot-backup, name: restic}
+  local: {path: /var/lib/pilot-backup/restic}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-node]}

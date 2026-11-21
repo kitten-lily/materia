@@ -1,0 +1,23 @@
+# MediaManager backend configuration for the Bluefin pilot (#179), adapted
+# from components/mediamanager/config.toml.gotmpl (only keys v1.12.3 knows).
+# No public URL in the pilot: the app is only reached in-cluster. Secrets are
+# env overrides (MEDIAMANAGER_AUTH__TOKEN_SECRET,
+# MEDIAMANAGER_DATABASE__PASSWORD) and never appear here.
+[misc]
+frontend_url = "http://mediamanager.pilot-media.svc.cluster.local:8000"
+cors_urls = ["http://mediamanager.pilot-media.svc.cluster.local:8000"]
+image_directory = "/images"
+tv_directory = "/data/TVShows"
+movie_directory = "/data/Movies"
+torrent_directory = "/data/Downloads"
+development = false
+
+[database]
+host = "mediamanager-postgres"
+port = 5432
+user = "mediamanager"
+dbname = "mediamanager"
+
+[auth]
+session_lifetime = 86400
+admin_emails = ["pilot-admin@example.com"]

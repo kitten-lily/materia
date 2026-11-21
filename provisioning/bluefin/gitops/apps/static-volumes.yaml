@@ -1,0 +1,24 @@
+# Bluefin pilot (#179): Static local volumes over the pilot data LV and the worker's backup disk (Phase 3 step 3). Cluster-scoped; first wave, before any claim.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-static-volumes
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kitten-lily/materia.git
+    targetRevision: main
+    path: provisioning/bluefin/gitops/platform/static-volumes
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

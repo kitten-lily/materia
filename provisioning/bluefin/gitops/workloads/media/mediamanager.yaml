@@ -1,0 +1,78 @@
+# MediaManager, the Kubernetes form of
+# components/mediamanager/mediamanager.container.gotmpl (see the comments
+# there for why each setting exists):
+# - UID/GID 1000: as root its entrypoint chowns the whole library on start.
+#   No fsGroup either: kubelet would chown the library recursively.
+# - CONFIG_DIR (not CONFIG_FILE) + LOG_FILE in /tmp.
+# - ONE read-write mount of video/ at /data, so imports hardlink instead of
+#   copying (no cross-mount hardlinks).
+# - Secrets as env overrides; the config file holds none.
+# The init container is the readiness gate (design step 4): it runs on every
+# pod creation and waits for an authenticated query to the database.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediamanager
+spec:
+  selector: {app: mediamanager}
+  ports: [{port: 8000, targetPort: 8000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mediamanager
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: mediamanager}
+  template:
+    metadata:
+      labels: {app: mediamanager}
+    spec:
+      securityContext: {runAsUser: 1000, runAsGroup: 1000, runAsNonRoot: true}
+      initContainers:
+      - name: wait-for-db
+        image: docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+        command: [/bin/sh, -c]
+        args:
+        - |
+          until psql -h mediamanager-postgres -U mediamanager -d mediamanager -tAc 'select 1' >/dev/null 2>&1; do
+            echo "$(date -u +%FT%TZ) waiting for mediamanager-postgres"; sleep 3
+          done
+          echo "$(date -u +%FT%TZ) database ready"
+        env:
+        - name: PGPASSWORD
+          valueFrom: {secretKeyRef: {name: mediamanager, key: db-password}}
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 64Mi}
+      containers:
+      - name: mediamanager
+        image: quay.io/maxdorninger/mediamanager:1.12.3@sha256:83b80dce26f8cdbbf8afec06784a85e7eedcba05ad4be57d2f70b006304d7a8c
+        env:
+        - {name: TZ, value: Etc/UTC}
+        - {name: CONFIG_DIR, value: /etc/mediamanager}
+        - {name: LOG_FILE, value: /tmp/media_manager.log}
+        - name: MEDIAMANAGER_AUTH__TOKEN_SECRET
+          valueFrom: {secretKeyRef: {name: mediamanager, key: token-secret}}
+        - name: MEDIAMANAGER_DATABASE__PASSWORD
+          valueFrom: {secretKeyRef: {name: mediamanager, key: db-password}}
+        ports: [{containerPort: 8000}]
+        readinessProbe:
+          tcpSocket: {port: 8000}
+          periodSeconds: 10
+        volumeMounts:
+        - {name: config, mountPath: /etc/mediamanager, readOnly: true}
+        - {name: video, mountPath: /data}
+        - {name: images, mountPath: /images}
+        resources:
+          requests: {cpu: 50m, memory: 512Mi}
+          limits: {memory: 512Mi}
+      volumes:
+      - name: config
+        configMap: {name: mediamanager-config}
+      - name: video
+        persistentVolumeClaim: {claimName: video}
+      - name: images
+        persistentVolumeClaim: {claimName: mediamanager-images}

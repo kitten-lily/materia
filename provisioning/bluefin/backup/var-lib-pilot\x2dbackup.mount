@@ -1,0 +1,18 @@
+# Bluefin pilot (#179) Phase 3 step 5: the worker's backup disk, holding the
+# restic REST server's repository (design D5). A plain ext4 filesystem on
+# virtio-bluefin-data1 (no LVM). @FS_UUID@ is the UUID recorded at mkfs, never
+# a label. On its own disk so the repository survives the worker's OS
+# reinstall in step 6. nofail + kubelet Wants= only, as for the control
+# plane's data LV: the restic volume's path (restic/) exists only inside this
+# filesystem, so a missing disk fails the pod instead of filling the root disk.
+[Unit]
+Description=Pilot backup disk (restic repository)
+
+[Mount]
+What=/dev/disk/by-uuid/@FS_UUID@
+Where=/var/lib/pilot-backup
+Type=ext4
+Options=defaults,nofail
+
+[Install]
+WantedBy=multi-user.target

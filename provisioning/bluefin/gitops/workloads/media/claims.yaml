@@ -1,0 +1,62 @@
+# Claims for the static volumes (platform/static-volumes): each names its PV,
+# and each PV names its claim back. The postgres claim comes from the
+# StatefulSet's volumeClaimTemplate (data-mediamanager-postgres-0).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video
+spec:
+  storageClassName: pilot-static
+  volumeName: pilot-video
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: movies-ro
+spec:
+  storageClassName: pilot-static
+  volumeName: pilot-movies-ro
+  accessModes: [ReadOnlyMany]
+  resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tvshows-ro
+spec:
+  storageClassName: pilot-static
+  volumeName: pilot-tvshows-ro
+  accessModes: [ReadOnlyMany]
+  resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mediamanager-images
+spec:
+  storageClassName: pilot-static
+  volumeName: pilot-mediamanager-images
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-config
+spec:
+  storageClassName: pilot-static
+  volumeName: pilot-jellyfin-config
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dumps
+spec:
+  storageClassName: pilot-static
+  volumeName: pilot-dumps
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}

@@ -1,0 +1,24 @@
+# Bluefin pilot (#179): The restic REST server on the worker, the backup target (Phase 3 step 5).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-backup-repo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kitten-lily/materia.git
+    targetRevision: main
+    path: provisioning/bluefin/gitops/workloads/backup-repo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pilot-backup
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

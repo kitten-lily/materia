@@ -1,0 +1,78 @@
+# Bluefin pilot (#179) Phase 3 step 5: scheduled backup (design D5), one
+# CronJob, two stages in one pod so a snapshot can never carry a stale dump:
+# 1. init container "dump": the production dump contract (dump.bash: counts
+#    before and after, the dump, .done last, all by atomic rename) with the
+#    postgres server's own image pin. If it fails, the pod fails and the
+#    restic stage never starts (Kubernetes runs init containers to success
+#    first): that IS the freshness guard.
+# 2. "restic": the production restic-backup image (wrapper: unlock, init if
+#    missing, backup, forget --prune; healthchecks pings off, no HC_*), to the
+#    REST server on the worker.
+# Backed up: the dump (PostgreSQL's recovery source; PGDATA itself is not
+# backed up as files), the video library and Jellyfin's /config (both
+# crash-consistent). Not backed up, rebuildable: MediaManager's poster cache,
+# Buildbarn's caches. All volumes are static PVs on the control plane, so the
+# pod lands there (local RWO volumes can be shared by pods on one node).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+          - name: dump
+            image: docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+            command: [bash, /db-dump/dump.bash]
+            env:
+            - {name: PGCONNECT_TIMEOUT, value: "10"}
+            - {name: DB_KIND, value: postgres}
+            - {name: DB_HOST, value: mediamanager-postgres}
+            - {name: DB_NAME, value: mediamanager}
+            - {name: DB_USER, value: mediamanager}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: mediamanager, key: db-password}}
+            volumeMounts:
+            - {name: dumps, mountPath: /dumps}
+            - {name: dump-script, mountPath: /db-dump, readOnly: true}
+            resources:
+              requests: {cpu: 50m, memory: 64Mi}
+              limits: {memory: 128Mi}
+          containers:
+          - name: restic
+            image: ghcr.io/kitten-lily/materia/restic-backup@sha256:21670b45e7c542be444dfec2d3d17a2379aad1ab5e26dccaa2cd1bfe48acf38e
+            env:
+            - {name: RESTIC_REPOSITORY, value: "rest:http://rest-server.pilot-backup.svc.cluster.local:8000/pilot-media"}
+            - {name: RESTIC_HOST, value: pilot-media}
+            - {name: BACKUP_PATHS, value: "/backup/dumps /backup/video /backup/jellyfin-config"}
+            - name: RESTIC_PASSWORD
+              valueFrom: {secretKeyRef: {name: backup, key: restic-password}}
+            volumeMounts:
+            - {name: dumps, mountPath: /backup/dumps, readOnly: true}
+            - {name: video, mountPath: /backup/video, readOnly: true}
+            - {name: jellyfin-config, mountPath: /backup/jellyfin-config, readOnly: true}
+            # scratch image: restic stages pack files in /tmp (production gotcha).
+            - {name: tmp, mountPath: /tmp}
+            resources:
+              requests: {cpu: 100m, memory: 256Mi}
+              limits: {memory: 256Mi}
+          volumes:
+          - name: dumps
+            persistentVolumeClaim: {claimName: dumps}
+          - name: video
+            persistentVolumeClaim: {claimName: video, readOnly: true}
+          - name: jellyfin-config
+            persistentVolumeClaim: {claimName: jellyfin-config, readOnly: true}
+          - name: dump-script
+            configMap: {name: db-dump-script}
+          - name: tmp
+            emptyDir: {sizeLimit: 1Gi}

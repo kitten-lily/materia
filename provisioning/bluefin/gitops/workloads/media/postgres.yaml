@@ -1,0 +1,56 @@
+# MediaManager's PostgreSQL, the Kubernetes form of
+# components/mediamanager/mediamanager-postgres.container.gotmpl: same image
+# pin, same POSTGRES_* contract, PGDATA set explicitly (the official 18+ image
+# otherwise refuses an existing cluster at this path). The data directory is
+# the static volume pilot-postgres; the entrypoint runs as root and chowns it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mediamanager-postgres
+spec:
+  selector: {app: mediamanager-postgres}
+  ports: [{port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mediamanager-postgres
+spec:
+  serviceName: mediamanager-postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: mediamanager-postgres}
+  template:
+    metadata:
+      labels: {app: mediamanager-postgres}
+    spec:
+      containers:
+      - name: postgres
+        image: docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+        env:
+        - {name: PGDATA, value: /var/lib/postgresql/data}
+        - {name: TZ, value: Etc/UTC}
+        - {name: POSTGRES_DB, value: mediamanager}
+        - {name: POSTGRES_USER, value: mediamanager}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: mediamanager, key: db-password}}
+        ports: [{containerPort: 5432}]
+        # TCP, not the socket: on a fresh volume the entrypoint's temporary
+        # init server listens on the socket only (#205).
+        readinessProbe:
+          exec: {command: [pg_isready, -h, 127.0.0.1, -U, mediamanager, -d, mediamanager]}
+          periodSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - {name: data, mountPath: /var/lib/postgresql/data}
+        resources:
+          requests: {cpu: 50m, memory: 256Mi}
+          limits: {memory: 256Mi}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: pilot-static
+      volumeName: pilot-postgres
+      accessModes: [ReadWriteOnce]
+      resources: {requests: {storage: 2Gi}}

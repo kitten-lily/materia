@@ -1,0 +1,26 @@
+# Bluefin pilot (#179) Phase 3 steps 3-5: MediaManager + PostgreSQL + Jellyfin
+# on the static volumes, and their scheduled backup. Secrets through KSOPS
+# (secret.sops.yaml, backup.sops.yaml); the config file and the dump script
+# through ConfigMaps (the config one hashed, so a change rolls MediaManager).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- claims.yaml
+- postgres.yaml
+- mediamanager.yaml
+- jellyfin.yaml
+- backup.yaml
+generators:
+- secret-generator.yaml
+configMapGenerator:
+- name: mediamanager-config
+  files:
+  - config.toml
+# No hash suffix: every CronJob run is a fresh pod that reads the current
+# script anyway, and hand-applied fixtures (fixtures/backup-restore-check.yaml)
+# need a stable name.
+- name: db-dump-script
+  options:
+    disableNameSuffixHash: true
+  files:
+  - dump.bash
