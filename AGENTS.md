@@ -476,6 +476,36 @@ shell; see the `env = false` gotcha.
   bind-mounted into a container must use another extension
   (`db-dump/dump.bash`). An unrecognised extension is a plain data file
   under the component's data dir.
+- **Restoring a SQLite app (Pangolin, Beszel) from the nightly copy (#195).**
+  flutterina's `sqlite-dump` component writes a `VACUUM INTO` copy of each
+  database into `systemd-sqlite-dumps` at 23:30; restic carries it off-host
+  at 00:00. The live `data.db`/`db.sqlite` in the app volumes are backed up
+  too, but only as files read while the app writes, so restore from the copy:
+  1. Pick the snapshot and check the copy: `mise db:restore-test --target
+     core@<flutterina tailnet IP> [--snapshot <id>]` must pass (freshness,
+     the `.done` sha256s, `integrity_check`, exact row counts).
+  2. Restore `<name>.sqlite` from that snapshot (restic with the
+     restic-backup job's own env, as the restore test does) and compare its
+     sha256 with line 2 of `<name>.done`.
+  3. Stop the app. For Pangolin that is the whole pod (stopping `app` takes
+     `gerbil`/`traefik` down via `Requires=`, so this is an edge outage).
+  4. Replace the database file with the copy, and **delete its `-wal` and
+     `-shm`**: they belong to the old file and would be replayed onto the new
+     one. Pangolin: `pangolin-config/_data/db/db.sqlite` (rollback-journal
+     mode on flutterina, usually no sidecars). Beszel:
+     `beszel-data/_data/data.db`; keep `id_ed25519` (the hub's SSH key) and
+     either keep or drop `auxiliary.db` (only `_logs`).
+  5. Start the app (Pangolin: `pangolin-pod.service`, then app, gerbil,
+     traefik) and check its routes.
+
+  Drilled 2026-11-21 on snapshot `1412a832`. The restore test's throwaway hub
+  answered `/api/health` on the restored Beszel copy. A throwaway Pangolin
+  `app` on the restored `db.sqlite`, with `--network none`, the live configs
+  read-only and `materia-serverSecret`, answered `/api/v1/` and generated the
+  same Traefik config (20 routers, 10 services) as the live app. Pangolin's
+  `db.sqlite` is not in WAL mode on flutterina despite the code setting it;
+  a read-only `VACUUM INTO` there makes a writer wait, measured at under
+  60 ms per commit for a 21 MB database.
 - **A manual restic run prunes that day's earlier snapshot.** restic-backup's
   `forget` keeps one snapshot per day (`resticKeepDaily`), the latest. Running
   `restic-backup-trigger.service` by hand at 09:25 on 2026-11-18 removed the

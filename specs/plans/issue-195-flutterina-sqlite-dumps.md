@@ -384,3 +384,45 @@ Design:
   Record the deploy in this plan. File a follow-up for bow: its
   `db-dump` `.done` has the same restic-overlap gap that item 1 of the
   review found here.
+
+## Deployed (2026-11-20/21)
+
+- Branch `195-sqlite-dump` (d75c866, d43c0d9, f23f97d) on main.
+  - Task 1 local test: 3 dumps during writes and 0 `SQLITE_BUSY`; `-wal`
+    4.1 MB at 20 tx/s, the same as the writer alone. Flat out it reached
+    208 MB, because growth is write rate x dump time.
+  - Kill test: a kill after the `.sqlite` rename leaves no `.done`.
+  - Restore harness: 18 cases; the 7 sqlite cases were RED before the
+    change and GREEN after.
+- **Rulings:**
+  - Source volumes are mounted by podman name, not `.volume`, so the dump
+    units have no `Requires=` on the apps' volume units.
+  - s6 tests a hub image that cannot start, not a dropped table: PocketBase
+    migrates an incomplete DB on start.
+  - The WAL bound is tested at 20 tx/s, not flat out.
+  - The compat workflow cannot run on a branch; it runs on main.
+- **flutterina pre-checks:**
+  - podman 5.7.1, which accepts `Entrypoint=` (quadlet dry-run on the host);
+  - SELinux Permissive, so `pangolin-config` stays unlabelled as the app
+    mounts it;
+  - 11 GB free.
+  - Pangolin's live DB has no `-wal`, i.e. it runs in rollback-journal mode.
+    Tested locally on a 21 MB DB with better-sqlite3's default timeout:
+    5 dumps of about 1.1 s each, 0 `SQLITE_BUSY`, slowest commit 54 ms.
+- **Plan before apply:** only the 13 `sqlite-dump` install steps and the
+  timer enable. The apply matched it. Pod, `app`, `gerbil`, `traefik` and
+  `beszel-hub` stayed active, with no failed units.
+- **First manual run (18:18Z):** pangolin 147 tables, beszel 25 tables, files
+  0600, no busy or locked lines in the app logs.
+- **Nightly 23:30 run:** both dumps done in 2 s. restic snapshot `1412a832`
+  at 00:00. `mise db:restore-test` passed on flutterina: both copies ok,
+  the Beszel hub answers on its copy, and the unchanged files are identical.
+  It also passed on bow (`12436e88`), unchanged.
+- **Pangolin recovery drill** on `1412a832`: the restored copy's hash matches
+  `.done`, and a throwaway `app` (`--network none`) generated the same
+  Traefik config shape as the live app (20 routers, 10 services). The
+  runbook is in AGENTS.md ("Restoring a SQLite app").
+- healthchecks.io `db-dump-flutterina`: created, with period 1 day and grace
+  2 h.
+- Not reproduced: the once-off `NeedDaemonReload` warning at the first manual
+  run (`no` on all three units the next day).
