@@ -47,7 +47,11 @@ spec:
           requests: {cpu: 50m, memory: 256Mi}
           limits: {memory: 256Mi}
   volumeClaimTemplates:
-  - metadata:
+  # apiVersion/kind spelled out: the API server adds them to the live object,
+  # and without them here Argo CD reports the StatefulSet OutOfSync forever.
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
       name: data
     spec:
       storageClassName: pilot-static
