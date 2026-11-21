@@ -13,7 +13,7 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 | 0 — Baseline, release, recovery | **pass** (step 4's two checks ran in Phase 1, 2026-11-20) | below |
 | 1 — Local control plane + worker | **pass** 2026-11-20 | below |
 | 2 — Host VPN + cross-site networking | **pass** 2026-11-21, except `readyz` p95 (540 ms over DERP vs 500 ms), deferred to Phase 4 by decision | below |
-| 3 — Persistent services as Kubernetes workloads | **in progress**: step 0 (data volume) pass; step 1 (GitOps) pass with tuned polling, miss at template defaults; step 2 (secrets) pass; steps 3 and 5 pass and step 4 partly, on hand-applied manifests pending Argo CD adoption; Buildbarn waits on the operator's tailnet setup | below |
+| 3 — Persistent services as Kubernetes workloads | **in progress**: step 0 (data volume) pass; step 1 (GitOps) pass with tuned polling, miss at template defaults; step 2 (secrets) pass; steps 3, 4 and 5 pass, all now reconciled by Argo CD (F9, F10 found on the way); step 6 (reinstall and import) to do | below |
 | 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
@@ -469,13 +469,49 @@ Runs on the Phase 2 cluster until step 6 rebuilds it.
 | 3 Missing disk, pod half | pass | boot with `--without-data 2` and the workloads present: every consumer refused with `MountVolume.NewMounter initialization failed … path "/var/lib/pilot-data/…" does not exist` (Jellyfin 3 volumes, MediaManager 2, postgres 1), pods `0/1`; the root disk's `/var/lib/pilot-data` empty; cluster and all Applications healthy. Disk reattached: all three pods back with no manual step, 143 s after QEMU start |
 | 4 Readiness and gating | pass (MediaManager/postgres/Jellyfin) | production image pins; postgres `Ready` +32 s, MediaManager and Jellyfin +83 s, all 12 migrations on the first try, zero restarts. Gate test: postgres scaled to 0 and MediaManager's pod deleted: the new pod sat in `Init:0/1` for 150 s (init container `wait-for-db` retrying an authenticated `select 1` every 3 s); postgres back: gate passed in 4 s, `Ready` 17 s later, init and app restarts 0 |
 | 4 Database survival | pass | 1000 rows in `pilot_marker`, `md5(string_agg(…))` identical after deleting the postgres pod, after a control-plane reboot, and after the unplanned hard kill below |
-| 4 Buildbarn | pending | manifests written (one pod, bb-storage :7982 + bb-asset :7981, Service `bst-cache` of class `tailscale`, hostname `bluefin-pilot-bst`, CAS 4 GiB in 8/24/3/3 ≈ 108 MiB per blob), secrets generated (P-256 cert for `bluefin-pilot-bst.<tailnet>.ts.net`, Ed25519 JWKS; JWT private key in the vault). Waits on the operator's tailnet policy, OAuth client and vault item |
+| 4 Buildbarn reachability | pass | Argo CD synced the Tailscale operator (chart 1.104.7) and Buildbarn; the operator's OAuth Secret from the vault via the bootstrap. Proxy device `bluefin-pilot-bst` (`tag:bluefin-pilot-svc`, address inside the `ipPool`). Two blockers found and fixed: F9 (the proxy's CGNAT drop rule ate the API server's replies, so containerboot hung before installing its DNAT; tailnet node attribute `disable-linux-cgnat-drop-rule`, and removing a `tag:bluefin-pilot → tag:bluefin-pilot-svc` grant that made the nodes peers and pulled the API route into the proxy's tailnet) and F10 (Cilium socket LB in pods; `bpf-lb-sock-hostns-only`). Then from the workstation over the tailnet: TLS on 7981 and 7982 verifies against the pinned pilot cert (`Verify return code: 0`, ALPN `h2`), a wrong name fails (`62 hostname mismatch`); in-cluster both ports serve the same cert (fingerprint match). Both nodes `Ready`, all Applications `Synced`/`Healthy` after the Cilium agents restarted |
+| 4 Buildbarn round trip | pass | `mise bluefin:pilot:bst-roundtrip` (harness written by Codex, reviewed; BuildStream 2 in krytis's pinned `bst2` image, krytis's remote layout: index on 7981, storage on 7982, `server-cert` + `access-token`), pilot JWTs minted from the vault key into mode-600 files. Push: a 64 MiB import artifact built and pushed with the push token (30 s). Pull: into an empty cache with the pull token, checked out, sha256 equal (2 s). No token: both remotes `UNAUTHENTICATED: No valid authorization header containing a bearer token provided`. Pull token writing: upload refused with gRPC 7 (`PERMISSION_DENIED`), a fresh-cache pull reports `SKIPPED Pull` (not on the server). 150 MiB blob: refused with gRPC 3 (`INVALID_ARGUMENT`), the per-blob ceiling (~108 MiB, CLAUDE.md BUG-006 class), not stored. Wrong hostname (IP literal): `Peer name … is not in peer certificate`. First run's four negatives were harness misjudgements (BuildStream 2 prints gRPC codes as numbers, reports a server miss as `SKIPPED Pull`, and exits outside 1–124 when every remote fails to initialise); criteria fixed and rerun, all six `PASS` |
 | 5 Scheduled backup | pass | CronJob `*/30`, one pod: init `dump` (production `dump.bash`, byte-identical copy checked by `mise check:bluefin-dump-copy`) then the production restic image to a REST server on the worker's own backup disk (ext4 `pilot-backup`, PV `pilot-restic`). Scheduled runs 14:30 (306.7 MiB, 2:01) and 15:00 UTC (84 KiB, 2 s) each saved a snapshot after their dump; the 16:30 run missed during the outage below ran at 16:41 when the cluster came back. Daily retention pruned the same day's earlier snapshot (the production gotcha) |
 | 5 Freshness guard | pass | the CronJob's pod with a wrong `PGPASSWORD` (`fixtures/backup-restore-check.yaml`): dump init container exit 2 (`password authentication failed`), the restic container never started, snapshot count 2 → 2, the previous dump set byte-identical, no `.tmp` left. First attempt invalid: the fixture named the dump-script ConfigMap without kustomize's hash suffix and never left `PodInitializing`; that ConfigMap now has no hash suffix (each CronJob run is a new pod anyway) |
 | 5 Check and restore | pass | `restic check --read-data`: 21/21 packs, no errors. `restore latest` (snapshot `fef7a07e`, 306.5 MiB) into an empty volume: every fixture checksum, the hardlink pair still one inode, the dump set present; the dump loaded into a fresh postgres with per-table counts **exactly** `counts.post`, `pilot_marker` 1000 rows |
 | Unplanned: hard kill | recorded | 15:15 UTC: the **workstation** ran out of memory (an 11 GiB `zig` build, Steam) and its OOM killer killed the control plane's QEMU. Restarted 16:41: XFS root and the LV's ext4 replayed their journals, postgres ran crash recovery (`not properly shut down; automatic recovery`), marker rows and fixtures intact, media pods `1/1` 188 s after start, the missed backup ran. For a real host: an outage of the API server's host does nothing worse than a reboot to this stack |
 
 ## Findings
+
+**F10 — With Cilium's kube-proxy replacement, a pod that forwards packets to a
+ClusterIP needs per-packet Service translation.** KPR turns socket
+load-balancing on for every pod ("Socket LB Coverage: Full", even with
+`bpf-lb-sock=false`), and Cilium then skips per-packet translation in pods.
+The Tailscale operator's L4 proxy DNATs tailnet traffic to its Service's
+ClusterIP and forwards it: those packets were never a socket `connect()`,
+so nothing translated them (39 forwarded, 2 back; clients hung). Fix:
+`bpf-lb-sock-hostns-only: "true"` in the pilot's `CiliumNodeConfig`
+(Coverage then "Hostns-only"), which Tailscale's operator documentation
+requires for Cilium KPR. Cost: pods use per-packet load-balancing instead of
+socket rewriting; the host keeps the socket path. Open check: with this, the
+API server's replies to pods may arrive rev-NATed as `10.96.0.1`, which would
+make F9's node attribute unnecessary; to be tested by removing it.
+
+**F9 — An in-cluster Tailscale proxy cannot reach a Kubernetes API that is
+addressed by its tailnet IP.** Phase 2 made the API endpoint the control
+plane's tailnet address (`100.68.x`, inside CGNAT 100.64.0.0/10). The Tailscale
+operator's L4 proxy (v1.104.7, kernel mode, nftables) installs Tailscale's
+standard anti-spoofing rule in its own pod: `iifname != "tailscale0" ip saddr
+100.64.0.0/10 drop`. Cilium's socket load-balancing connects the pod straight
+to the backend, so the API server's replies arrive on `eth0` with a CGNAT
+source and are dropped (counter 85 → 90 during one probe). The proxy's first
+Secret write happens before its rules exist and works; the post-login
+`device_id` PATCH then hangs forever (goroutine dump: `StrategicMergePatchSecret`
+in `roundTrip`, `containerboot/main.go:874`, the kube client has no timeout),
+so containerboot never reaches `Installing proxy rules`: no DNAT, the device
+is `Running` on the tailnet but refuses every connection, the Service never
+gets a LoadBalancer status, and the pod is `Ready` with no error logged.
+Diagnosis: Codex read the v1.104.7 source and narrowed it to the post-login
+calls; the dump and the nft counters pinned it. Fix: the tailnet node
+attribute `disable-linux-cgnat-drop-rule` (nodecap.go:377), scoped to
+`tag:bluefin-pilot-svc`. The same applies to anything running kernel-mode
+Tailscale inside a pod of a cluster addressed by tailnet IPs. The host
+Tailscale avoids it only because Phase 2 runs it with netfilter off.
 
 **F8 — MediaManager logs its generated admin password in plaintext.** On an
 empty database it creates a default admin even when `admin_emails` is set,
