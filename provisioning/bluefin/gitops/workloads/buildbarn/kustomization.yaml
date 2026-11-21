@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Argo CD sets pilot-buildbarn on namespaced resources. The ProxyClass
+# is cluster-scoped and must render without a namespace.
+resources:
+- claim.yaml
+- buildbarn.yaml
+generators:
+- secret-generator.yaml
+configMapGenerator:
+- name: buildbarn-config
+  files:
+  - config/common.libsonnet
+  - config/storage.jsonnet
+  - config/asset.jsonnet

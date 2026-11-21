@@ -1,0 +1,24 @@
+# Bluefin pilot (#179), Phase 3 step 4: Buildbarn over the tailnet.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-buildbarn
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kitten-lily/materia.git
+    targetRevision: main
+    path: provisioning/bluefin/gitops/workloads/buildbarn
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pilot-buildbarn
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

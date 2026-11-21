@@ -25,6 +25,19 @@ echo "== age key Secret (argocd/pilot-sops-age)"
 pass-cli item view --vault-name bluefin-pilot --item-title sops-age-key --field note \
   | "${_ssh[@]}" "kubectl -n argocd create secret generic pilot-sops-age --from-file=keys.txt=/dev/stdin --dry-run=client -o yaml | ${_ssa[*]} -f - >/dev/null && echo applied"
 
+echo "== Tailscale operator OAuth Secret (tailscale/operator-oauth)"
+# The chart reads an existing Secret with keys client_id and client_secret
+# (apps/tailscale-operator.yaml). Vault item: a login item whose username is
+# the OAuth client ID and whose password is the secret. Skipped until it exists.
+if _cid="$(pass-cli item view --vault-name bluefin-pilot --item-title tailscale-operator-oauth --field username 2>/dev/null)" && [[ -n "$_cid" ]]; then
+  { printf 'client_id=%s\n' "$_cid"
+    printf 'client_secret=%s\n' "$(pass-cli item view --vault-name bluefin-pilot --item-title tailscale-operator-oauth --field password)"
+  } | "${_ssh[@]}" "kubectl create ns tailscale --dry-run=client -o yaml | ${_ssa[*]} -f - >/dev/null && kubectl -n tailscale create secret generic operator-oauth --from-env-file=/dev/stdin --dry-run=client -o yaml | ${_ssa[*]} -f - >/dev/null && echo applied"
+  unset _cid
+else
+  echo "skipped: no tailscale-operator-oauth item in the bluefin-pilot vault yet"
+fi
+
 echo "== Argo CD settings and the KSOPS repo-server patch"
 "${_ssh[@]}" "${_ssa[*]} -f -" < "${_ksops}/argocd-cm.yaml"
 "${_ssh[@]}" "${_ssa[*]} -f -" < "${_ksops}/repo-server.yaml"

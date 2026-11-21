@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildbarn
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: buildbarn}
+  template:
+    metadata:
+      labels: {app: buildbarn}
+    spec:
+      automountServiceAccountToken: false
+      # The local PV's node affinity places both containers on bluefin-pilot-cp.
+      initContainers:
+      - name: prepare-cache
+        image: docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+        command: [/bin/sh, -ec]
+        args:
+        - |
+          for store in storage-cas storage-ac storage-fsac asset-cache; do
+            mkdir -p "/data/$store/persistent_state"
+          done
+          blocks=/data/storage-cas/blocks
+          if [ ! -e "$blocks" ]; then
+            # Publish only after successful allocation so init can retry.
+            fallocate -l 4GiB "$blocks.allocating"
+            mv "$blocks.allocating" "$blocks"
+          fi
+        volumeMounts:
+        - {name: data, mountPath: /data}
+        resources:
+          requests: {cpu: 10m, memory: 32Mi}
+          limits: {memory: 32Mi}
+      containers:
+      - name: bb-storage
+        image: ghcr.io/buildbarn/bb-storage@sha256:155fa806de0933e6222681353e2e9fe2f51bd2a78f88dd254ae0b5989fb8e585
+        args: [/config/storage.jsonnet]
+        ports: [{name: storage, containerPort: 7982}]
+        readinessProbe:
+          tcpSocket: {port: storage}
+        volumeMounts:
+        - {name: config, mountPath: /config, readOnly: true}
+        - {name: cert, mountPath: /certs, readOnly: true}
+        - {name: credentials, mountPath: /secrets, readOnly: true}
+        - {name: data, mountPath: /data}
+        resources:
+          requests: {cpu: 100m, memory: 512Mi}
+          limits: {memory: 512Mi}
+      - name: bb-asset
+        image: ghcr.io/buildbarn/bb-remote-asset@sha256:55566d19f722ac78a4a67c431de0efd5a834137033468af0848b964ac1aafefe
+        args: [/config/asset.jsonnet]
+        ports: [{name: asset, containerPort: 7981}]
+        readinessProbe:
+          tcpSocket: {port: asset}
+        volumeMounts:
+        - {name: config, mountPath: /config, readOnly: true}
+        - {name: cert, mountPath: /certs, readOnly: true}
+        - {name: credentials, mountPath: /secrets, readOnly: true}
+        - {name: data, mountPath: /data}
+        resources:
+          requests: {cpu: 50m, memory: 256Mi}
+          limits: {memory: 256Mi}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: buildbarn}
+      - name: config
+        configMap: {name: buildbarn-config}
+      - name: cert
+        secret:
+          secretName: buildbarn
+          items:
+          - {key: server.crt, path: server.crt}
+      - name: credentials
+        secret:
+          secretName: buildbarn
+          items:
+          - {key: server.key, path: server.key, mode: 256} # 0400
+          - {key: jwt-jwks.json, path: jwt-jwks.json, mode: 256} # 0400
+---
+# The operator chart supplies this cluster-scoped CRD. Together with the
+# operator's 96Mi, one proxy uses the pilot's 192Mi memory budget.
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyClass
+metadata:
+  name: bluefin-pilot-buildbarn
+spec:
+  statefulSet:
+    pod:
+      tailscaleContainer:
+        resources:
+          requests: {cpu: 50m, memory: 96Mi}
+          limits: {memory: 96Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bst-cache
+  labels:
+    tailscale.com/proxy-class: bluefin-pilot-buildbarn
+  annotations:
+    # The Buildbarn TLS certificate must have SAN bluefin-pilot-bst.<tailnet>.ts.net.
+    # For a future Tailscale Service, switch this Service to the ingress
+    # ProxyGroup and tailnet-service annotations after verifying TCP support.
+    tailscale.com/hostname: bluefin-pilot-bst
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  allocateLoadBalancerNodePorts: false
+  selector: {app: buildbarn}
+  ports:
+  - {name: asset, port: 7981, targetPort: asset, protocol: TCP}
+  - {name: storage, port: 7982, targetPort: storage, protocol: TCP}

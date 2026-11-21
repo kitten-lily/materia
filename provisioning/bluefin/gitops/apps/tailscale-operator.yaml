@@ -1,0 +1,54 @@
+# Bluefin pilot (#179), Phase 3 step 4: Tailscale operator for the Buildbarn L4 proxy.
+# Bootstrap checklist:
+# - In tagOwners, let tag:bluefin-pilot-operator own tag:bluefin-pilot-svc.
+# - Create an OAuth client tagged tag:bluefin-pilot-operator.
+# - Grant the workstation access to tag:bluefin-pilot-svc on TCP 7981-7982.
+# - Pre-create tailscale/operator-oauth with keys client_id and client_secret.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-tailscale-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  source:
+    repoURL: https://pkgs.tailscale.com/helmcharts
+    chart: tailscale-operator
+    targetRevision: 1.104.7
+    helm:
+      valuesObject:
+        oauth:
+          clientId: ""
+          clientSecret: ""
+        operatorConfig:
+          defaultTags: ["tag:bluefin-pilot-operator"]
+          hostname: bluefin-pilot-operator
+          image:
+            repository: docker.io/tailscale/k8s-operator
+            digest: sha256:51ba104ff02afcc39f93189415c8b2f44fb6037e8592d626bfa52c3c8afc02f6
+          # The Buildbarn ProxyClass budgets the other 96Mi.
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {memory: 96Mi}
+        proxyConfig:
+          defaultTags: "tag:bluefin-pilot-svc"
+          image:
+            repository: docker.io/tailscale/tailscale
+            digest: sha256:72c1e19e0aedca96b8533bbb0b4368564410ff20b17e53b804eb6c1f04a31be4
+        ingressClass:
+          enabled: false
+        apiServerProxyConfig:
+          mode: "false"
+          allowImpersonation: "false"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tailscale
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
