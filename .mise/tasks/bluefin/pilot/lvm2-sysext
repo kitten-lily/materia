@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#MISE description="Build the Bluefin pilot's pilot-lvm2 sysext (static lvm from a pinned Alpine package, #179)"
+
+# Design: specs/plans/bluefin-server-pilot-phase3.md (D6). Bluefin Server ships
+# no lvm in /usr (upstream #487), only in the initrd. This sysext carries a
+# static lvm for creating and changing VGs; it ships no udev rules, so it never
+# takes part in boot-time activation. Output: an EROFS image, the same format
+# as the release's own sysexts, at ~/.cache/bluefin-pilot/sysext/.
+
+set -euo pipefail
+
+_rel_version=26.11.2506
+_alpine=docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+_apk=lvm2-static-2.03.32-r0.apk
+_apk_sha=ee262d6158fcc281569cd556e2982d4a8bf02b3d267319b9a5c677948b4dac35
+
+_repo="$(git rev-parse --show-toplevel)"
+_out="${HOME}/.cache/bluefin-pilot/sysext"
+_name="pilot-lvm2_${_rel_version}"
+_work="$(mktemp -d)"
+trap 'rm -rf "$_work"' EXIT
+mkdir -p "$_out" "$_work/apk" "$_work/ex"
+
+podman run --rm --network=host -v "$_work/apk:/out:Z" "$_alpine" \
+  sh -c "apk update -q >/dev/null && cd /out && apk fetch -q lvm2-static"
+# apk fetch takes no version; the checksum pins the exact package (and fails
+# loudly once Alpine moves on, which is the point of a pin).
+echo "${_apk_sha}  ${_work}/apk/${_apk}" | sha256sum -c --quiet
+tar -xzf "$_work/apk/${_apk}" -C "$_work/ex" usr/sbin/lvm.static 2>/dev/null
+
+_root="$_work/root"
+install -D -m 0755 "$_work/ex/usr/sbin/lvm.static" "$_root/usr/libexec/pilot-lvm2/lvm.static"
+install -D -m 0755 "${_repo}/provisioning/bluefin/lvm2/lvm" "$_root/usr/bin/lvm"
+install -D -m 0644 "${_repo}/provisioning/bluefin/lvm2/lvm.conf" "$_root/usr/share/pilot-lvm2/lvm.conf"
+install -d "$_root/usr/lib/extension-release.d"
+cat > "$_root/usr/lib/extension-release.d/extension-release.${_name}" <<REL
+ID=bluefin-server
+VERSION_ID=${_rel_version}
+ARCHITECTURE=x86-64
+REL
+
+rm -f "${_out}/${_name}.raw"
+mkfs.erofs --quiet --all-root -T 0 "${_out}/${_name}.raw" "$_root"
+sha256sum "${_out}/${_name}.raw"

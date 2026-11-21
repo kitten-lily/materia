@@ -1,0 +1,5 @@
+#!/bin/sh
+# Bluefin pilot (#179) Phase 3: run the pilot-lvm2 sysext's static lvm with its
+# own config (lvm.conf next to this file's share dir). Use the `lvm <command>`
+# form (lvm pvs, lvm vgchange ...): there are no per-command symlinks.
+LVM_SYSTEM_DIR=/usr/share/pilot-lvm2 exec /usr/libexec/pilot-lvm2/lvm.static "$@"

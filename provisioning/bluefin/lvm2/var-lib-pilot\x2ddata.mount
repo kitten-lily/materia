@@ -1,0 +1,19 @@
+# Bluefin pilot (#179) Phase 3: mount the pilot data LV (VG pilot_data).
+# Design: specs/plans/bluefin-server-pilot-phase3.md (D6). @FS_UUID@ is the
+# filesystem UUID recorded when the LV was formatted, never a label, so no
+# other filesystem can stand in. nofail: a missing disk must not stop the boot
+# (kubelet only Wants= this mount; data safety comes from every PV path
+# existing only inside the LV).
+[Unit]
+Description=Pilot data LV (pilot_data/data)
+Wants=pilot-lvm-activate.service
+After=pilot-lvm-activate.service
+
+[Mount]
+What=/dev/disk/by-uuid/@FS_UUID@
+Where=/var/lib/pilot-data
+Type=ext4
+Options=defaults,nofail
+
+[Install]
+WantedBy=multi-user.target

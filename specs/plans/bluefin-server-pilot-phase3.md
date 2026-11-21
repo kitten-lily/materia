@@ -6,8 +6,8 @@ two local VMs joined over the tailnet, Cilium host firewall enforcing.
 Evidence goes to [the results](bluefin-server-pilot-results.md). Release
 v26.11.2506. Status: draft, 2026-11-21. Decided: D1 this repository on `main`, D2 SOPS
 through KSOPS, D3/D5 as recommended (no objection), D4 the Tailscale
-Kubernetes operator, D6 initrd activation plus our own lvm2 sysext (static
-binary as the fallback). Revised the same day after a Codex review: mount
+Kubernetes operator, D6 our own lvm2 sysext with a static binary as the
+fallback (the initrd turned out not to activate anything, F7). Revised the same day after a Codex review: mount
 ordering and the fallback activation path, the full bootstrap after the
 reinstall, the secret-leak criterion, Buildbarn's two listeners and auth
 negatives, backup freshness and state inventory, readiness gating, CAS
@@ -148,21 +148,18 @@ restic image.
 as the fallback** (operator decision 2026-11-21). The initrd finding above,
 made after that decision, splits the problem in two:
 
-- **Activation and import (boot-critical): the initrd.** Its `lvm.conf` is
-  upstream's default: event activation on, no filter, no devices file. Its
-  `69-dm-lvm.rules` runs `pvscan --cache --checkcomplete` on every PV that
-  appears. Once a VG is complete, it runs `systemd-run … lvm vgchange -aay
-  --autoactivation event <vg>`. So a VG whose disks appear during the initrd
-  should be active before switch-root, and its dm devices persist into the
-  real root. The real root has `10-dm`/`13-dm-disk.rules`, which give
-  `/dev/mapper/<vg>-<lv>` and `/dev/disk/by-label/…`, but not
-  `/dev/<vg>/<lv>`.
+- **Activation and import (boot-critical). Expected: the initrd. Found in
+  step 0: it never autoactivates (F7).** The initrd ships `lvm` and
+  `69-dm-lvm.rules`, but freedesktop-sdk's lvm2 build compiles in
+  `event_activation = 0`, so its `pvscan` answers `LVM_EVENT_ACTIVATION=0`.
+  The activation path is therefore `pilot-lvm-activate.service` (below), run
+  with the sysext's lvm, and it is boot-critical after all.
 
   A `.mount` unit for `/var/lib/pilot-data` then mounts it. `What=` is the
   filesystem UUID recorded at creation and passed to render, never a label,
   so a stray filesystem cannot stand in. kubelet gets
   `Wants=`/`After=pilot-data.mount`, so the mount is pulled in and attempted
-  first. Nothing to maintain on the boot path.
+  first.
 
   **Deliberately not `Requires=`.** On the control plane, kubelet runs the
   API server, etcd and the scheduler as static pods. Making it require the
@@ -171,29 +168,23 @@ made after that decision, splits the problem in two:
   comes from the path rule below instead. If the mount fails, the cluster
   comes up, the pods using these volumes stay `ContainerCreating` with
   "path does not exist", and nothing lands on the root disk. Step 0's
-  negative test proves exactly that. Step 0 proves it: the journal of the boot shows
-  `lvm-activate-pilot_data` running in the initrd. Step 6 proves it again on
-  a freshly installed OS disk, which is exactly bow's import case.
+  negative test proves exactly that.
 
-  Risk: this is not a documented contract. Upstream kept it in the initrd,
-  but a later size prune could drop it. The results record it as a
-  dependency, and production wants it stated upstream (an issue there needs
-  your permission).
 - **Management (create, extend, resize; not boot-critical): our sysext.** A
   `pilot-lvm2` sysext holds the static `lvm` from a digest-pinned Alpine
   `lvm2-static` package, with symlinks and an `lvm.conf` setting
   `udev_rules = 0`/`udev_sync = 0`. It has an `extension-release` matching
   `ID=bluefin-server` and is installed by render into `/var/lib/extensions`.
-  It ships no udev rules, so it cannot race the initrd's activation.
+  It ships no udev rules, and never takes part in event activation.
 
   First test: whether Bluefin merges an **unsigned** sysext at all. Its
   `systemd-sysext.service` sets no explicit image policy, and the release's
   own sysexts are signed. If it refuses, fall back to the same binary under
   `/var/opt/pilot-lvm/` (option 1), and record signing as the production
   question.
-- **Bounded fallback if the initrd does not activate:**
-  `pilot-lvm-activate.service`, a oneshot ordered `Before=pilot-data.mount`.
-  It is skipped when `/dev/mapper/pilot_data-data` already exists. Otherwise
+- **The activation unit:** `pilot-lvm-activate.service`, a oneshot ordered
+  `Before=pilot-data.mount`. It is skipped when `/dev/mapper/pilot_data-data`
+  already exists. Otherwise
   it runs `lvm vgchange -ay pilot_data` from the sysext, or from the static
   path if the sysext was rejected, with `TimeoutStartSec=2min`. It does not
   rely on udev rescanning disks it has already seen. Its journal line shows
@@ -327,11 +318,10 @@ Thresholds are fixed here, before the phase starts.
      file, a hardlink pair);
    - reboot.
 
-   Pass: after reboot, the LV was activated by the initrd
-   (`lvm-activate-pilot_data` in the initrd part of `journalctl -b`) and
-   mounted before `kubelet.service` started (journal order), with the
-   fixture checksums intact. If the initrd did not activate it, record that
-   and use the fallback in D6.
+   Pass: after reboot, the LV is active and mounted before `kubelet.service`
+   starts (journal order), with the fixture checksums intact. Which path
+   activated it is recorded. It was the activation unit, not the initrd
+   (F7).
 
    **Negative test:** boot the control plane with the second data disk
    detached (the VG is incomplete). Pass:
@@ -423,7 +413,7 @@ Thresholds are fixed here, before the phase starts.
      everything from git.
 
    The production data-disk initialisation script is never run. The import
-   path only activates (initrd) and mounts. Pass:
+   path only activates (the unit) and mounts. Pass:
    - identical VG/LV UUIDs and checksums;
    - the static PVs bind again and the pods read the same checksums;
    - the marker rows are present;
@@ -454,7 +444,8 @@ implementation. Give the cost of each workaround.
   the mount happen first. Step 0's negative test is the evidence.
 - **Unproven until implementation:** KSOPS on Argo CD v3.5.3, operator
   support for a Tailscale Service versus a device per Service, unsigned
-  sysext acceptance, and initrd activation completing before switch-root.
+  sysext acceptance (passed in step 0), and initrd activation (it doesn't
+  happen, F7).
   Each is gated by the first step that uses it.
 - **The template's Argo CD isn't ours.** A Bluefin update can change it
   (Phase 5). Whatever D2 patches has to be re-checked on every release bump.

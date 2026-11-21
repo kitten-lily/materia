@@ -7,6 +7,7 @@
 #USAGE flag "--no-reboot" help="start: exit QEMU on the first guest reset"
 #USAGE flag "--offline" help="start: bring up both NICs with the link down (recovery check L1)"
 #USAGE flag "--topology <topology>" default="lan" help="start: lan (Phase 1: shared segment) or tailnet (Phase 2: one NIC, Tailscale auth key, denial-probe forwards)"
+#USAGE flag "--without-data <n>" help="start: leave data disk n detached (Phase 3 missing-disk test)"
 #USAGE flag "--reinstall" help="install: firmware already holds the Bluefin keys; skip the enroll stage (recovery procedure L3)"
 
 # Design: specs/plans/bluefin-server-pilot-phase1.md ("Tooling", "Machines and
@@ -74,6 +75,7 @@ base_args() {
     -drive "file=${_dir}/os.qcow2,if=none,id=os,format=qcow2"
     -device virtio-blk-pci,drive=os,serial=bluefin-os)
   for i in "${!_data[@]}"; do
+    [[ "${usage_without_data:-}" == "$((i + 1))" ]] && { echo "data disk $((i + 1)) left detached"; continue; }
     _args+=(-drive "file=${_dir}/data$((i + 1)).qcow2,if=none,id=data$((i + 1)),format=qcow2"
       -device "virtio-blk-pci,drive=data$((i + 1)),serial=bluefin-data$((i + 1))")
   done

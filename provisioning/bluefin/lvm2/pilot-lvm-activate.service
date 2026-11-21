@@ -1,0 +1,19 @@
+# Bluefin pilot (#179) Phase 3: activate VG pilot_data at boot.
+# Design: specs/plans/bluefin-server-pilot-phase3.md (D6). This is the
+# activation path: the initrd ships lvm and 69-dm-lvm.rules, but its
+# freedesktop-sdk build compiles in event_activation = 0, so it never
+# autoactivates (its pvscan answers LVM_EVENT_ACTIVATION=0). The condition
+# skips this unit if something else already activated the VG. It uses the
+# pilot-lvm2 sysext's lvm (or the static fallback path), waits up to a minute
+# for every PV, and never activates a partial VG.
+[Unit]
+Description=Activate VG pilot_data
+After=systemd-sysext.service
+Before=var-lib-pilot\x2ddata.mount
+ConditionPathExists=!/dev/mapper/pilot_data-data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=2min
+ExecStart=/bin/sh -c 'L=/usr/bin/lvm; [ -x "$$L" ] || L=/var/opt/pilot-lvm/lvm; echo "activating pilot_data with $$L"; i=0; until "$$L" vgchange -ay --activationmode complete pilot_data; do i=$$((i + 1)); [ "$$i" -ge 12 ] && exit 1; sleep 5; done'

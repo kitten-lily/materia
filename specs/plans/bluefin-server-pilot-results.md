@@ -13,7 +13,7 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 | 0 — Baseline, release, recovery | **pass** (step 4's two checks ran in Phase 1, 2026-11-20) | below |
 | 1 — Local control plane + worker | **pass** 2026-11-20 | below |
 | 2 — Host VPN + cross-site networking | **pass** 2026-11-21, except `readyz` p95 (540 ms over DERP vs 500 ms), deferred to Phase 4 by decision | below |
-| 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
+| 3 — Persistent services as Kubernetes workloads | **in progress**: step 0 (data volume) pass 2026-11-21 | below |
 | 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
@@ -444,7 +444,38 @@ Defects found and fixed during the run (all pilot tooling unless noted):
 - **Tailscale used the pod network as a "direct" path (tunnel in a tunnel).**
   See finding F5.
 
+## Phase 3 — 2026-11-21 (in progress)
+
+Design: [bluefin-server-pilot-phase3.md](bluefin-server-pilot-phase3.md).
+Runs on the Phase 2 cluster until step 6 rebuilds it.
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| 0 Unsigned sysext | pass | `pilot-lvm2_26.11.2506.raw` (EROFS, built by `mise bluefin:pilot:lvm2-sysext` from Alpine `lvm2-static` 2.03.32-r0, apk sha256 `ee262d61…`) merged by `systemd-sysext refresh` with the release's own extensions; `lvm version` 2.03.32 from `/usr/bin/lvm`; cluster stayed `Ready` through the refresh. The release's own sysexts are plain EROFS images too (no dm-verity signature): their trust comes from sysupdate's `SHA256SUMS.gpg`, so the static-path fallback was not needed |
+| 0 Create | pass | PVs on `virtio-bluefin-data1/2` (checked empty with `blkid -p` first), VG `pilot_data` (2 PVs), LV `data` 15.99 GiB linear across both (bow's shape), ext4 label `pilot-data`, filesystem UUID recorded for the mount unit; fixtures (32/16 MiB media files, 256 MiB random, a hardlink pair across `Downloads/`→`Movies/`) written only after `findmnt` matched that UUID; a second `create` refuses. One creation-only quirk: the LV was made by our lvm with udev rules off and formatted afterwards, so `/dev/disk/by-uuid` appeared only after `udevadm trigger --action=change` |
+| 0 Activation at boot | pass, **not by the initrd** | after reboot: `pilot-lvm-activate.service` activated the VG at 9.4 s, mounted 9.45 s, kubelet started 10.2 s; fixtures and hardlink inode intact. The initrd did nothing (no `pvscan` line), although the disks appeared there at 2.46 s: see F7 |
+| 0 Missing disk | pass (pod half pending step 3) | booted with `--without-data 2`: lvm `Refusing activation of partial LV pilot_data/data` (missing PV, last on `/dev/vdc`), the unit failed after its minute of retries, the mount failed at 97 s (`dependency`), kubelet ran, both nodes `Ready`, `/var/lib/pilot-data` on the root disk empty. Disk reattached: same VG/LV UUIDs, fixtures intact |
+
 ## Findings
+
+**F7 — Bluefin has no usable LVM outside the initrd, and the initrd never
+autoactivates.** Upstream removed lvm2 from `/usr` (projectbluefin/server#487,
+2026-10-17: nothing in the image used it) and kept `lvm`, `pvscan`,
+`vgchange` and `69-dm-lvm.rules` in the initrd (#489). But the
+freedesktop-sdk lvm2 build compiles in `global/event_activation = 0` (the
+initrd's `lvm.conf` documents it as the automatic default, with nothing
+overriding it), so the rule's `pvscan` answers `LVM_EVENT_ACTIVATION=0` and
+nothing is ever activated: confirmed by running the initrd's own `lvm`
+(2.03.43) with its own config and libraries on the node. So an existing VG
+(bow's two-NVMe `vg_data`) needs tooling we supply: the pilot's `pilot-lvm2`
+sysext (static lvm) and `pilot-lvm-activate.service`, ordered before the data
+mount and kubelet. It works, but it is a self-maintained binary on the boot
+path of bow's data. Production options: keep our sysext (rebuild per release,
+since its `extension-release` is locked to the image version like upstream's),
+or ask upstream for an lvm2 feature/sysext with activation (needs the
+operator's permission). No upstream issue mentions lvm2; ZFS ships as a signed
+`zfs` feature but is coupled to the kernel (#678).
+
 
 **F6 — The homelab Cilium runs IPv4-only, so the host firewall does not
 cover IPv6 at all.** The homelab manifest sets `enable-ipv6: 'false'`; Cilium
