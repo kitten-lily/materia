@@ -255,6 +255,9 @@ the previous one being ready:
 3. Apply the KSOPS repo-server patch from a plaintext kustomization in git
    (`platform/argocd-ksops/`, no encrypted content, so it needs no KSOPS to
    render). Wait for the repo-server rollout.
+   Every Application that renders KSOPS secrets syncs with
+   `ServerSideApply=true`: client-side apply leaves the decrypted Secret in
+   plaintext in `last-applied-configuration` (step 2 result).
 4. Tune polling: `argocd-cm` `timeout.reconciliation: 60s` and
    `timeout.reconciliation.jitter: 10s`, then restart the application
    controller. At the template's defaults a push takes up to ~7 min (step 1
