@@ -2,8 +2,11 @@
 #MISE description="Render a Bluefin pilot node's Ignition config from the pinned homelab template (#179)"
 
 #USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
+#USAGE flag "--topology <topology>" default="lan" help="lan (Phase 1: shared segment, static IPs) or tailnet (Phase 2: Tailscale only)"
+#USAGE flag "--tailnet-suffix <suffix>" help="tailnet MagicDNS suffix (default: from this workstation's tailscale status)"
 
-# Design: specs/plans/bluefin-server-pilot-phase1.md. Output goes to
+# Design: specs/plans/bluefin-server-pilot-phase1.md (lan) and
+# specs/plans/bluefin-server-pilot-phase2.md (tailnet). Output goes to
 # ~/.cache/bluefin-pilot/render/<vm>/ (mode 0700/0600) and is never committed:
 # it embeds the pilot SSH public key, the root password hash and, for the
 # node, the join passphrase file.
@@ -16,6 +19,9 @@ case "$_vm" in
   bluefin-pilot-node) _role=node; _ip=10.77.0.11; _mac_lan=52:54:00:77:00:11 ;;
   *) echo "error: unknown pilot VM '$_vm' (expected bluefin-pilot-cp or bluefin-pilot-node)" >&2; exit 1 ;;
 esac
+
+_topology="${usage_topology:-lan}"
+case "$_topology" in lan|tailnet) ;; *) echo "error: --topology must be lan or tailnet" >&2; exit 1 ;; esac
 
 _rel=v26.11.2506
 _cache="${HOME}/.cache/bluefin-pilot"
@@ -47,14 +53,23 @@ umask 077
 
 # homelab.conf.template additions (appended after the upstream content).
 _conf_extra="
-# --- Bluefin pilot (#179), see specs/plans/bluefin-server-pilot-phase1.md
+# --- Bluefin pilot (#179), see specs/plans/bluefin-server-pilot-phase1.md and -phase2.md
 HOMELAB_KURED=no"
+# Close the additions with a newline (set below), so nothing appended to
+# homelab.conf later lands on the same line.
+_cp_join="$_cp_ip"
+if [[ "$_topology" == tailnet ]]; then
+  _suffix="${usage_tailnet_suffix:-$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix // empty')}"
+  [[ "$_suffix" =~ ^[a-z0-9-]+\.ts\.net$ ]] || { echo "error: no valid tailnet MagicDNS suffix (got '${_suffix}'); pass --tailnet-suffix" >&2; exit 1; }
+  _cp_join="bluefin-pilot-cp.${_suffix}"
+fi
 if [[ "$_role" == control-plane ]]; then
-  _conf_extra+="
+  # MetalLB pool only means something on the shared segment (lan).
+  [[ "$_topology" == lan ]] && _conf_extra+="
 HOMELAB_METALLB_ADDRESSES=${_metallb}"
 else
   _conf_extra+="
-HOMELAB_CONTROL_PLANE=${_cp_ip}"
+HOMELAB_CONTROL_PLANE=${_cp_join}"
 fi
 
 _network="[Match]
@@ -108,7 +123,8 @@ containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
 
 export PILOT_PUBKEY PILOT_CONF_EXTRA PILOT_HOSTNAME PILOT_NETWORK PILOT_KUBELET PILOT_INIT
 PILOT_PUBKEY="$(cat "$_pubkey")"
-PILOT_CONF_EXTRA="$_conf_extra"
+PILOT_CONF_EXTRA="${_conf_extra}
+"
 PILOT_HOSTNAME="${_vm}
 "
 PILOT_NETWORK="$_network"
@@ -124,14 +140,52 @@ yq eval '
       {"name": "systemd-sysupdate-reboot.timer", "mask": true}
     ]
   | .storage.files += [
-      {"path": "/etc/hostname", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_HOSTNAME)}},
-      {"path": "/etc/systemd/network/10-pilot-lan.network", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_NETWORK)}},
-      {"path": "/etc/default/kubelet", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_KUBELET)}}
+      {"path": "/etc/hostname", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_HOSTNAME)}}
     ]
 ' "$_tmpl" > "$_bu"
 
-if [[ "$_role" == control-plane ]]; then
-  yq eval -i '.storage.files += [{"path": "/etc/kubernetes/bluefin/init.yaml", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_INIT)}}]' "$_bu"
+if [[ "$_topology" == lan ]]; then
+  yq eval -i '.storage.files += [
+      {"path": "/etc/systemd/network/10-pilot-lan.network", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_NETWORK)}},
+      {"path": "/etc/default/kubelet", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_KUBELET)}}
+    ]' "$_bu"
+  if [[ "$_role" == control-plane ]]; then
+    yq eval -i '.storage.files += [{"path": "/etc/kubernetes/bluefin/init.yaml", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_INIT)}}]' "$_bu"
+  fi
+else
+  # Phase 2: the tailscale sysext feature, tailscaled enabled by link (sysext
+  # units merge after presets), the prep unit and script, and drop-ins that
+  # order every Kubernetes unit after the prep unit.
+  _repo="$(git rev-parse --show-toplevel)"
+  export PILOT_PREP_UNIT PILOT_PREP_SCRIPT PILOT_DROPIN PILOT_TS_FEATURE PILOT_TS_GUARD
+  PILOT_PREP_UNIT="$(cat "${_repo}/provisioning/bluefin/pilot-tailnet-prep.service")"
+  PILOT_TS_GUARD="$(cat "${_repo}/provisioning/bluefin/tailscaled-no-pod-paths.conf")"
+  PILOT_PREP_SCRIPT="$(sed -e "s|@ROLE@|${_role}|" -e "s|@HOST@|${_vm}|" -e "s|@CP_FQDN@|${_cp_join}|" \
+    "${_repo}/provisioning/bluefin/tailnet-prep.sh")"
+  grep -q '@[A-Z_]*@' <<<"$PILOT_PREP_SCRIPT" && { echo "error: unsubstituted placeholder in tailnet-prep" >&2; exit 1; }
+  PILOT_DROPIN="[Unit]
+Requires=pilot-tailnet-prep.service
+After=pilot-tailnet-prep.service
+"
+  PILOT_TS_FEATURE="[Feature]
+Enabled=true
+"
+  yq eval -i '
+    .storage.files += [
+      {"path": "/etc/sysupdate.d/tailscale.feature.d/50-pilot.conf", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_TS_FEATURE)}},
+      {"path": "/etc/systemd/system/pilot-tailnet-prep.service", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_PREP_UNIT)}},
+      {"path": "/etc/systemd/system/tailscaled.service.d/50-pilot.conf", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_TS_GUARD)}},
+      {"path": "/etc/bluefin-pilot/tailnet-prep", "mode": 493, "overwrite": true, "contents": {"inline": strenv(PILOT_PREP_SCRIPT)}}
+    ]
+    | .storage.links += [
+      {"path": "/etc/systemd/system/multi-user.target.wants/tailscaled.service", "target": "/usr/lib/systemd/system/tailscaled.service", "overwrite": true},
+      {"path": "/etc/systemd/system/multi-user.target.wants/pilot-tailnet-prep.service", "target": "/etc/systemd/system/pilot-tailnet-prep.service", "overwrite": true}
+    ]
+  ' "$_bu"
+  for u in kubeadm-init-config bluefin-cluster-prepare kubeadm-init kubelet bluefin-cluster-join bluefin-homelab-apply; do
+    PILOT_DROPIN_PATH="/etc/systemd/system/${u}.service.d/50-pilot.conf" \
+      yq eval -i '.storage.files += [{"path": strenv(PILOT_DROPIN_PATH), "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_DROPIN)}}]' "$_bu"
+  done
 fi
 
 # The placeholder key line must be gone and no other key may be present.

@@ -1,0 +1,21 @@
+# Bluefin pilot (#179) Phase 2: join the tailnet before any Kubernetes unit.
+# Design: specs/plans/bluefin-server-pilot-phase2.md ("Node bootstrap").
+# kubeadm-init-config, bluefin-cluster-prepare, kubeadm-init, kubelet,
+# bluefin-cluster-join and bluefin-homelab-apply each carry a drop-in with
+# Requires= and After= on this unit.
+[Unit]
+Description=Bluefin pilot: join the tailnet before Kubernetes
+Wants=network-online.target
+After=network-online.target systemd-resolved.service systemd-tmpfiles-setup.service bluefin-sysext-fetch.service systemd-sysext.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ImportCredential=pilot.tailscale-authkey
+ExecStart=/etc/bluefin-pilot/tailnet-prep
+TimeoutStartSec=20min
+Restart=on-failure
+RestartSec=30s
+
+[Install]
+WantedBy=multi-user.target

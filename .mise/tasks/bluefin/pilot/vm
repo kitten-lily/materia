@@ -6,6 +6,7 @@
 #USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
 #USAGE flag "--no-reboot" help="start: exit QEMU on the first guest reset"
 #USAGE flag "--offline" help="start: bring up both NICs with the link down (recovery check L1)"
+#USAGE flag "--topology <topology>" default="lan" help="start: lan (Phase 1: shared segment) or tailnet (Phase 2: one NIC, Tailscale auth key, denial-probe forwards)"
 #USAGE flag "--reinstall" help="install: firmware already holds the Bluefin keys; skip the enroll stage (recovery procedure L3)"
 
 # Design: specs/plans/bluefin-server-pilot-phase1.md ("Tooling", "Machines and
@@ -23,8 +24,8 @@ _action="${usage_action:?action required}"
 _vm="${usage_vm:?pilot VM required, use --vm}"
 [[ "$_vm" =~ ^bluefin-pilot-[a-z0-9-]+$ ]] || { echo "error: refusing non-pilot name '$_vm'" >&2; exit 1; }
 case "$_vm" in
-  bluefin-pilot-cp)   _cpus=4; _mem=8192; _os_size=64G; _data=(8G 8G); _ssh=2210; _id=10 ;;
-  bluefin-pilot-node) _cpus=2; _mem=4096; _os_size=40G; _data=(8G);    _ssh=2211; _id=11 ;;
+  bluefin-pilot-cp)   _cpus=4; _mem=8192; _os_size=64G; _data=(8G 8G); _ssh=2210; _id=10; _probe=2 ;;
+  bluefin-pilot-node) _cpus=2; _mem=4096; _os_size=40G; _data=(8G);    _ssh=2211; _id=11; _probe=3 ;;
   *) echo "error: unknown pilot VM '$_vm'" >&2; exit 1 ;;
 esac
 
@@ -82,10 +83,19 @@ base_args() {
 }
 
 net_args() {
-  _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22"
-    -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}"
-    -netdev "socket,id=lan,mcast=${_mcast},localaddr=127.0.0.1"
-    -device "virtio-net-pci,netdev=lan,mac=${_mac_lan}")
+  if [[ "${usage_topology:-lan}" == tailnet ]]; then
+    # One NIC only (no shared segment). Extra forwards from the workstation's
+    # loopback to guest 6443/6447/10250 (tcp) and 8472 (udp) on this non-tailnet
+    # NIC are the Phase 2 denial probes (design, "Denial tests"):
+    # ${_probe}6443 ${_probe}6447 ${_probe}0250 tcp, ${_probe}8472 udp.
+    _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22,hostfwd=tcp:127.0.0.1:${_probe}6443-:6443,hostfwd=tcp:127.0.0.1:${_probe}6447-:6447,hostfwd=tcp:127.0.0.1:${_probe}0250-:10250,hostfwd=udp:127.0.0.1:${_probe}8472-:8472"
+      -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}")
+  else
+    _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22"
+      -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}"
+      -netdev "socket,id=lan,mcast=${_mcast},localaddr=127.0.0.1"
+      -device "virtio-net-pci,netdev=lan,mac=${_mac_lan}")
+  fi
 }
 
 firstboot_creds() {
@@ -165,8 +175,20 @@ start)
   [[ -s "${_render}/bluefin-cluster.passphrase" ]] \
     && _args+=(-smbios "$(cred bluefin-cluster.passphrase "${_render}/bluefin-cluster.passphrase")")
   [[ -n "${usage_no_reboot:-}" ]] && _args+=(-no-reboot)
+  # Phase 2: the Tailscale auth key as a fw_cfg credential from a short-lived
+  # file (QEMU reads it at startup), so it is never in QEMU's argv or in the
+  # render directory.
+  _keyfile=""
+  if [[ "${usage_topology:-lan}" == tailnet ]]; then
+    _keyfile="$(mktemp "${_dir}/.authkey.XXXXXX")"
+    pass-cli item view --vault-name bluefin-pilot --item-title tailscale-auth-key --field key | tr -d '\n' > "$_keyfile"
+    [[ "$(head -c11 "$_keyfile")" == tskey-auth- ]] || { rm -f "$_keyfile"; echo "error: tailscale-auth-key not readable from the pilot vault" >&2; exit 1; }
+    _args+=(-fw_cfg "name=opt/io.systemd.credentials/pilot.tailscale-authkey,file=${_keyfile}")
+  fi
   _args+=(-daemonize -pidfile "${_dir}/qemu.pid")
-  "${_args[@]}"
+  _rc=0; "${_args[@]}" || _rc=$?
+  [[ -n "$_keyfile" ]] && rm -f "$_keyfile"
+  [[ $_rc -eq 0 ]] || { echo "error: QEMU failed to start (exit $_rc)" >&2; exit "$_rc"; }
   if [[ -n "${usage_offline:-}" ]]; then
     qmp '{"execute":"set_link","arguments":{"name":"wan","up":false}}' '{"execute":"set_link","arguments":{"name":"lan","up":false}}'
     echo "both NICs link down"
