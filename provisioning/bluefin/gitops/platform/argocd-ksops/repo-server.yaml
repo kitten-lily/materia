@@ -1,0 +1,33 @@
+# Bluefin pilot (#179) Phase 3 step 2: KSOPS in the template's argocd-repo-server.
+# Applied by `mise bluefin:pilot:bootstrap` with server-side apply under its own
+# field manager (pilot-bootstrap), NOT by Argo CD: it must exist before any
+# encrypted manifest can render. It only adds fields the homelab template does
+# not set (an init container, two volumes, two mounts, two env vars), so the
+# template's own server-side apply on every boot leaves them alone (verified in
+# step 2). Design: specs/plans/bluefin-server-pilot-phase3.md (D2).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+  namespace: argocd
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: install-ksops
+        image: docker.io/viaductoss/ksops:v4.5.1@sha256:4def9fdd4e2f850265740ebe9592c5455d19b76891e88e602df8b52d74b95334
+        command: ["/usr/local/bin/ksops", "install", "/custom-tools"]
+        volumeMounts:
+        - {mountPath: /custom-tools, name: custom-tools}
+      containers:
+      - name: argocd-repo-server
+        env:
+        - {name: XDG_CONFIG_HOME, value: /.config}
+        - {name: SOPS_AGE_KEY_FILE, value: /.config/sops/age/keys.txt}
+        volumeMounts:
+        - {mountPath: /usr/local/bin/ksops, name: custom-tools, subPath: ksops}
+        - {mountPath: /.config/sops/age, name: sops-age, readOnly: true}
+      volumes:
+      - {name: custom-tools, emptyDir: {}}
+      # Created by the bootstrap from the bluefin-pilot vault; never in git.
+      - {name: sops-age, secret: {secretName: pilot-sops-age}}

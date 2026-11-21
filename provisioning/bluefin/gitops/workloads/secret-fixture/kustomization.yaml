@@ -1,0 +1,10 @@
+# Bluefin pilot (#179) Phase 3 step 2: secret fixture. KSOPS decrypts
+# secret.sops.yaml inside Argo CD's repo-server (pilot-only age key); the
+# consumer logs only a sha256 prefix of the value and its revision, never the
+# value. Design: specs/plans/bluefin-server-pilot-phase3.md (D2, step 2).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- consumer.yaml
+generators:
+- secret-generator.yaml

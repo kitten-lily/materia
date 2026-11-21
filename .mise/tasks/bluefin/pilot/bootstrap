@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#MISE description="Bootstrap a Bluefin pilot cluster for GitOps: age key, KSOPS, Argo CD tuning, root Application (#179)"
+
+# Design: specs/plans/bluefin-server-pilot-phase3.md ("Bootstrap, outside
+# workload GitOps"). Idempotent; run once per new cluster and again after the
+# step 6 reinstall. Every step waits for the previous one to be ready. Runs
+# kubectl on the control plane over the harness SSH. The age key goes from the
+# bluefin-pilot vault to the API server on stdin only (never argv, never disk).
+#
+# Not here yet: the design's step 1 (the Phase 2 Cilium host-firewall objects,
+# audit then enforce); added before step 6, the first time a fresh cluster
+# needs it. The running Phase 2 cluster already has them.
+
+set -euo pipefail
+
+_repo="$(git rev-parse --show-toplevel)"
+_ssh=(ssh -F "${HOME}/.cache/bluefin-pilot/secrets/ssh_config" bluefin-pilot-cp)
+_ksops="${_repo}/provisioning/bluefin/gitops/platform/argocd-ksops"
+_ssa=(kubectl apply --server-side --force-conflicts --field-manager=pilot-bootstrap)
+_root_repo=https://github.com/kitten-lily/materia.git
+_root_rev=main
+_root_path=provisioning/bluefin/gitops/apps
+
+echo "== age key Secret (argocd/pilot-sops-age)"
+pass-cli item view --vault-name bluefin-pilot --item-title sops-age-key --field note \
+  | "${_ssh[@]}" "kubectl -n argocd create secret generic pilot-sops-age --from-file=keys.txt=/dev/stdin --dry-run=client -o yaml | ${_ssa[*]} -f - >/dev/null && echo applied"
+
+echo "== Argo CD settings and the KSOPS repo-server patch"
+"${_ssh[@]}" "${_ssa[*]} -f -" < "${_ksops}/argocd-cm.yaml"
+"${_ssh[@]}" "${_ssa[*]} -f -" < "${_ksops}/repo-server.yaml"
+"${_ssh[@]}" 'kubectl -n argocd rollout status deploy/argocd-repo-server --timeout=300s'
+# The controller reads timeout.reconciliation at startup.
+"${_ssh[@]}" 'kubectl -n argocd rollout restart sts/argocd-application-controller >/dev/null && kubectl -n argocd rollout status sts/argocd-application-controller --timeout=300s'
+# ksops has no --help/version: any argument is read as a manifest path.
+"${_ssh[@]}" 'kubectl -n argocd exec deploy/argocd-repo-server -c argocd-repo-server -- test -x /usr/local/bin/ksops && echo "ksops present in repo-server"'
+
+echo "== root Application"
+"${_ssh[@]}" "set -e; c=/etc/bluefin/homelab.conf
+  if grep -qx 'HOMELAB_ARGOCD_ROOT_REPO=${_root_repo}' \$c && grep -qx 'HOMELAB_ARGOCD_ROOT_REVISION=${_root_rev}' \$c && grep -qx 'HOMELAB_ARGOCD_ROOT_PATH=${_root_path}' \$c; then
+    echo 'homelab.conf already points at the pilot root'
+  else
+    sed -i -e 's|^#*HOMELAB_ARGOCD_ROOT_REPO=.*|HOMELAB_ARGOCD_ROOT_REPO=${_root_repo}|' \
+      -e 's|^#*HOMELAB_ARGOCD_ROOT_REVISION=.*|HOMELAB_ARGOCD_ROOT_REVISION=${_root_rev}|' \
+      -e 's|^#*HOMELAB_ARGOCD_ROOT_PATH=.*|HOMELAB_ARGOCD_ROOT_PATH=${_root_path}|' \$c
+    systemctl restart bluefin-homelab-apply.service
+  fi
+  kubectl -n argocd get applications"

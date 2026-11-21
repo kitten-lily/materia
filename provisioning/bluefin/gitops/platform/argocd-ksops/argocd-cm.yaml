@@ -1,0 +1,17 @@
+# Bluefin pilot (#179) Phase 3: settings added to the template's argocd-cm.
+# Applied by `mise bluefin:pilot:bootstrap` (server-side apply, field manager
+# pilot-bootstrap); only keys the homelab template does not set.
+# - kustomize.buildOptions: lets kustomize run KSOPS as an exec KRM function.
+# - timeout.reconciliation(.jitter): at the template's defaults (120 s + up to
+#   60 s, plus the repo-server's 3 min revision cache) a push took 412 s to
+#   roll out; 60 s + 10 s keeps it under 5 min (results, Phase 3 step 1). The
+#   application controller reads these at startup: restart it after a change.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  kustomize.buildOptions: "--enable-alpha-plugins --enable-exec"
+  timeout.reconciliation: 60s
+  timeout.reconciliation.jitter: 10s

@@ -3,5 +3,11 @@
 # Put the public key (age1...) below. Bake key.txt into Ignition at provision time.
 # Docs: https://github.com/getsops/sops#age
 creation_rules:
+  # Bluefin pilot (#179) GitOps secrets: a pilot-only key (bluefin-pilot vault,
+  # item sops-age-key), never the fleet key. Only Secret data is encrypted, so
+  # Argo CD and kustomize can still read the object's kind and name.
+  - path_regex: provisioning/bluefin/gitops/.*\.sops\.yaml$
+    encrypted_regex: ^(data|stringData)$
+    age: age16ac8fzv2zmv99x0wlutk0z7efx86t8lvyqyrm4c3s0r8tt9hhdsqd06sja
   - path_regex: attributes/.*\.yml$
     age: age1lpkjhlgr84pxryer6z72ygp6v67985e35e4tl28042gmyytavv2q6lpudk
