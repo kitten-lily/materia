@@ -12,7 +12,7 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 | --- | --- | --- |
 | 0 — Baseline, release, recovery | **pass** (step 4's two checks ran in Phase 1, 2026-11-20) | below |
 | 1 — Local control plane + worker | **pass** 2026-11-20 | below |
-| 2 — Host VPN + cross-site networking | not started | |
+| 2 — Host VPN + cross-site networking | **pass** 2026-11-21, except `readyz` p95 (540 ms over DERP vs 500 ms), deferred to Phase 4 by decision | below |
 | 3 — Persistent services as Kubernetes workloads | not started; rescoped 2026-11-09 per F2 decision | |
 | 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
 | 5 — Updates, failures, recovery | not started | |
@@ -335,7 +335,149 @@ Observations to follow up:
   `root-console-password`, `join-passphrase` (alongside
   `tailscale-auth-key`).
 
+## Phase 2 — 2026-11-20/21
+
+Design: [bluefin-server-pilot-phase2.md](bluefin-server-pilot-phase2.md).
+Both VMs rebuilt with `--topology tailnet`: one NIC each (QEMU user-net NAT),
+no shared segment, so every node-to-node packet crosses Tailscale. Control
+plane `<cp-tailnet-ip>`, worker `<worker-tailnet-ip>` (tailnet IPs; the MagicDNS
+suffix is kept out of the repo).
+
+| Step | Result | Evidence |
+| --- | --- | --- |
+| 1 Host Tailscale before Kubernetes | pass | `pilot-tailnet-prep` finished before `bluefin-cluster-join`, `kubeadm-init` and kubelet on both (cp 9.7 s, worker 53.7 s monotonic); `tailscale debug prefs`: `NetfilterMode: 0`, `CorpDNS: true`, tag `tag:bluefin-pilot`; worker has one NIC (`enp0s4`) plus `tailscale0`; no failed units. Note: Bluefin ships **no `nft` and no `iptables`**, so "no Tailscale firewall rules" rests on `NetfilterMode: 0`, not on a ruleset listing (an earlier `nft list` check silently failed and proved nothing) |
+| 1 Ordering of `init.yaml` writers | pass | final `init.yaml` matches the prep unit's own checksum (`sha256sum -c` OK): neither `kubeadm-init-config` nor `bluefin-cluster-prepare` changed it |
+| 2 Endpoint and identity | pass | cp `Ready` 96 s after the (fixed) boot, worker `Ready` 108 s after its first boot; InternalIPs are the tailnet IPs; worker join log `endpoint=bluefin-pilot-cp.<tailnet>.ts.net:6443`; TLS to the FQDN verifies against the cluster CA from the workstation over the tailnet (`Verify return code: 0`) and from the worker (`readyz` 200, `ssl_verify=0`); SANs = FQDN, short name, tailnet IP; a wrong name fails verification (curl exit 60) |
+| 3a Dataplane over the tailnet | pass | pod↔pod across nodes both ways, Service by name backed by the other node's pod both ways, `kubernetes.default` → `10.96.0.1` from both; Cilium node IPs are the tailnet IPs; pod-to-tailnet: a pod on the cp fetched `pilot-tailnet-ok` from a `tailscale serve` endpoint on the worker's host across the tailnet; 64 MiB pod→pod transfer checksum-intact at ~18.5 Mbit/s |
+| 3a Path | DERP | both directions relayed by Tailscale DERP (`ams` one way, `lhr` the other), ~50 ms; `PeerRelay` empty; `netcheck` `MappingVariesByDestIP: true` on both (QEMU user-net behaves as hard NAT). The production peer relay is not granted to `tag:bluefin-pilot` by design, so the local numbers are a worst case |
+| 3a MTU | correct | pod `eth0` 1280 (Tailscale's MTU, Cilium's device MTU) with the pod default route at **mtu 1230** (1280 − 50 VXLAN), as Cilium's `getRouteMTU` intends; a 64 MiB transfer moved none of the fragment counters |
+
+| 3a Connectivity test (baseline) | 81/82 | `cilium connectivity test` (CLI v0.20.2, sha256-verified; compatible with Cilium 1.17+), 56 skipped (CLI-marked unsafe tests incl. its own host-firewall tests, disabled features, k8s-localhost tests). The one failure, `no-unexpected-packet-drops`, reports exactly the pre-guard fragment-drop counts (5,539 / 6,967), unchanged across the whole run and across an agent restart: Cilium keeps drop metrics in a pinned BPF map. No new drops occurred. The first run (before the agent restart) also failed `check-log-errors` on the worker agent's 19:51–19:52 API timeouts from the loop window; after the restart that check passes |
+| 3a Denial controls | pass (controls) | with the host firewall off, through the non-tailnet NIC: cp 6443 → 200, cp 10250 → 401, cp 6447 → connection arrives (seen on the guest with `ss`), worker 10250 → 401; worker 6443/6447 have no listener (negatives). Two probe-harness faults found and fixed first: the workstation has no `nc` (every earlier "closed" was the probe failing to run), and QEMU's forward accepts locally before trying the guest (a bare connect always "succeeds") |
+| 3b Audit mode | pass, after 3 policy fixes | see "Step 3b findings" below. A short window then showed only the denial probes as would-deny. Running the connectivity test in audit mode failed 48/82: `policy-audit-mode` is node-wide, so it also made every pod-level deny policy audit-only (all failures were `*-deny`, L7, FQDN and entity-policy tests), which also means audit mode cannot be left on while validating pod policies |
+| 3c Enforce: denial tests | pass (partial coverage) | through the non-tailnet NIC every probe is blocked on both nodes: tcp 6443, 10250, 6447 (no connection arrives on the guest) and udp 8472; Cilium's drop log records each as `Policy denied` from `10.0.2.2`, the UDP one decoded as a VXLAN tunnel packet. Partial: a private NAT, not a public address, and IPv4 only (see F6) |
+| 3c Enforce: legitimate traffic | pass, after 4 more fixes | API from the workstation over the tailnet `Verify return code: 0`; worker → API by FQDN 200; dataplane fixture (pod↔pod both ways, Service by name, DNS) passes; `kubectl top` (metrics-server → kubelet 10250) and `exec` (API server → worker kubelet) work. Fixes found by the enforced connectivity test: Envoy L7 replies (11 L7 tests got 503), ICMP errors for PMTU, pod ICMP to the host, and Hubble Relay (crash-looped; see below). Final enforced run: **82/82 pass, 683 actions** (56 skipped as before) |
+| 3c Pod-to-tailnet under enforcement | not tested | the only allowed pilot tailnet targets are the cluster nodes themselves, and pod → node host ports are deliberately denied (the drop log shows `Policy denied` from the pod identity to the worker's host port). The host firewall filters ingress to nodes only, so pod traffic to a non-node tailnet service should be unaffected; [INFERENCE] confirming it needs a pilot-tagged non-node tailnet device. Before enforcement, pod-to-tailnet passed (3a) |
+| 3d Reboots (enforced) | pass | each node cold-rebooted twice (QEMU stop/start, so the current Ignition with the routing guard applies), one at a time; recovered = new bootID in the node status, node Ready, both Cilium agents ready: worker 33 s and 48 s, control plane 28 s and 24 s (threshold 10 min); every boot: prep unit success first try, both guard `ip rule`s installed by the drop-in, no failed units, no pod-network Tailscale path, host firewall enforcing on both devices. While the control plane is down the worker's agent crash-loops on API timeouts and recovers by itself. Fragment-drop counters were 0 after the reboots, and the connectivity test's drop check passed |
+
+| 4 Resilience (run 2, valid) | pass, except `readyz` p95 | fixture `provisioning/bluefin/fixtures/resilience.yaml`: 64 MiB checksum transfers through a Service across nodes, every 15 s, plus a long-lived TCP connection. **Tailnet-only outage** (`tailscale down` on the worker for 10 min, with the leak below blocked and proven blocked: API by tailnet IP `000`): node `NotReady` after 57 s; after `tailscale up`, node `Ready` +22 s and first good transfer +63 s (threshold 300 s). **Whole-NIC cut** (extra test, QMP `set_link` 10 min): `NotReady` after 52 s; `Ready` +16 s, good transfer +47 s. 18 good transfers, 80 with no data (all inside the outages), 2 short reads, each beginning 6 s after an outage started (streams cut off, not corrupted); no full-length transfer ever had wrong data. **`readyz` from the worker over the tailnet: p50 151 ms, p95 540 ms, max 1.12 s (threshold p95 < 500 ms): miss**, on a DERP-relayed path (run 1: p95 1.08 s). Long-lived connection: **inconclusive** (`nc` never noticed its server pod being evicted and recreated; the server's own log was lost with the pod) |
+| 4 Run 1 (invalid, kept for the record) | — | (a) **Harness leak:** with Tailscale down, the worker's route to the control plane's tailnet IP falls back to `via 10.0.2.2` (QEMU NAT on the workstation), and the workstation, itself a tailnet member allowed to reach pilot nodes, forwarded it: the API still answered 200, kubelet lease failures stopped after ~90 s, and the node never went `NotReady`. Pod traffic still failed (VXLAN from the workstation's address is not a known tunnel endpoint). Run 2 blocks it with `ip route add unreachable 100.64.0.0/10` on the worker for the duration of the outage. (b) The server pods were bare pods; evicted after the default 300 s unreachable toleration they were never recreated, so the NIC run "never recovered". Run 2 uses Deployments |
+
+Step 4 observations:
+
+- **Pods on the far side are evicted after 5 minutes of WAN outage.** In both
+  outages the worker's pods were evicted at the default
+  `node.kubernetes.io/unreachable` toleration of 300 s and recreated when the
+  node returned. For a home control plane with a cloud worker (or the
+  reverse), any WAN outage over 5 minutes reschedules every pod on the
+  unreachable side. Site-pinned or stateful workloads need deliberate
+  tolerations.
+- **Leak block, now permanent (decided 2026-11-21):** the `tailscaled`
+  drop-in also runs `ip route replace unreachable 100.64.0.0/10` before
+  Tailscale starts. Tailscale's table 52 is consulted first, so it changes
+  nothing while Tailscale is up (`ip route get <cp-tailnet-ip>` → `dev
+  tailscale0 table 52`); when it is down, tailnet-bound traffic fails cleanly
+  instead of leaking to the underlay. More specific routes inside the range
+  (Gerbil's `100.89.128.0/20` on an edge node) still win. Installed on both
+  VMs by hand and re-checked after a `tailscaled` restart: with Tailscale
+  down on the worker, `ip route get <cp-tailnet-ip>` gives `No route to host`
+  and the API by tailnet IP fails at once; after `tailscale up`, table 52
+  again, `readyz` by FQDN 200, both nodes `Ready`, Cilium `OK`.
+- **`readyz` p95 and throughput are DERP-bound locally.** Both VMs sit behind
+  QEMU's user-mode NAT (`MappingVariesByDestIP: true`) and the pilot is not
+  allowed to use the production peer relay, so every packet goes through
+  Tailscale's public DERP relays (~50 ms, ~18.5 Mbit/s). The threshold has to
+  be re-measured over a direct path (the Hetzner node, Phase 4) before the
+  plan's "recommend separate clusters" clause is considered. **Decided
+  2026-11-21: the miss does not block; Phase 4 re-measures `readyz` p95 over
+  the direct path.**
+
+Step 3b findings (host firewall in audit mode), each found because the plan
+required checking effective state rather than trusting the applied objects:
+
+- **Device list.** `devices: "tailscale0,enp0s5"` attached the firewall to
+  only `tailscale0` on the worker, whose NIC is `enp0s4`. Now
+  `tailscale0,en+` (Cilium's prefix wildcard); `cilium-dbg status` shows
+  `Host firewall: Enabled [enp0s4, tailscale0]` / `[enp0s5, tailscale0]`.
+- **Selector.** A `nodeSelector` on `kubernetes.io/hostname` selected
+  nothing: the host endpoint carried only `reserved:host`, none of the Node's
+  labels, so enforcement stayed `Disabled` and audit mode produced no host
+  verdicts at all. Now `nodeSelector: {}` (every node here is a pilot node).
+  Why the Node labels never reached the host endpoint is not yet understood;
+  production must understand it before relying on a label selector.
+- **Enforcement-only gaps, found by running the connectivity test enforced:**
+  (1) Cilium's Envoy L7 proxy connects to backends from the node's
+  `cilium_host` address, and the host firewall did not treat the backends'
+  replies as replies, so every L7 test got 503; now pods may reach the host on
+  TCP 32768–60999 (the kernel's ephemeral range; the only host listeners in
+  it are `cilium-agent`/`containerd` on 127.0.0.1 and `tailscaled`'s peer API
+  on the tailnet address). (2) ICMP destination-unreachable from outside was
+  denied at the host, which would break path-MTU discovery over Tailscale's
+  1280-byte MTU; ICMP types 3 and 11 are now allowed from anywhere. (3) Pods
+  pinging the node. (4) **Hubble Relay crash-looped** (46 restarts) because it
+  reaches each agent's Hubble server on the host network (tcp 4244, via the
+  `hubble-peer` Service). The audit window missed it because the relay's
+  connection predated it. Lesson: audit mode only shows flows that start
+  while it runs; long-lived connections must be forced to reconnect (restart
+  their pods) during the audit.
+- **Identities.** On the worker, traffic from the control plane's host
+  carries identity `kube-apiserver`, not `remote-node`, so every rule written
+  for `remote-node` missed it. Audit also showed MetalLB memberlist (tcp
+  7946) and Cilium node health pings (ICMP echo) between nodes with no rule.
+  All three are now allowed. After that, a short audit window showed only the
+  denial probes as would-deny: `10.0.2.2 →` 6443, 6447, 10250 and **udp
+  8472** on both nodes, which is also the receiver-side positive control for
+  the UDP probe.
+
+Defects found and fixed during the run (all pilot tooling unless noted):
+
+- **`/etc/default` does not exist** on Bluefin's factory `/etc`; writing
+  `/etc/default/kubelet` failed and the prep unit retried every 30 s. The
+  script creates the directory.
+- **`homelab.conf` had no trailing newline,** so appending glued two settings
+  into `HOMELAB_KURED=noHOMELAB_K8S_SERVICE_HOST=…`: Cilium fell back to the
+  FQDN as its API host and the kured value was corrupt (kured happened not to
+  deploy). The render now ends the template with a newline and the script
+  checks before appending. The running control plane was repaired in place
+  (applier re-run; Cilium rolled out with the tailnet IP) because a rebuild
+  would have registered a second tailnet device and renamed the node.
+- **Tailscale used the pod network as a "direct" path (tunnel in a tunnel).**
+  See finding F5.
+
 ## Findings
+
+**F6 — The homelab Cilium runs IPv4-only, so the host firewall does not
+cover IPv6 at all.** The homelab manifest sets `enable-ipv6: 'false'`; Cilium
+attaches no IPv6 policy. The local VMs have only link-local and QEMU's
+`fec0::` IPv6, so this was not exercised. The Hetzner node has a public IPv6
+address: Phase 4 must test IPv6 reachability of 6443/6447/10250/8472
+explicitly and decide what protects IPv6 (the provider firewall alone, which
+has no IPv6 rules for those ports, or another host layer).
+
+**F5 — Host Tailscale on a Cilium node routes itself through the pod
+network unless prevented.** Tailscale advertises every local interface
+address as a direct endpoint and skips only ZeroTier (`zt*`) and NetBird
+(`wt0`) interfaces (`net/netmon/state.go`, `isProblematicInterface`,
+v1.104.7). It therefore advertised Cilium's `cilium_host` address
+(`10.244.0.190`), and the worker reached the control plane `direct
+10.244.0.190:41641`: WireGuard inside Cilium's VXLAN inside WireGuard, at
+**739 ms** per ping, unstable (a ping alternated between a DERP pong and a
+timeout). WireGuard datagrams of ~1,360 bytes into the 1230-byte pod route were
+fragmented, which produced the connectivity test's ~12,500 "First logical
+datagram fragment not found" drops and ~2 million fragmented packets, all
+dated to that window (the counters stayed flat afterwards). The worker's
+Cilium agent also lost its API connection in that window (19:51:55–19:52:40
+UTC). [INFERENCE] the loop caused it. There is no supported Tailscale setting
+to exclude an interface, and Bluefin has no `nft`/`iptables`. Fix:
+policy routing that makes the pod and service ranges unreachable for traffic
+carrying Tailscale's socket mark (`ip rule … fwmark 0x80000/0xff0000 to
+10.244.0.0/16 prohibit`, same for `10.96.0.0/12`), installed by a
+`tailscaled.service` drop-in (`provisioning/bluefin/tailscaled-no-pod-paths.conf`)
+so it is in place before Tailscale picks paths. After it, the path is DERP at
+~49 ms. The same drop-in now also installs `unreachable 100.64.0.0/10` in the
+main table (step 4's leak block, made permanent). **Any production node running host Tailscale beside Cilium needs this
+guard.**
+
 
 **F1 — Firmware depends on the Hetzner server-type generation. RESOLVED:
 UEFI is available, but not on CX.** flutterina (cx23, created 2025-10-30) has
