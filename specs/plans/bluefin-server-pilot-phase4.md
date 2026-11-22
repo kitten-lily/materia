@@ -244,7 +244,17 @@ policy tests (pilot ↔ production denial) re-run, and again after any grant
 change.
 
 1. **Install.**
-   a. `hcloud server create` cpx22 hel1, firewall at creation, label
+   0. **Server type (operator request, 2026-11-22):** at creation time,
+      check whether **cx23** is orderable in hel1 (`hcloud server-type
+      describe cx23`; it comes and goes, and was available on 2026-11-22 at
+      €0.011/h gross, 40 GB disk). If it is, first run F1's two-minute
+      firmware probe on a cx23 (Debian image, `test -d /sys/firmware/efi`,
+      delete): flutterina's cx23 boots legacy BIOS, and Bluefin needs UEFI.
+      If the new cx23 boots UEFI, use it: it is flutterina's own type, so the
+      step 5 run sizes the real box, at a third of cpx22's price; the E1
+      image is then cut to its 40 GB disk. If it boots BIOS or is not
+      orderable, use cpx22 as below. Record the outcome in F1.
+   a. `hcloud server create` cpx22 (or cx23, step 0) hel1, firewall at creation, label
       `pilot=bluefin`, rescue enabled. In rescue: `lsblk`, `blockdev
       --getsize64`, `ls /sys/class/tpm`, `efibootmgr -v`, `SetupMode` /
       `SecureBoot` variables, enrolled keys.
@@ -319,7 +329,8 @@ measured capacity, or is reported incomplete.
 
 Creating the server (step 1a) is the first paid action, and only after the
 E1.2 rehearsal has passed. Before it, the user confirms cost (cpx22
-€0.033/h, ≈ €5.55 for 7 days, plus IPv4), the deletion deadline (creation +
+€0.033/h, ≈ €5.55 for 7 days, or cx23 €0.011/h, ≈ €1.85, plus IPv4, and
+the step 1.0 cx23 probe at a few cents), the deletion deadline (creation +
 7 days, written into the results), and that the E6 baseline is in. A
 floating IP or a cpx32 each need their own confirmation.
 
