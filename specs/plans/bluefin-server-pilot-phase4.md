@@ -7,8 +7,13 @@ Evidence goes to [the results](bluefin-server-pilot-results.md). Release
 v26.11.2506, pinned (F11). Status: **draft, 2026-11-22, revised the same
 day after a Codex review** (unproven boot without the installer's EFI
 variables, secrets on the ESP, no public-ingress rule in the host firewall,
-a weakened load gate, no schedule cutoffs, plus verification gaps). No
-decision taken yet. Nothing here is deployed and no paid resource exists.
+a weakened load gate, no schedule cutoffs, plus verification gaps).
+**Decided 2026-11-22** (operator): E4 a pilot subdomain of the production
+zone with no DNS token (TLS-ALPN-01 for Pangolin, HTTP-01 on a temporary
+tcp/80 for Envoy); E6 measure the baseline on flutterina, and amend the
+transfer gate to the measured home uplink if it is below 170 Mbit/s; every
+other recommendation (E1–E3, E5, E7–E10) as written. Nothing here is
+deployed and no paid resource exists.
 
 ## Starting point (2026-11-22)
 
@@ -120,7 +125,8 @@ and every later boot needs the URL too).
 **E3: Public ingress through the host firewall.** Recommended: a separate
 `CiliumClusterwideNetworkPolicy` `pilot-edge-public` admitting `world` on
 tcp/443 and udp/443, and udp/51820 + udp/21820 only during the Pangolin
-arm, scoped with `nodeSelector` on the edge's label. Because host endpoints
+arm and tcp/80 during the Envoy arm's issuance only (E4), scoped with
+`nodeSelector` on the edge's label. Because host endpoints
 here carry only `reserved:host`, the selector may again match nothing: the
 step 2 control proves it with a known listener (`python3 -m http.server`
 or a socat fixture on 443 before any edge workload) and
@@ -130,14 +136,20 @@ never mistaken for Cilium's. If the selector does not match, fall back to
 the same rule cluster-wide (the home nodes are behind NAT and have no
 public listener), recorded as such.
 
-**E4: Test DNS and ACME.** The production DNS-01 token (`cfDnsApiToken`,
-Cloudflare) can edit the whole production zone; Cloudflare tokens scope to
-a zone, not a subdomain. Recommended: **a separate throwaway zone** with
-its own pilot-only token in the `bluefin-pilot` vault, Let's Encrypt
-**staging** in both arms, and a wildcard record for the edge IP.
-Alternative: `*.pilot.<production domain>` by hand with TLS-ALPN-01 (no DNS
-token, but pilot records in the production zone). **The user's call**
-(which domain, cost).
+**E4: Test DNS and ACME. Decided: a pilot subdomain, no DNS token.** The
+production DNS-01 token (`cfDnsApiToken`, Cloudflare) can edit the whole
+production zone (tokens scope to a zone, not a subdomain), so the pilot
+uses none. The operator adds `*.pilot.<production domain>` (A only, E8)
+pointing at the edge IP by hand in Cloudflare after creation; it is more
+specific than the production wildcard, so production names are unaffected.
+Both arms use Let's Encrypt **staging** and per-hostname certificates (no
+wildcard without DNS-01). Pangolin's Traefik uses **TLS-ALPN-01** on 443
+(a pilot-only `tlsChallenge` resolver, not the production `dnsChallenge`).
+cert-manager has no TLS-ALPN-01 solver, so the Envoy arm uses **HTTP-01**
+through a Gateway listener on tcp/80, which is opened in the
+`bluefin-pilot` Hetzner firewall and in `pilot-edge-public` (E3) for the
+Envoy arm only and closed again after its certificates are issued and one
+renewal-path check (`cmctl renew`) has passed. Cleanup deletes the record.
 
 **E5: Running the two arms.** Both need 443/tcp+udp on the one IPv4.
 Recommended: **sequential on the same node**, Pangolin arm first, same
@@ -147,24 +159,23 @@ a floating IP (≈€0.005/h plus host config); alternate ports (breaks the
 like-for-like HTTP/3 check). Each arm gets the full plan gate; an arm that
 misses its window is reported **incomplete**, not passed.
 
-**E6: Load baseline (fixed before step 5).** The plan gate is "HTTPS at 2×
-the Phase 0 peak request rate and concurrency, plus a sustained tunnel
-transfer at flutterina's recorded peak throughput (170 Mbit/s, beszel) for
-≥ 1 h per day". The request-rate baseline is still pending: flutterina's
-Traefik has neither metrics nor access logs. Options:
-(a) **recommended: get the baseline now.** Enable Traefik's Prometheus
-metrics on flutterina (a production change: one restart of
-`traefik.service`, which is safe since BUG-009's `ExitPolicy=continue`),
-collect 7 days, take the peak. It can run while the free parts of this
-phase (tooling, rehearsal) are built, so it costs little time.
-(b) A **prospective plan amendment** with a named substitute profile,
-recorded before any result exists, and the capacity claim limited
-accordingly ("sized for N req/s", not "sized for flutterina").
-The tunnel transfer: the load source is the workstation, so first measure
-the home uplink. If it is below 170 Mbit/s, the transfer gate cannot be met
-from home; then either a second disposable cloud box generates it (cost,
-own confirmation) or the plan is amended to the uplink figure with the
-claim limited. **The user's call**, recorded in the results before step 5.
+**E6: Load baseline (fixed before step 5). Decided: measure it.** The
+plan gate is "HTTPS at 2× the Phase 0 peak request rate and concurrency,
+plus a sustained tunnel transfer at flutterina's recorded peak throughput
+(170 Mbit/s, beszel) for ≥ 1 h per day". flutterina's Traefik has neither
+metrics nor access logs, so:
+- **Request rate:** enable Traefik's Prometheus metrics on flutterina (a
+  production change through materia, one `traefik.service` restart, safe
+  since BUG-009's `ExitPolicy=continue`; the metrics entrypoint stays
+  inside the pod, read over the tailnet SSH). Collect 7 days while the free
+  parts of this phase are built; take the peak 1-minute request rate and
+  open connections; the gate is 2× each. Recorded in the results before
+  step 5.
+- **Transfer:** measure the home uplink first (the workstation is the load
+  source). If it carries 170 Mbit/s, the gate stands. If not, the plan is
+  amended **before step 5** to the measured uplink figure, and the result
+  is stated as "sustained at N Mbit/s (home uplink bound)", never as sized
+  for flutterina's peak.
 
 **E7: What "tunnel" means here.** Since #163 app traffic reaches the edge
 over Tailscale. Recommended: the sustained transfer uses the future data
@@ -289,7 +300,7 @@ change.
    that window (retry in the spare window). Fail → report the larger size
    and cost.
 6. **Cleanup** by the deadline: delete the server and its primary IPs,
-   rescue SSH keys, DNS records and the pilot zone token (E4), the edge's
+   rescue SSH keys, the `*.pilot` DNS record and the tcp/80 rule if still open (E4), the edge's
    tailnet device and auth key; `hcloud {server,primary-ip,ssh-key,volume}
    list -l pilot=bluefin` empty. The `bluefin-pilot` firewall stays until
    the whole pilot ends.
@@ -303,8 +314,8 @@ measured capacity, or is reported incomplete.
 Creating the server (step 1a) is the first paid action, and only after the
 E1.2 rehearsal has passed. Before it, the user confirms cost (cpx22
 €0.033/h, ≈ €5.55 for 7 days, plus IPv4), the deletion deadline (creation +
-7 days, written into the results), E4 and E6. A floating IP, a load
-generator box or a cpx32 each need their own confirmation.
+7 days, written into the results), and that the E6 baseline is in. A
+floating IP or a cpx32 each need their own confirmation.
 
 ## Risks and open points
 
