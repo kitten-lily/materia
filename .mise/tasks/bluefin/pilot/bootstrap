@@ -8,7 +8,8 @@
 # bluefin-pilot vault to the API server on stdin only (never argv, never disk).
 # The host firewall goes through audit before enforcement.
 # Options: --audit-seconds SECONDS (default 120), --accept-audit,
-# and --skip-firewall.
+# --skip-firewall, and --reapply-firewall (run audit then enforce even when the
+# cluster already enforces the fixture).
 
 set -euo pipefail
 
@@ -23,6 +24,7 @@ _root_path=provisioning/bluefin/gitops/apps
 _audit_seconds=120
 _accept_audit=false
 _skip_firewall=false
+_reapply_firewall=false
 while (( $# )); do
   case "$1" in
     --audit-seconds)
@@ -35,6 +37,7 @@ while (( $# )); do
       ;;
     --accept-audit) _accept_audit=true ;;
     --skip-firewall) _skip_firewall=true ;;
+    --reapply-firewall) _reapply_firewall=true ;;
     *) printf 'Unknown bootstrap option: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -78,7 +81,8 @@ _verify_firewall() {
     endpoint=$(_cilium_exec "$pod" cilium-dbg endpoint list -o json) || return 1
     host_id=$(jq -er '
       [.[] | select(any(.status.identity.labels[]?; . == "reserved:host"))] |
-      if length == 1 and (.[0].status.policy.realized["policy-enabled"] | IN("ingress", "both"))
+      # In audit mode Cilium reports "audit-ingress" / "audit-both".
+      if length == 1 and (.[0].status.policy.realized["policy-enabled"] | IN("ingress", "both", "audit-ingress", "audit-both"))
       then .[0].id | select(type == "number")
       else error("Expected one host endpoint with ingress policy")
       end' <<< "$endpoint") || return 1
@@ -152,7 +156,7 @@ _bootstrap_firewall() (
   desired=$(yq -o=json '.' "$fixture" | jq -cSs "$specs_filter")
   live=$("${_ssh[@]}" 'kubectl -n kube-system get ciliumnodeconfig/pilot-host-firewall ciliumclusterwidenetworkpolicy/pilot-host --ignore-not-found -o json' |
     jq -cSs "$specs_filter")
-  if [[ "$live" == "$desired" ]] && _verify_firewall_settled Disabled; then
+  if ! "$_reapply_firewall" && [[ "$live" == "$desired" ]] && _verify_firewall_settled Disabled; then
     echo 'Cilium host firewall already enforces the fixture; skipping audit and rollout'
     return
   fi
@@ -179,6 +183,35 @@ _bootstrap_firewall() (
   _cilium_rollout
   _verify_firewall_settled Disabled
 )
+
+echo "== data-disk tooling (pilot-lvm2 sysext, VG pilot_data, /var/lib/pilot-data)"
+# Ignition installs the activation unit and the mount (render
+# --data-fs-uuid) but cannot carry the 2.2 MB sysext: systemd skips any
+# credential over 1 MiB, and Ignition is one. So it is copied here, by
+# checksum, then the VG is activated and mounted. Skipped on a control plane
+# rendered without --data-fs-uuid.
+_sysext="${HOME}/.cache/bluefin-pilot/sysext/pilot-lvm2_26.11.2506.raw"
+if "${_ssh[@]}" 'test -f /etc/systemd/system/pilot-lvm-activate.service'; then
+  [[ -f "$_sysext" ]] || { echo "error: $_sysext missing; run mise bluefin:pilot:lvm2-sysext" >&2; exit 1; }
+  _want=$(sha256sum < "$_sysext" | cut -d' ' -f1)
+  _have=$("${_ssh[@]}" "sha256sum < /var/lib/extensions/${_sysext##*/} 2>/dev/null | cut -d' ' -f1" || true)
+  if [[ "$_have" != "$_want" ]]; then
+    "${_ssh[@]}" "cat > /var/lib/extensions/.${_sysext##*/}.tmp" < "$_sysext"
+    "${_ssh[@]}" "set -e; f=/var/lib/extensions/${_sysext##*/}; t=/var/lib/extensions/.${_sysext##*/}.tmp
+      [ \"\$(sha256sum < \$t | cut -d' ' -f1)\" = $_want ]; chmod 0644 \$t; mv \$t \$f; systemd-sysext refresh >/dev/null; echo \"installed \${f##*/}\""
+  else
+    echo "sysext already installed"
+  fi
+  # shellcheck disable=SC2016 # expands on the node, not here
+  "${_ssh[@]}" 'set -e; u=/etc/systemd/system/var-lib-pilot\\x2ddata.mount
+    want=$(sed -n "s|^What=/dev/disk/by-uuid/||p" "$u")
+    [ -e /dev/mapper/pilot_data-data ] || systemctl restart pilot-lvm-activate.service
+    systemctl start "var-lib-pilot\\x2ddata.mount"
+    have=$(findmnt -no UUID --mountpoint /var/lib/pilot-data)
+    [ "$have" = "$want" ] && echo "VG active, /var/lib/pilot-data mounted ($have)"'
+else
+  echo "skipped: control plane rendered without --data-fs-uuid"
+fi
 
 echo "== Cilium host firewall"
 if "$_skip_firewall"; then

@@ -16,4 +16,8 @@ ConditionPathExists=!/dev/mapper/pilot_data-data
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=2min
-ExecStart=/bin/sh -c 'L=/usr/bin/lvm; [ -x "$$L" ] || L=/var/opt/pilot-lvm/lvm; echo "activating pilot_data with $$L"; i=0; until "$$L" vgchange -ay --activationmode complete pilot_data; do i=$$((i + 1)); [ "$$i" -ge 12 ] && exit 1; sleep 5; done'
+# No lvm yet (first boot: the bootstrap delivers the pilot-lvm2 sysext over
+# SSH, because Ignition cannot carry it) is not a failure: skip, so a tool
+# that is not installed yet never fails systemd-boot-check-no-failures and
+# Bluefin's boot counting (F11). A missing PV with lvm present still fails.
+ExecStart=/bin/sh -c 'L=/usr/bin/lvm; [ -x "$$L" ] || L=/var/opt/pilot-lvm/lvm; if [ ! -x "$$L" ]; then echo "no lvm installed yet (pilot-lvm2 sysext not delivered); skipping activation"; exit 0; fi; echo "activating pilot_data with $$L"; i=0; until "$$L" vgchange -ay --activationmode complete pilot_data; do i=$$((i + 1)); [ "$$i" -ge 12 ] && exit 1; sleep 5; done'

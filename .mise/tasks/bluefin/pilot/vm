@@ -172,7 +172,11 @@ start)
   [[ -e "${_dir}/installer.qcow2" ]] && { echo "error: installer overlay still present; install did not finish" >&2; exit 1; }
   : > "${_dir}/serial.log"; : > "${_dir}/probe.log"
   base_args; net_args
-  _args+=(-smbios "$(cred ignition.config "${_render}/config.ign")")
+  # Ignition goes in as a fw_cfg file credential, not inline SMBIOS: with the
+  # pilot-lvm2 sysext embedded (Phase 3) the config is ~1.4 MB, and one argv
+  # string is limited to 128 KiB ("Argument list too long"). qemu_fw_cfg is
+  # built into Bluefin's kernel, so PID 1 imports it in the initrd as well.
+  _args+=(-fw_cfg "name=opt/io.systemd.credentials/ignition.config,file=${_render}/config.ign")
   firstboot_creds
   [[ -s "${_render}/bluefin-cluster.passphrase" ]] \
     && _args+=(-smbios "$(cred bluefin-cluster.passphrase "${_render}/bluefin-cluster.passphrase")")
