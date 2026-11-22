@@ -40,6 +40,7 @@ if [[ -v usage_backup_fs_uuid ]]; then
 fi
 
 _rel=v26.11.2506
+_repo="$(git rev-parse --show-toplevel)"
 _cache="${HOME}/.cache/bluefin-pilot"
 _relcache="${_cache}/${_rel}"
 _secrets="${_cache}/secrets"
@@ -70,7 +71,12 @@ umask 077
 # homelab.conf.template additions (appended after the upstream content).
 _conf_extra="
 # --- Bluefin pilot (#179), see specs/plans/bluefin-server-pilot-phase1.md and -phase2.md
-HOMELAB_KURED=no"
+HOMELAB_KURED=no
+# Unused add-ons off from the first boot (Phase 3 memory budget): the applier
+# never deletes, so switching them off later still needs a teardown.
+HOMELAB_ARGO_WORKFLOWS=no
+HOMELAB_MCP=no
+HOMELAB_KUBESTELLAR_CONSOLE=no"
 # Close the additions with a newline (set below), so nothing appended to
 # homelab.conf later lands on the same line.
 _cp_join="$_cp_ip"
@@ -160,6 +166,27 @@ yq eval '
     ]
 ' "$_tmpl" > "$_bu"
 
+# F11: first boot runs unversioned sysupdate, which upgrades a fresh install
+# to latest. Shadow the vendor transfers with release-specific sources.
+# To advance the pin, re-copy the vendor transfers from the new tag.
+for _transfer in 10-usr 11-usr-verity 20-uki 31-kubestellar 32-kubeadm \
+  35-homelab 36-argo-workflows 37-mcp 44-tailscale; do
+  _pin="${_repo}/provisioning/bluefin/sysupdate-pin/${_transfer}.transfer"
+  if [[ ! -f "$_pin" ]]; then
+    echo "error: sysupdate transfer override missing: $_pin" >&2
+    exit 1
+  fi
+  # Keep trailing newlines through command substitution.
+  _contents="$(sed "s|@RELEASE@|${_rel}|g" "$_pin" && printf '.')"
+  _contents="${_contents%.}"
+  if [[ "$_contents" == *releases/latest* ]]; then
+    echo "error: sysupdate transfer override still references releases/latest: $_pin" >&2
+    exit 1
+  fi
+  PILOT_TRANSFER_PATH="/etc/sysupdate.d/${_transfer}.transfer" PILOT_TRANSFER_CONTENTS="$_contents" \
+    yq eval -i '.storage.files += [{"path": strenv(PILOT_TRANSFER_PATH), "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_TRANSFER_CONTENTS)}}]' "$_bu"
+done
+
 if [[ "$_topology" == lan ]]; then
   yq eval -i '.storage.files += [
       {"path": "/etc/systemd/network/10-pilot-lan.network", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_NETWORK)}},
@@ -172,7 +199,6 @@ else
   # Phase 2: the tailscale sysext feature, tailscaled enabled by link (sysext
   # units merge after presets), the prep unit and script, and drop-ins that
   # order every Kubernetes unit after the prep unit.
-  _repo="$(git rev-parse --show-toplevel)"
   export PILOT_PREP_UNIT PILOT_PREP_SCRIPT PILOT_DROPIN PILOT_TS_FEATURE PILOT_TS_GUARD
   PILOT_PREP_UNIT="$(cat "${_repo}/provisioning/bluefin/pilot-tailnet-prep.service")"
   PILOT_TS_GUARD="$(cat "${_repo}/provisioning/bluefin/tailscaled-no-pod-paths.conf")"
@@ -205,22 +231,17 @@ Enabled=true
 
   _disk=
   if [[ -v usage_data_fs_uuid ]]; then
-    _sysext_dir="${_cache}/sysext"
-    export PILOT_LVM_IMAGE="pilot-lvm2_${_rel#v}.raw"
-    _image="${_sysext_dir}/${PILOT_LVM_IMAGE}"
-    [[ -f "$_image" ]] \
-      || { echo "error: $_image missing; run 'mise bluefin:pilot:lvm2-sysext'" >&2; exit 1; }
-    # EROFS superblock magic 0xe0f5e1e2, little-endian at byte offset 1024.
-    if [[ "$(od -An -v -tx1 -j 1024 -N 4 "$_image" | tr -d '[:space:]')" != e2e1f5e0 ]]; then
-      echo "error: $_image is not an EROFS image; rebuild with 'mise bluefin:pilot:lvm2-sysext'" >&2
-      exit 1
-    fi
-    _butane+=(--files-dir "$_sysext_dir")
+    # The pilot-lvm2 sysext itself is NOT embedded: systemd refuses
+    # credentials over 1 MiB ("larger than allowed limit"), and Ignition
+    # arrives as the ignition.config credential. With the 2.2 MB image (1.35 MB
+    # even compressed, after base64) the whole config would be skipped. The
+    # bootstrap copies the image over SSH instead (mise bluefin:pilot:bootstrap,
+    # "data-disk tooling"); until then the VG stays inactive and every volume
+    # consumer waits on "path does not exist".
     export PILOT_LVM_ACTIVATE
     PILOT_LVM_ACTIVATE="$(cat "${_repo}/provisioning/bluefin/lvm2/pilot-lvm-activate.service")"
     yq eval -i '
       .storage.files += [
-        {"path": ("/var/lib/extensions/" + strenv(PILOT_LVM_IMAGE)), "mode": 420, "overwrite": true, "contents": {"local": strenv(PILOT_LVM_IMAGE)}},
         {"path": "/etc/systemd/system/pilot-lvm-activate.service", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_LVM_ACTIVATE)}}
       ]
       | .storage.directories += [

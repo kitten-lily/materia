@@ -1,0 +1,17 @@
+# Bluefin pilot (#179): pinned copy of the v26.11.2506 vendor transfer;
+# only [Source] Path= differs. See
+# specs/plans/bluefin-server-pilot-results.md F11.
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=url-file
+Path=https://github.com/projectbluefin/server/releases/download/@RELEASE@/
+MatchPattern=bluefin-server_@v_@u.usr.raw
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=bluefin_usr_@v
+MatchPartitionType=usr
+ReadOnly=yes

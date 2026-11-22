@@ -1,0 +1,21 @@
+# Bluefin pilot (#179): pinned copy of the v26.11.2506 vendor transfer;
+# only [Source] Path= differs. See
+# specs/plans/bluefin-server-pilot-results.md F11.
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=url-file
+Path=https://github.com/projectbluefin/server/releases/download/@RELEASE@/
+MatchPattern=bluefin-server-@v.efi
+
+[Target]
+Type=regular-file
+Path=/EFI/Linux
+PathRelativeTo=boot
+MatchPattern=bluefin-server-@v+@l-@d.efi \
+             bluefin-server-@v+@l.efi \
+             bluefin-server-@v.efi
+TriesLeft=3
+TriesDone=0
+InstancesMax=2
