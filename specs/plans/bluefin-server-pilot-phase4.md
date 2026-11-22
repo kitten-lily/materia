@@ -164,13 +164,19 @@ plan gate is "HTTPS at 2× the Phase 0 peak request rate and concurrency,
 plus a sustained tunnel transfer at flutterina's recorded peak throughput
 (170 Mbit/s, beszel) for ≥ 1 h per day". flutterina's Traefik has neither
 metrics nor access logs, so:
-- **Request rate:** enable Traefik's Prometheus metrics on flutterina (a
-  production change through materia, one `traefik.service` restart, safe
-  since BUG-009's `ExitPolicy=continue`; the metrics entrypoint stays
-  inside the pod, read over the tailnet SSH). Collect 7 days while the free
-  parts of this phase are built; take the peak 1-minute request rate and
-  open connections; the gate is 2× each. Recorded in the results before
-  step 5.
+- **Request rate and concurrency:** a minimal Traefik access log on
+  flutterina (decided 2026-11-22 over Prometheus metrics, which would need a
+  scraper and sample concurrency only once a minute). JSON to stdout, so it
+  lands in `traefik.service`'s journal; every field dropped except
+  `StartUTC`, `Duration`, `RouterName`, `DownstreamStatus` and
+  `RequestProtocol` (no client IPs, paths, hosts or headers; checked against
+  the pinned v3.7.19 image locally). Deployed through materia: one
+  `traefik.service` restart, safe since BUG-009's `ExitPolicy=continue`.
+  Collect 7 days while the free parts of this phase are built, export the
+  journal lines to `~/.cache/bluefin-pilot/`, then remove the block. Peak
+  request rate per second and per minute, and peak concurrency (requests
+  in flight, from start + duration), excluding Pangolin-internal routers;
+  the gate is 2× each. Recorded in the results before step 5.
 - **Transfer:** measure the home uplink first (the workstation is the load
   source). If it carries 170 Mbit/s, the gate stands. If not, the plan is
   amended **before step 5** to the measured uplink figure, and the result

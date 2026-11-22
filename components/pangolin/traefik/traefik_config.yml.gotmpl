@@ -11,6 +11,23 @@ log:
   level: "INFO"
   format: "common"
 
+# Temporary (#179, Bluefin pilot Phase 4 E6): a request-rate and concurrency
+# baseline. JSON to stdout, so it lands in traefik.service's journal. Every
+# field is dropped except the five the analysis needs: no client IPs, paths,
+# hosts or headers. Remove after the 7-day collection.
+accessLog:
+  format: json
+  fields:
+    defaultMode: drop
+    names:
+      StartUTC: keep
+      Duration: keep
+      RouterName: keep
+      DownstreamStatus: keep
+      RequestProtocol: keep
+    headers:
+      defaultMode: drop
+
 entryPoints:
   web:
     address: ":80"
