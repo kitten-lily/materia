@@ -13,7 +13,7 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 | 0 — Baseline, release, recovery | **pass** (step 4's two checks ran in Phase 1, 2026-11-20) | below |
 | 1 — Local control plane + worker | **pass** 2026-11-20 | below |
 | 2 — Host VPN + cross-site networking | **pass** 2026-11-21, except `readyz` p95 (540 ms over DERP vs 500 ms), deferred to Phase 4 by decision | below |
-| 3 — Persistent services as Kubernetes workloads | **in progress**: step 0 (data volume) pass; step 1 (GitOps) pass with tuned polling, miss at template defaults; step 2 (secrets) pass; steps 3, 4 and 5 pass, all now reconciled by Argo CD (F9, F10 found on the way); step 6 (reinstall and import) to do | below |
+| 3 — Persistent services as Kubernetes workloads | **pass** 2026-11-22: steps 0–6 all pass; step 1's push-to-rollout passes only with tuned polling (miss at the template's 412 s); findings F7–F11 | below |
 | 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
@@ -475,8 +475,46 @@ Runs on the Phase 2 cluster until step 6 rebuilds it.
 | 5 Freshness guard | pass | the CronJob's pod with a wrong `PGPASSWORD` (`fixtures/backup-restore-check.yaml`): dump init container exit 2 (`password authentication failed`), the restic container never started, snapshot count 2 → 2, the previous dump set byte-identical, no `.tmp` left. First attempt invalid: the fixture named the dump-script ConfigMap without kustomize's hash suffix and never left `PodInitializing`; that ConfigMap now has no hash suffix (each CronJob run is a new pod anyway) |
 | 5 Check and restore | pass | `restic check --read-data`: 21/21 packs, no errors. `restore latest` (snapshot `fef7a07e`, 306.5 MiB) into an empty volume: every fixture checksum, the hardlink pair still one inode, the dump set present; the dump loaded into a fresh postgres with per-table counts **exactly** `counts.post`, `pilot_marker` 1000 rows |
 | Unplanned: hard kill | recorded | 15:15 UTC: the **workstation** ran out of memory (an 11 GiB `zig` build, Steam) and its OOM killer killed the control plane's QEMU. Restarted 16:41: XFS root and the LV's ext4 replayed their journals, postgres ran crash recovery (`not properly shut down; automatic recovery`), marker rows and fixtures intact, media pods `1/1` 188 s after start, the missed backup ran. For a real host: an outage of the API server's host does nothing worse than a reboot to this stack |
+| 6 Reinstall and import | pass, with deviations | Before (19:31 UTC, 11-21): VG `pilot_data` qhhzsl-…, LV uqN24A-…, PVs QyWPEG-…/benMps-…, ext4 ae24577e-…, fixtures manifest 9220bb1e…, 1000 marker rows md5 2b7fc90e…, two restic snapshots on the worker's disk, all 8 Applications healthy. Both VMs stopped, all four tailnet devices deleted (nodes, operator, proxy), both OS disks reinstalled, data disks untouched. **Deviations on the way, each now fixed in the tooling:** (a) Ignition with the 2.2 MB sysext embedded exceeded QEMU's 128 KiB argv string limit as an SMBIOS credential, and then systemd's 1 MiB credential limit as a fw_cfg credential (`larger than allowed limit (1.3M > 1M), skipping`, so that boot had no Ignition and was discarded): Ignition now goes by fw_cfg file and carries only the small units, and the bootstrap delivers the sysext over SSH by checksum; (b) F11, the first good install upgraded itself to 26.11.2641 and was discarded, pinned and reinstalled; (c) the bootstrap's audit-mode check expected `policy-enabled=ingress` where audit mode reports `audit-ingress`, failed after its retries and restored the enforcing fixture as designed; fixed, and `--reapply-firewall` re-ran audit → 120 s of no audit verdicts → enforce, verified on every agent; (d) the add-ons came back with the fresh `homelab.conf`: render now sets them off. After: one boot each on 26.11.2506, Kubernetes v1.35.10, control plane `Ready` 535 s and worker 76 s after QEMU start; the bootstrap delivered the sysext, the VG activated and **mounted with the same UUIDs** (PV, VG, LV, filesystem), fixtures and hardlink inode intact, the production data-disk initialisation never run; **every Application `Synced`/`Healthy` 20 min 54 s after the control plane's first boot** (threshold 30 min), including the failed and repeated firewall step; all static PVs bound to their named claims again; marker rows md5 identical; static-volume check 7/7; restore check from snapshot `c0843f9b` (taken before the reinstall, from the worker's surviving repository): `restic check --read-data` clean, fixtures, dump load, exact counts, markers all pass; host firewall enforcing, Phase 2 denial probes all blocked (6443 and 10250 no answer, no 6447 connection from `10.0.2.2`, 8 UDP 8472 probes `action deny`); all four tailnet names reused; Buildbarn TLS on both ports and the BuildStream round trip 6/6. Manual steps beyond the bootstrap: deleting the four devices, relaying the new join passphrase into the vault, and the four fixes above |
 
 ## Findings
+
+**F11 — A fresh install does not stay on the release it was installed from.**
+Step 6 reinstalled the control plane from the pinned v26.11.2506 installer,
+with `systemd-sysupdate.timer` and `systemd-sysupdate-reboot.timer` masked.
+On first boot `bluefin-sysext-fetch.service` logged "fetching for
+26.11.2506: …" and then fetched "through systemd-sysupdate (features: …)",
+which read `releases/latest/download/SHA256SUMS`, logged `Selected update
+'26.11.2641' for install`, wrote the 270 MB `bluefin_usr_26.11.2641` into the
+B slot, and the node rebooted into 26.11.2641 four minutes after install
+(boot −2 19:47–19:51 UTC; 2506 stays as the fallback entry). Phases 1 and 2
+did not show it only because 2506 was then the newest release. Consequences:
+an install is not reproducible (bow reinstalled next month would run an
+untested release), masking the sysupdate timers does not prevent it, and a
+version-locked sysext of our own (`pilot-lvm2`, `VERSION_ID=26.11.2506`)
+stops merging. Also on that boot `pilot-lvm-activate.service` failed (the
+sysext had not been delivered yet), which failed
+`systemd-boot-check-no-failures.service`, the unit Bluefin's boot counting
+watches: a data-disk problem must not count against the OS image. **Pinned
+(2026-11-22):** Codex read the v26.11.2506 source: the helper's installed-node
+fallback runs an unversioned `systemd-sysupdate update` over the whole host
+target (`/usr`, verity, UKI and the enabled sysexts, all on
+`releases/latest/download/`), then itself calls `systemctl reboot` when a newer
+version is pending (`sysextfetch.go:308–327`; documented upstream, so it is
+intended, not a bug); confirmed in the journal (`the release is newer than
+26.11.2506; its sysexts arrived with it, rebooting into it`). Fix: render
+writes full copies of the nine host transfers to `/etc/sysupdate.d/` (they
+shadow `/usr/lib/sysupdate.d/`), each byte-identical to the 2506 vendor file
+except `[Source] Path=…/releases/download/v26.11.2506/`
+(`provisioning/bluefin/sysupdate-pin/`). Reinstalled with it: one boot only,
+`Selected update '26.11.2506' is already installed, but incomplete.
+Repairing.`, the six sysexts fetched at 2506, the only boot entry 26.11.2506,
+no failed units. Advancing the pin means re-copying the new tag's transfers.
+For bow the same pin is needed before any reinstall. The activation unit now
+skips (exit 0, with a message) while no `lvm` is installed, so it cannot fail
+`systemd-boot-check-no-failures`; a missing PV still fails it. Open for
+production: a genuinely missing data disk still counts against the OS image
+in Bluefin's boot counting.
 
 **F10 — With Cilium's kube-proxy replacement, a pod that forwards packets to a
 ClusterIP needs per-packet Service translation.** KPR turns socket
