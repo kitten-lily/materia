@@ -67,7 +67,7 @@ fnox get AGE_SECRET_KEY > "$tmpdir/key.txt"
 chmod 600 "$tmpdir/key.txt"
 
 # Fetch the SSH public key for the core user from Proton Pass via fnox.
-# Same key across every server — see AGENTS.md "shared trust domain" note.
+# Same key across every server — see docs/gotchas/provisioning-flatcar.md, "Shared trust domain and provisioning design".
 _core_pubkey=$(fnox get CORE_SSH_PUBKEY)
 if [[ -z "$_core_pubkey" ]]; then
   echo "error: materia/Public key not set in Proton Pass — create the item first" >&2

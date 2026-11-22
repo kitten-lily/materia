@@ -14,9 +14,9 @@
 - Ping-URL slug convention is `<unit-name>-<server-name>` (here: `materia-update-flutterina`). Issue #2's `restic-backup` component must use the same convention (`restic-backup-<host>`) when it lands — do not invent a second scheme.
 - `HC_PING_URL` is a secret (anyone holding it can spoof pings). It is fetched at transpile time only; it must never be committed. Rendered `.ign` files are already gitignored (`*.ign`) and must stay uncommitted.
 - In the `.bu` template, `$$` is systemd escaping (literal `$` for the exec'd shell) — the `mise ign` sed only touches `${SERVER_NAME}`-style placeholders explicitly listed in the script, so `$$EXIT_STATUS` / `$$url` pass through untouched. Do not "fix" them to single `$`.
-- Butane changes don't reach the running host (Ignition runs once, at first boot — see AGENTS.md "Butane changes don't reach a running host"). Task 4's rollout (hand-edit on host + mirror in template) is part of shipping, not optional.
+- Butane changes don't reach the running host (Ignition runs once, at first boot — see [Provisioning and Flatcar](../../gotchas/provisioning-flatcar.md#butane-changes-dont-reach-a-running-host)). Task 4's rollout (hand-edit on host + mirror in template) is part of shipping, not optional.
 - The healthchecks.io check's period/grace must be sized for the **daily** `OnCalendar` cadence (period 1 day, grace ~6 h). The `OnBootSec=2min` boot runs (e8682d6) produce extra start/success cycles — slug checks tolerate early/extra pings, but do NOT tighten the period to try to catch a missed boot run.
-- Only `provisioning/templates/hetzner.bu` exists on `main` today. If a `bare-metal.bu` template exists by execution time (AGENTS.md already describes one), apply the identical `[Service]` change there too.
+- Only `provisioning/templates/hetzner.bu` exists on `main` today. If a `bare-metal.bu` template exists by execution time (see the [current provisioning guide](../../gotchas/provisioning-flatcar.md)), apply the identical `[Service]` change there too.
 
 ---
 

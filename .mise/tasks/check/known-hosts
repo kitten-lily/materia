@@ -47,7 +47,7 @@ if diff -q "$_temp" "$_component_file" >/dev/null; then
 fi
 
 echo "check: DRIFT — $_component_file does not match the union of storagebox known_hosts"
-echo "       (this is the flagged-pairing gap from AGENTS.md — no tooling enforced it before)"
+echo "       (see docs/gotchas/restic-backup.md for the known_hosts pairing)"
 echo
 echo "sources (${#_sources[@]}):"
 for s in "${_sources[@]}"; do echo "  - $s"; done

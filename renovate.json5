@@ -53,7 +53,7 @@
       // at the next traefik restart (BUG-007). The global automerge rule sets
       // ignoreTests, so it would not wait for the badger-catalog check.
       // Before merging: the badger-catalog check is green, and the version
-      // loads in a local traefik run (AGENTS.md has the command).
+      // loads in a local traefik run (see docs/gotchas/pangolin-edge.md).
       // Replaces the <=1.5.0 hold, lifted 2026-11-05: v1.6.0-v1.7.0 were
       // broken in the catalog until 2026-08-27 (traefik/traefik#13771).
       matchPackageNames: ["fosrl/badger"],
@@ -147,7 +147,7 @@
     },
     {
       // OpenSSH portable source version pin — only load-bearing if the
-      // from-source static build path was taken (see AGENTS.md); harmless
+      // from-source static build path was taken (see docs/gotchas/restic-backup.md); harmless
       // no-op otherwise since Alpine's openssh-static tracks its own
       // Renovate-independent apk index.
       customType: "regex",

@@ -1,9 +1,9 @@
 # Conventions — Materia Podman Orchestration
 
-> **Read this before any GitHub or git operation.** Project description,
-> commands, architecture, locked decisions, and hard-won gotchas live in
-> `AGENTS.md` — read it first. This file holds the process and quality rules
-> all AI agents must follow.
+> **Read this before any GitHub or git operation.**
+> Read [AGENTS.md](AGENTS.md) for project architecture and outage guardrails.
+> Open the relevant [topic guide](docs/gotchas/README.md) for operational details.
+> This file holds the process and quality rules all AI agents must follow.
 
 ## Conventions
 
@@ -27,8 +27,11 @@
 - **Butane changes don't reach a running host.** Ignition runs once at first
   boot. To change a provisioned server, rebuild it or hand-edit on the host and
   mirror the change in the template for next provision.
-- **AI sessions update AGENTS.md.** After any session that uncovers a
-  non-obvious constraint, fix, or pattern, add it to the Gotchas section and commit.
+- **Record operational findings.** Add a non-obvious constraint, fix, or
+  pattern to the relevant [topic guide](docs/gotchas/README.md). Add a one-line
+  guardrail to [AGENTS.md](AGENTS.md) if violating it can break reconciliation
+  across an entire host or take down the edge. Commit findings under the
+  usual workflow.
 - **No upstream issues without permission.** Never file issues, PRs, or comments
   in dependency/upstream repos without express user permission.
 - **verify: every step.** Every epic task must have `verify: <runnable command>`.
@@ -116,9 +119,9 @@ Never use these to wave away a red gate or a failing check:
   config" without planning first.
 - **Always Green:** Preflight and CI must be green before forward work.
   Reproducible gate failures require fix-or-log per § Discovered Defects.
-- **Read AGENTS.md before writing code.** It holds the locked architecture
-  decisions and gotchas. Touching quadlets, pod configs, or provisioning without
-  reading it will break things in subtle ways.
+- **Read AGENTS.md and the relevant topic guide before writing code.** Check
+  the locked architecture and outage guardrails, then open the guide for the
+  quadlet, component, or provisioning flow you are changing.
 - **Read specs/ before writing code.** Check `specs/state.yaml` for active
   flow/epic, `specs/release-plan.yaml` for planned work.
 - **All planning and specifications MUST be written to `specs/`**

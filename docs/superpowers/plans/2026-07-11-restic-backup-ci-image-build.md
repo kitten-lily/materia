@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Pinned image digests, no floating tags — the Go builder base image is `FROM <image>@sha256:...`, never a bare tag (AGENTS.md "Pinned image digests").
+- Pinned image digests, no floating tags — the Go builder base image is `FROM <image>@sha256:...`, never a bare tag ([Locked architecture decisions](../../../AGENTS.md#locked-architecture-decisions)).
 - Every binary in the final image MUST be statically linked — `file`/`ldd` gate, both locally and in CI, before anything is pushed.
 - No shell, no package manager, no dynamic linker in the final image (`FROM scratch`).
 - GHCR image path: `ghcr.io/kitten-lily/materia/restic-backup`, tags `latest` + `sha-<short>`.
@@ -160,7 +160,7 @@ fall through to the from-source build).
 
 ```dockerfile
 # openssh client — Alpine's openssh-static package ships a statically
-# linked ssh; see AGENTS.md "openssh static build" for the from-source
+# linked ssh; see docs/gotchas/restic-backup.md for the from-source
 # fallback this replaces.
 RUN cp /usr/bin/ssh /out/ssh
 ```
@@ -421,7 +421,7 @@ Insert into the existing `customManagers: [ ... ]` array in
     },
     {
       // OpenSSH portable source version pin — only load-bearing if the
-      // from-source static build path was taken (see AGENTS.md); harmless
+      // from-source static build path was taken (see docs/gotchas/restic-backup.md); harmless
       // no-op otherwise since Alpine's openssh-static tracks its own
       // Renovate-independent apk index.
       customType: "regex",

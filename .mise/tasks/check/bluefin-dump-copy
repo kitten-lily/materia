@@ -4,7 +4,7 @@
 # provisioning/bluefin/gitops/workloads/media/dump.bash is a copy of
 # components/db-dump/dump.bash (kustomize cannot load files from outside the
 # kustomization directory), behind a 4-line header. A flagged pairing, like
-# known_hosts (AGENTS.md): this fails when the two drift apart.
+# known_hosts (docs/gotchas/restic-backup.md): this fails when the two drift apart.
 set -euo pipefail
 
 _repo="$(git rev-parse --show-toplevel)"

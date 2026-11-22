@@ -3,9 +3,9 @@
 ![materia](https://healthchecks.io/badge/275e26c5-7cfd-482b-ad60-1c459f/wAZlLEmn/materia.svg) ![backup](https://healthchecks.io/badge/275e26c5-7cfd-482b-ad60-1c459f/oGzwBG-c/backup.svg)
 
 GitOps source of truth for Podman-hosted services, managed by
-[Materia](https://primamateria.systems/). See `AGENTS.md` for the full design,
-conventions, and gotchas. See `.claude/skills/materia/SKILL.md` for a
-materia-specific authoring guide.
+[Materia](https://primamateria.systems/). See [AGENTS.md](AGENTS.md) for the design and outage guardrails,
+and the [topic guides](docs/gotchas/README.md) for operational gotchas.
+See the [Materia skill](.claude/skills/materia/SKILL.md) for authoring guidance.
 
 ## Design in one line
 
