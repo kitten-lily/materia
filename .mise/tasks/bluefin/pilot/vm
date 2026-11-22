@@ -2,8 +2,10 @@
 # shellcheck disable=SC2054 # commas belong to the QEMU options
 #MISE description="Create, install, start and stop the local Bluefin pilot VMs on the workstation (#179)"
 
-#USAGE arg "<action>" help="create | install | start | stop | destroy | status"
-#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
+#USAGE arg "<action>" help="create | install | start | rehearse | stop | destroy | status"
+#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp, bluefin-pilot-node or bluefin-pilot-edge"
+#USAGE flag "--size <bytes>" help="create: exact OS disk size in bytes (edge only, required)"
+#USAGE flag "--fresh" help="rehearse: replace the previous rehearsal disk and firmware variables"
 #USAGE flag "--no-reboot" help="start: exit QEMU on the first guest reset"
 #USAGE flag "--offline" help="start: bring up both NICs with the link down (recovery check L1)"
 #USAGE flag "--topology <topology>" default="lan" help="start: lan (Phase 1: shared segment) or tailnet (Phase 2: one NIC, Tailscale auth key, denial-probe forwards)"
@@ -20,19 +22,23 @@
 # very first boot (systemd-firstboot applies passwd.* only then).
 
 set -euo pipefail
+umask 077
 
 _action="${usage_action:?action required}"
 _vm="${usage_vm:?pilot VM required, use --vm}"
 [[ "$_vm" =~ ^bluefin-pilot-[a-z0-9-]+$ ]] || { echo "error: refusing non-pilot name '$_vm'" >&2; exit 1; }
+_os_format=qcow2
 case "$_vm" in
   bluefin-pilot-cp)   _cpus=4; _mem=8192; _os_size=64G; _data=(8G 8G); _ssh=2210; _id=10; _probe=2 ;;
   bluefin-pilot-node) _cpus=2; _mem=4096; _os_size=40G; _data=(8G);    _ssh=2211; _id=11; _probe=3 ;;
+  bluefin-pilot-edge) _cpus=2; _mem=4096; _data=(); _ssh=2212; _id=12; _probe=4; _os_format=raw ;;
   *) echo "error: unknown pilot VM '$_vm'" >&2; exit 1 ;;
 esac
 
 _rel=v26.11.2506
 _cache="${HOME}/.cache/bluefin-pilot"
 _dir="${_cache}/vm/${_vm}"
+_os="os.${_os_format}"
 _render="${_cache}/render/${_vm}"
 _installer="${_cache}/${_rel}/bluefin-server-installer_26.11.2506.raw"
 _installer_sha=68bac3c0e9ab4312b3e1d1d1a7b786916253fe619b30db0d0fe8c1da3525db14
@@ -66,22 +72,31 @@ EOF
 
 # Firmware, machine and disks common to every run.
 base_args() {
-  local i
+  local disk="${1:-$_os}" vars="${2:-vars.fd}" serial="${3:-serial.log}" i
   _args=(qemu-system-x86_64 -name "$_vm" -machine q35,smm=on,accel=kvm -cpu host
     -smp "$_cpus" -m "$_mem"
     -global driver=cfi.pflash01,property=secure,value=on
     -drive "if=pflash,format=raw,unit=0,readonly=on,file=${_code}"
-    -drive "if=pflash,format=raw,unit=1,file=${_dir}/vars.fd"
-    -drive "file=${_dir}/os.qcow2,if=none,id=os,format=qcow2"
-    -device virtio-blk-pci,drive=os,serial=bluefin-os)
+    -drive "if=pflash,format=raw,unit=1,file=${_dir}/${vars}"
+    -drive "file=${_dir}/${disk},if=none,id=os,format=${_os_format}")
+  if [[ "$disk" == rehearse.raw ]]; then
+    _args+=(-device virtio-scsi-pci,id=scsi0 -device scsi-hd,drive=os,bus=scsi0.0)
+  else
+    _args+=(-device virtio-blk-pci,drive=os,serial=bluefin-os)
+  fi
   for i in "${!_data[@]}"; do
     [[ "${usage_without_data:-}" == "$((i + 1))" ]] && { echo "data disk $((i + 1)) left detached"; continue; }
     _args+=(-drive "file=${_dir}/data$((i + 1)).qcow2,if=none,id=data$((i + 1)),format=qcow2"
       -device "virtio-blk-pci,drive=data$((i + 1)),serial=bluefin-data$((i + 1))")
   done
   _args+=(-display none -vga std
-    -serial "file:${_dir}/serial.log" -serial "file:${_dir}/probe.log"
+    -serial "file:${_dir}/${serial}" -serial "file:${_dir}/probe.log"
     -qmp "unix:${_dir}/qmp.sock,server,nowait")
+}
+
+ssh_net_args() {
+  _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22"
+    -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}")
 }
 
 net_args() {
@@ -93,9 +108,8 @@ net_args() {
     _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22,hostfwd=tcp:127.0.0.1:${_probe}6443-:6443,hostfwd=tcp:127.0.0.1:${_probe}6447-:6447,hostfwd=tcp:127.0.0.1:${_probe}0250-:10250,hostfwd=udp:127.0.0.1:${_probe}8472-:8472"
       -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}")
   else
-    _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22"
-      -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}"
-      -netdev "socket,id=lan,mcast=${_mcast},localaddr=127.0.0.1"
+    ssh_net_args
+    _args+=(-netdev "socket,id=lan,mcast=${_mcast},localaddr=127.0.0.1"
       -device "virtio-net-pci,netdev=lan,mac=${_mac_lan}")
   fi
 }
@@ -106,14 +120,50 @@ firstboot_creds() {
     printf '%s' "${kv#*=}" > "${_dir}/cred-${kv%%=*}"
     _args+=(-smbios "$(cred "${kv%%=*}" "${_dir}/cred-${kv%%=*}")")
   done
-  _args+=(-smbios "$(cred passwd.hashed-password.root "${_render}/passwd.hashed-password.root")")
+  if [[ "$_vm" != bluefin-pilot-edge ]]; then
+    _args+=(-smbios "$(cred passwd.hashed-password.root "${_render}/passwd.hashed-password.root")")
+  fi
+}
+
+daemonize() {
+  printf '%s\n' "$1" > "${_dir}/active-disk" || return
+  "${_args[@]}" -daemonize -pidfile "${_dir}/qemu.pid"
+}
+
+show_ssh() {
+  echo "started ${_vm} (pid $(cat "${_dir}/qemu.pid")); ssh -i ~/.cache/bluefin-pilot/secrets/ssh-root -p ${_ssh} root@127.0.0.1"
 }
 
 case "$_action" in
 create)
-  [[ -e "${_dir}/os.qcow2" ]] && { echo "error: ${_dir} already exists; destroy it first" >&2; exit 1; }
+  if [[ "$_vm" == bluefin-pilot-edge ]]; then
+    _size="${usage_size:-}"
+    if [[ ! "$_size" =~ ^[0-9]+$ ]]; then
+      echo "error: edge create requires --size in positive integer bytes" >&2
+      exit 1
+    fi
+    # Normalize leading zeroes and check the maximum before Bash arithmetic.
+    _size="${_size#"${_size%%[!0]*}"}"
+    _max_size=9223372036854775807
+    # shellcheck disable=SC2071 # compare equal-length digit strings without overflow
+    if [[ -z "$_size" || ${#_size} -gt ${#_max_size} ||
+          ( ${#_size} -eq ${#_max_size} && "$_size" > "$_max_size" ) ]] || (( _size % 512 != 0 )); then
+      echo "error: --size must be a positive byte count divisible by 512 and fit in a signed 64-bit integer" >&2
+      exit 1
+    fi
+  elif [[ -v usage_size ]]; then
+    echo "error: --size is only supported for bluefin-pilot-edge" >&2
+    exit 1
+  fi
+  [[ -e "${_dir}/${_os}" || -L "${_dir}/${_os}" ]] && { echo "error: ${_dir} already exists; destroy it first" >&2; exit 1; }
   mkdir -p "$_dir"
-  qemu-img create -q -f qcow2 "${_dir}/os.qcow2" "$_os_size"
+  chmod 700 "$_dir"
+  if [[ "$_os_format" == raw ]]; then
+    truncate -s "$_size" -- "${_dir}/${_os}"
+    stat -c %s -- "${_dir}/${_os}" > "${_dir}/size"
+  else
+    qemu-img create -q -f qcow2 "${_dir}/${_os}" "$_os_size"
+  fi
   for i in "${!_data[@]}"; do qemu-img create -q -f qcow2 "${_dir}/data$((i + 1)).qcow2" "${_data[$i]}"; done
   cp "$_vars_tmpl" "${_dir}/vars.fd"
   echo "created ${_dir}"
@@ -121,8 +171,13 @@ create)
 
 install)
   running && { echo "error: $_vm is running" >&2; exit 1; }
-  [[ -f "${_dir}/os.qcow2" && -f "${_dir}/vars.fd" ]] || { echo "error: run create first" >&2; exit 1; }
-  [[ -s "${_render}/passwd.hashed-password.root" ]] || { echo "error: run bluefin:pilot:render first" >&2; exit 1; }
+  [[ -f "${_dir}/${_os}" && -f "${_dir}/vars.fd" ]] || { echo "error: run create first" >&2; exit 1; }
+  # USB installs normally ask for a console password on the installed disk.
+  _root_prompt=
+  if [[ "$_vm" != bluefin-pilot-edge ]]; then
+    [[ -s "${_render}/passwd.hashed-password.root" ]] || { echo "error: run bluefin:pilot:render first" >&2; exit 1; }
+    _root_prompt=" --set-credential=bluefin.prompt-root-password:1"
+  fi
   echo "verifying installer sha256..."
   echo "${_installer_sha}  ${_installer}" | sha256sum --check --quiet
   rm -f "${_dir}/installer.qcow2"
@@ -136,7 +191,7 @@ install)
 StandardInput=null
 StandardError=journal+console
 ExecStart=
-ExecStart=systemd-sysinstall --variables=yes --erase=yes --reboot=no --mute-console=yes --definitions=/run/bluefin/installer/bluefin/repart.d --kernel=\${BLUEFIN_INSTALL_KERNEL} --set-credential=bluefin.prompt-root-password:1 --confirm=no ${_target}
+ExecStart=systemd-sysinstall --variables=yes --erase=yes --reboot=no --mute-console=yes --definitions=/run/bluefin/installer/bluefin/repart.d --kernel=\${BLUEFIN_INSTALL_KERNEL}${_root_prompt} --confirm=no ${_target}
 ExecStopPost=/bin/bash -c 'echo "PROBE sysinstall=\$\${SERVICE_RESULT} \$\${EXIT_STATUS}" > /dev/ttyS1; lsblk -o NAME,PARTLABEL,FSTYPE,SIZE ${_target} > /dev/ttyS1 2>&1'
 EOF
 
@@ -167,6 +222,7 @@ EOF
   ;;
 
 start)
+  [[ "$_vm" != bluefin-pilot-edge ]] || { echo "error: use rehearse for bluefin-pilot-edge" >&2; exit 1; }
   running && { echo "error: $_vm is already running" >&2; exit 1; }
   [[ -s "${_render}/config.ign" ]] || { echo "error: run bluefin:pilot:render first" >&2; exit 1; }
   [[ -e "${_dir}/installer.qcow2" ]] && { echo "error: installer overlay still present; install did not finish" >&2; exit 1; }
@@ -191,15 +247,35 @@ start)
     [[ "$(head -c11 "$_keyfile")" == tskey-auth- ]] || { rm -f "$_keyfile"; echo "error: tailscale-auth-key not readable from the pilot vault" >&2; exit 1; }
     _args+=(-fw_cfg "name=opt/io.systemd.credentials/pilot.tailscale-authkey,file=${_keyfile}")
   fi
-  _args+=(-daemonize -pidfile "${_dir}/qemu.pid")
-  _rc=0; "${_args[@]}" || _rc=$?
+  _rc=0; daemonize "$_os" || _rc=$?
   [[ -n "$_keyfile" ]] && rm -f "$_keyfile"
   [[ $_rc -eq 0 ]] || { echo "error: QEMU failed to start (exit $_rc)" >&2; exit "$_rc"; }
   if [[ -n "${usage_offline:-}" ]]; then
     qmp '{"execute":"set_link","arguments":{"name":"wan","up":false}}' '{"execute":"set_link","arguments":{"name":"lan","up":false}}'
     echo "both NICs link down"
   fi
-  echo "started ${_vm} (pid $(cat "${_dir}/qemu.pid")); ssh -i ~/.cache/bluefin-pilot/secrets/ssh-root -p ${_ssh} root@127.0.0.1"
+  show_ssh
+  ;;
+
+rehearse)
+  [[ "$_vm" == bluefin-pilot-edge ]] || { echo "error: rehearse requires --vm bluefin-pilot-edge" >&2; exit 1; }
+  running && { echo "error: $_vm is already running" >&2; exit 1; }
+  [[ -e "${_dir}/installer.qcow2" ]] && { echo "error: installer overlay still present; install did not finish" >&2; exit 1; }
+  [[ -f "${_dir}/${_os}" ]] || { echo "error: run create and install first" >&2; exit 1; }
+  if [[ "${usage_fresh:-false}" == true ]]; then
+    rm -f -- "${_dir}/rehearse.raw" "${_dir}/rehearse-vars.fd"
+  elif [[ -e "${_dir}/rehearse.raw" || -L "${_dir}/rehearse.raw" ||
+          -e "${_dir}/rehearse-vars.fd" || -L "${_dir}/rehearse-vars.fd" ]]; then
+    echo "error: rehearsal files already exist; use --fresh to replace them" >&2
+    exit 1
+  fi
+  cp --sparse=always -- "${_dir}/${_os}" "${_dir}/rehearse.raw"
+  cp -- "$_vars_tmpl" "${_dir}/rehearse-vars.fd"
+  : > "${_dir}/rehearse-serial.log"; : > "${_dir}/probe.log"
+  base_args rehearse.raw rehearse-vars.fd rehearse-serial.log
+  ssh_net_args
+  daemonize rehearse.raw
+  show_ssh
   ;;
 
 stop)
@@ -217,8 +293,16 @@ destroy)
   ;;
 
 status)
-  if running; then echo "$_vm running (pid $(cat "${_dir}/qemu.pid")), ssh port ${_ssh}"; else echo "$_vm not running"; fi
-  [[ -d "$_dir" ]] && du -sh "$_dir"/*.qcow2 2>/dev/null || true
+  if running; then
+    _disk="$_os"
+    [[ ! -f "${_dir}/active-disk" ]] || _disk="$(cat "${_dir}/active-disk")"
+    echo "$_vm running (pid $(cat "${_dir}/qemu.pid")), disk ${_disk}, ssh port ${_ssh}"
+  else
+    echo "$_vm not running"
+  fi
+  shopt -s nullglob
+  _disks=("$_dir"/*.qcow2 "$_dir"/*.raw)
+  if (( ${#_disks[@]} )); then du -sh -- "${_disks[@]}"; fi
   ;;
 
 *) echo "error: unknown action '$_action'" >&2; exit 1 ;;

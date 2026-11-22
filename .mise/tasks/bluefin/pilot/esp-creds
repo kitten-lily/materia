@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#MISE description="Stage or list ESP credentials in the raw Bluefin pilot edge image (#179)"
+
+#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-edge"
+#USAGE flag "--image <path>" help="Raw disk image under ~/.cache/bluefin-pilot/"
+#USAGE flag "--authkey-item <title>" help="Single-use Tailscale auth key item in the bluefin-pilot vault"
+#USAGE flag "--list" help="List ESP credentials without changing the image or accessing the vault"
+
+set -euo pipefail
+umask 077
+
+_vm="${usage_vm:?pilot VM required, use --vm}"
+[[ "$_vm" == bluefin-pilot-edge ]] || { echo "error: esp-creds requires --vm bluefin-pilot-edge" >&2; exit 1; }
+_cache="$(realpath -e -- "${HOME}/.cache/bluefin-pilot")"
+_image="$(realpath -e -- "${usage_image:?raw disk image required, use --image}")"
+if [[ "$_image" != "$_cache/"* || ! -f "$_image" ]]; then
+  echo "error: --image must be a regular file under ~/.cache/bluefin-pilot/" >&2
+  exit 1
+fi
+_dir="${_cache}/vm/${_vm}"
+_ign="${_cache}/render/${_vm}/config.ign"
+_dest=::/loader/credentials
+
+_offset="$(sfdisk --json -- "$_image" | jq -er '
+  .partitiontable
+  | .sectorsize as $sector
+  | [.partitions[] | select((.type | ascii_upcase) == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B")]
+  | if length != 1 then error("expected exactly one EFI System Partition")
+    elif (.[0].start <= 0 or $sector <= 0 or $sector == null) then error("invalid ESP geometry")
+    else .[0].start * $sector
+    end
+')"
+_esp="${_image}@@${_offset}"
+
+if [[ "${usage_list:-false}" == true ]]; then
+  mdir -i "$_esp" -a "$_dest"
+  exit
+fi
+
+_item="${usage_authkey_item:?vault item title required, use --authkey-item}"
+[[ -s "$_ign" ]] || { echo "error: run bluefin:pilot:render for $_vm first" >&2; exit 1; }
+if [[ -f "${_dir}/qemu.pid" ]] && kill -0 "$(cat "${_dir}/qemu.pid")" 2>/dev/null; then
+  echo "error: stop $_vm before modifying an image" >&2
+  exit 1
+fi
+if [[ -e "${_dir}/installer.qcow2" ]]; then
+  echo "error: installer overlay still present; finish installation first" >&2
+  exit 1
+fi
+
+_missing=()
+if ! mdir -i "$_esp" ::/loader/ >/dev/null 2>&1; then
+  _missing+=(::/loader)
+fi
+if _inventory="$(mdir -i "$_esp" -a -b "${_dest}/" 2>/dev/null)"; then
+  while IFS= read -r entry; do
+    case "${entry#"${_dest}/"}" in
+      ''|ignition.config.cred|pilot.tailscale-authkey.cred|firstboot.locale.cred|firstboot.keymap.cred|firstboot.timezone.cred) ;;
+      *) echo "error: unexpected entry in ESP credential directory: $entry" >&2; exit 1 ;;
+    esac
+  done <<< "$_inventory"
+else
+  _missing+=("$_dest")
+fi
+
+mkdir -p -- "$_dir"
+chmod 700 -- "$_dir"
+_stage="$(mktemp -d "${_dir}/.esp-creds.XXXXXX")"
+trap 'rm -rf -- "$_stage"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+_key="$(mktemp "${_stage}/.authkey.XXXXXX")"
+pass-cli item view --vault-name bluefin-pilot --item-title "$_item" --field key | tr -d '\r\n' > "$_key"
+[[ "$(head -c11 "$_key")" == tskey-auth- ]] || { echo "error: vault item does not contain a Tailscale auth key" >&2; exit 1; }
+
+encode_cred() {
+  # systemd-creds emits base64. The ESP files carry the binary envelope.
+  systemd-creds encrypt --with-key=null --name="$1" "$2" - | base64 -d > "${_stage}/$1.cred"
+}
+
+encode_cred ignition.config "$_ign"
+encode_cred pilot.tailscale-authkey "$_key"
+rm -f -- "$_key"
+for kv in firstboot.locale=C.UTF-8 firstboot.keymap=us firstboot.timezone=UTC; do
+  printf '%s' "${kv#*=}" | encode_cred "${kv%%=*}" -
+done
+
+chmod 600 -- "$_image"
+for dir in "${_missing[@]}"; do
+  mmd -i "$_esp" "$dir"
+done
+mcopy -i "$_esp" -o "${_stage}"/*.cred "${_dest}/"
+echo "Null-key credentials are only obfuscated. Anyone with the image can recover their contents."
+echo "Bootstrap removes the ESP auth key after the join. The source image still contains the staged key."

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Render a Bluefin pilot node's Ignition config from the pinned homelab template (#179)"
 
-#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp or bluefin-pilot-node"
+#USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp, bluefin-pilot-node or bluefin-pilot-edge"
 #USAGE flag "--topology <topology>" default="lan" help="lan (Phase 1: shared segment, static IPs) or tailnet (Phase 2: Tailscale only)"
 #USAGE flag "--tailnet-suffix <suffix>" help="tailnet MagicDNS suffix (default: from this workstation's tailscale status)"
 #USAGE flag "--data-fs-uuid <uuid>" help="ext4 UUID of pilot_data/data (tailnet control plane only)"
@@ -10,20 +10,30 @@
 # Design: specs/plans/bluefin-server-pilot-phase1.md (lan) and
 # specs/plans/bluefin-server-pilot-phase2.md (tailnet). Output goes to
 # ~/.cache/bluefin-pilot/render/<vm>/ (mode 0700/0600) and is never committed:
-# it embeds the pilot SSH public key, the root password hash and, for the
-# node, the join passphrase file.
+# it contains the pilot SSH public key and, for the original VMs, separate
+# root password hash and worker join passphrase files.
 
 set -euo pipefail
 
 _vm="${usage_vm:?pilot VM required, use --vm}"
+_kubelet_extra=
 case "$_vm" in
   bluefin-pilot-cp) _role=control-plane; _ip=10.77.0.10; _mac_lan=52:54:00:77:00:10 ;;
   bluefin-pilot-node) _role=node; _ip=10.77.0.11; _mac_lan=52:54:00:77:00:11 ;;
-  *) echo "error: unknown pilot VM '$_vm' (expected bluefin-pilot-cp or bluefin-pilot-node)" >&2; exit 1 ;;
+  bluefin-pilot-edge)
+    _role=node; _ip=; _mac_lan=
+    _kubelet_extra=' --node-labels=pilot.bluefin/edge=true --register-with-taints=pilot.bluefin/edge=true:NoSchedule'
+    ;;
+  *) echo "error: unknown pilot VM '$_vm' (expected bluefin-pilot-cp, bluefin-pilot-node or bluefin-pilot-edge)" >&2; exit 1 ;;
 esac
 
 _topology="${usage_topology:-lan}"
 case "$_topology" in lan|tailnet) ;; *) echo "error: --topology must be lan or tailnet" >&2; exit 1 ;; esac
+
+if [[ "$_vm" == bluefin-pilot-edge && "$_topology" != tailnet ]]; then
+  echo "error: bluefin-pilot-edge requires --topology tailnet" >&2
+  exit 1
+fi
 
 _uuid_pattern='^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$'
 if [[ -v usage_data_fs_uuid ]]; then
@@ -33,7 +43,7 @@ if [[ -v usage_data_fs_uuid ]]; then
     || { echo "error: --data-fs-uuid must be an ext4 filesystem UUID" >&2; exit 1; }
 fi
 if [[ -v usage_backup_fs_uuid ]]; then
-  [[ "$_topology" == tailnet && "$_role" == node ]] \
+  [[ "$_topology" == tailnet && "$_vm" == bluefin-pilot-node ]] \
     || { echo "error: --backup-fs-uuid requires --topology tailnet and --vm bluefin-pilot-node" >&2; exit 1; }
   [[ "$usage_backup_fs_uuid" =~ $_uuid_pattern ]] \
     || { echo "error: --backup-fs-uuid must be an ext4 filesystem UUID" >&2; exit 1; }
@@ -61,12 +71,14 @@ echo "${_tmpl_sha[$_role]}  ${_tmpl}" | sha256sum --check --quiet \
 
 _pubkey="${_secrets}/ssh-root.pub"
 _hash="${_secrets}/root-password.hash"
-for f in "$_pubkey" "$_hash"; do
-  [[ -s "$f" ]] || { echo "error: $f missing or empty" >&2; exit 1; }
-done
+[[ -s "$_pubkey" ]] || { echo "error: $_pubkey missing or empty" >&2; exit 1; }
+if [[ "$_vm" != bluefin-pilot-edge && ! -s "$_hash" ]]; then
+  echo "error: $_hash missing or empty" >&2
+  exit 1
+fi
 
-mkdir -p "$_out"; chmod 700 "$_out"
 umask 077
+mkdir -p "$_out"; chmod 700 "$_out"
 
 # homelab.conf.template additions (appended after the upstream content).
 _conf_extra="
@@ -187,6 +199,11 @@ for _transfer in 10-usr 11-usr-verity 20-uki 31-kubestellar 32-kubeadm \
     yq eval -i '.storage.files += [{"path": strenv(PILOT_TRANSFER_PATH), "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_TRANSFER_CONTENTS)}}]' "$_bu"
 done
 
+if [[ "$_vm" == bluefin-pilot-edge ]]; then
+  PILOT_EDGE_SYSCTL=$'net.ipv6.conf.all.disable_ipv6 = 1\nnet.ipv6.conf.default.disable_ipv6 = 1\n' \
+    yq eval -i '.storage.files += [{"path": "/etc/sysctl.d/60-pilot-edge-noipv6.conf", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_EDGE_SYSCTL)}}]' "$_bu"
+fi
+
 if [[ "$_topology" == lan ]]; then
   yq eval -i '.storage.files += [
       {"path": "/etc/systemd/network/10-pilot-lan.network", "mode": 420, "overwrite": true, "contents": {"inline": strenv(PILOT_NETWORK)}},
@@ -203,6 +220,7 @@ else
   PILOT_PREP_UNIT="$(cat "${_repo}/provisioning/bluefin/pilot-tailnet-prep.service")"
   PILOT_TS_GUARD="$(cat "${_repo}/provisioning/bluefin/tailscaled-no-pod-paths.conf")"
   PILOT_PREP_SCRIPT="$(sed -e "s|@ROLE@|${_role}|" -e "s|@HOST@|${_vm}|" -e "s|@CP_FQDN@|${_cp_join}|" \
+    -e "s|@KUBELET_EXTRA@|${_kubelet_extra}|" \
     "${_repo}/provisioning/bluefin/tailnet-prep.sh")"
   grep -q '@[A-Z_]*@' <<<"$PILOT_PREP_SCRIPT" && { echo "error: unsubstituted placeholder in tailnet-prep" >&2; exit 1; }
   PILOT_DROPIN="[Unit]
@@ -286,16 +304,30 @@ if grep -q 'REPLACE with your SSH public key' "$_bu"; then
   echo "error: SSH key placeholder still present in $_bu" >&2; exit 1
 fi
 
-"${_butane[@]}" < "$_bu" > "${_out}/config.ign"
-# systemd-firstboot needs a crypt(5) hash with no trailing newline
-# (upstream tpm2-credential-sealing.md, "Node access"); openssl passwd adds one.
-tr -d '\n' < "$_hash" > "${_out}/passwd.hashed-password.root"
-[[ "$(head -c3 "${_out}/passwd.hashed-password.root")" == "\$6\$" ]] \
-  || { echo "error: root password hash is not a SHA-512 crypt hash" >&2; exit 1; }
+_ign_tmp="$(mktemp "${_out}/.config.ign.XXXXXX")"
+trap 'rm -f -- "$_ign_tmp"' EXIT
+"${_butane[@]}" < "$_bu" > "$_ign_tmp"
+_ign_size="$(wc -c < "$_ign_tmp")"
+_ign_limit=$((1024 * 1024 - 4 * 1024))
+if (( _ign_size > _ign_limit )); then
+  echo "error: config.ign is ${_ign_size} bytes (limit: ${_ign_limit} bytes)" >&2
+  exit 1
+fi
+mv -f -- "$_ign_tmp" "${_out}/config.ign"
+
+if [[ "$_vm" == bluefin-pilot-edge ]]; then
+  rm -f -- "${_out}/passwd.hashed-password.root" "${_out}/bluefin-cluster.passphrase"
+else
+  # systemd-firstboot needs a crypt(5) hash with no trailing newline
+  # (upstream tpm2-credential-sealing.md, "Node access"); openssl passwd adds one.
+  tr -d '\n' < "$_hash" > "${_out}/passwd.hashed-password.root"
+  [[ "$(head -c3 "${_out}/passwd.hashed-password.root")" == "\$6\$" ]] \
+    || { echo "error: root password hash is not a SHA-512 crypt hash" >&2; exit 1; }
+fi
 
 # The node's join passphrase, once the control plane has shown it and it is in
 # the pilot vault (item join-passphrase, field password).
-if [[ "$_role" == node ]]; then
+if [[ "$_vm" == bluefin-pilot-node ]]; then
   if _pp="$(pass-cli item view --vault-name bluefin-pilot --item-title join-passphrase --field password 2>/dev/null)" && [[ -n "$_pp" ]]; then
     printf '%s' "$_pp" > "${_out}/bluefin-cluster.passphrase"
     echo "join passphrase written"
@@ -307,4 +339,4 @@ if [[ "$_role" == node ]]; then
 fi
 
 chmod 600 "${_out}"/*
-echo "rendered ${_out}/config.ign ($(wc -c < "${_out}/config.ign") bytes)"
+echo "rendered ${_out}/config.ign (${_ign_size} bytes)"

@@ -39,7 +39,7 @@ log "${cp_fqdn} resolves to $(getent hosts "$cp_fqdn" | cut -d' ' -f1)"
 # 4. kubelet's node IP is the tailnet address (rewritten every boot).
 # /etc/default does not exist on Bluefin's factory /etc.
 mkdir -p /etc/default
-printf 'KUBELET_EXTRA_ARGS=--node-ip=%s\n' "$ts_ip" > /etc/default/kubelet
+printf 'KUBELET_EXTRA_ARGS=--node-ip=%s@KUBELET_EXTRA@\n' "$ts_ip" > /etc/default/kubelet
 
 # 5. Control plane, before the first init only: endpoint, SANs, advertise
 #    address, and Cilium's API address (no DNS needed before CoreDNS runs).
