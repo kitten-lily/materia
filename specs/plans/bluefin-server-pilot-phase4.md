@@ -234,14 +234,15 @@ ports, the load and probe harness) is done before creation.
 | --- | --- |
 | Edge render | `mise bluefin:pilot:render --vm bluefin-pilot-edge --topology tailnet`: role node, no data/backup units, no root password credential, IPv6 sysctl; `tailnet-prep.sh` gains the edge's kubelet flags (`--node-labels`, `--register-with-taints=pilot.bluefin/edge=true:NoSchedule`) in the same `KUBELET_EXTRA_ARGS` line |
 | Disk image | `mise bluefin:pilot:vm install --vm bluefin-pilot-edge --raw --size <bytes>` and `vm rehearse` (fresh OVMF vars, ESP credentials only); `mise bluefin:pilot:esp-creds` writes null-key `.cred` files with `mtools` |
-| Hetzner | `mise bluefin:pilot:hz create\|rescue\|stream\|console\|delete`: `pilot=bluefin` labels, the `bluefin-pilot` firewall at creation, the temporary tcp/22 rule limited to the operator's IP, refuses any server name but `bluefin-pilot-edge` |
+| Hetzner | `mise bluefin:pilot:hz status\|create\|rescue\|stream\|close-ssh\|acme-http-open\|acme-http-close\|console\|delete`: `pilot=bluefin` labels, the `bluefin-pilot` firewall at creation, the temporary tcp/22 rule limited to the operator's IP, the temporary tcp/80 rule for the Envoy arm's HTTP-01 window (E4), refuses any server name but `bluefin-pilot-edge` |
 | Edge bootstrap | `mise bluefin:pilot:edge-bootstrap --via tailnet\|local` (a separate task: the cluster `bootstrap` runs from the control plane, this one on the node): console password, join passphrase over SSH, Node Ready with label/taint/tailnet IP, ESP auth-key removal. The `pilot-edge-public` policy (E3) goes into the cluster bootstrap |
-| Home backend | `provisioning/bluefin/gitops/workloads/edge-backend/` serves netexec on the home worker. `apps/edge-backend.yaml` syncs in wave 1 |
+| Home backend | `provisioning/bluefin/gitops/workloads/edge-backend/`: netexec (`echo`) and the 1 GiB random blob with its sha256 (`transfer`, `blob.yaml`) on the home worker. `apps/edge-backend.yaml` syncs in wave 1 |
+| Pangolin setup | `mise bluefin:pilot:edge-pangolin-setup --via local\|public [--newt]`: admin, org, local site, `echo`/`transfer` resources (health checks off on the local site); `--newt` adds the Newt site, its Secret and `fixtures/edge-newt.yaml` on the home worker, and the health-checked `echo-newt` |
 | Pangolin arm | `provisioning/bluefin/gitops/workloads/edge-pangolin/` holds the shared hostNetwork Deployment, Gerbil host policy, local PV and configuration |
 | Envoy arm | `provisioning/bluefin/gitops/workloads/edge-envoy/` holds the hostNetwork proxy configuration, Gateway, ACME issuer and certificate, routes, backend grant and traffic policies |
 | Arm switch | `provisioning/bluefin/gitops/arms/` holds both wave 2 Applications and the operator procedure. Move only the selected arm into `apps/` |
 | Edge state | Retained local PV on the edge (`/var/lib/pilot-edge/pangolin`, created by `edge-bootstrap`; kubelet creates the `config`/`letsencrypt` subPaths), synthetic data only |
-| Probes | `mise bluefin:pilot:edge-probe` (HTTPS/HTTP/3 with the staging root as explicit trust, outage log) and `mise bluefin:pilot:edge-load` (E6 profile, CSV) |
+| Probes | `mise bluefin:pilot:edge-fw-check` (E3) and `mise bluefin:pilot:edge-load requests\|transfer --via local\|public` (`provisioning/bluefin/load/edge_load.py`, stdlib only: fixed rate and concurrency with per-request CSV and the < 0.1 % gate, or checksummed 1 GiB downloads); restart outages measured with a 1/s probe of the same kind |
 | Evidence | raw captures, renders, credentials and disk images stay under `~/.cache/bluefin-pilot/` (0700); the results file gets redacted figures only |
 
 ## Steps and verification (plan Phase 4, with thresholds)

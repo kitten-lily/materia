@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#MISE description="Load the Bluefin pilot edge: fixed request rate/concurrency, or checksummed 1 GiB transfers (#179 Phase 4 step 5)"
+
+#USAGE arg "<mode>" help="requests | transfer"
+#USAGE flag "--via <path>" default="local" help="local (rehearsal, 127.0.0.1:4443) or public (the edge's public IPv4, needs --host)"
+#USAGE flag "--host <ipv4>" help="public: the edge's public IPv4"
+#USAGE flag "--rate <rps>" default="1" help="requests: total requests per second (E6: 2x the measured peak)"
+#USAGE flag "--concurrency <n>" default="1" help="requests: parallel connections (E6: 2x the measured peak)"
+#USAGE flag "--duration <seconds>" default="60" help="run time"
+#USAGE flag "--verify" help="verify the certificate (off by default: staging and self-signed do not chain)"
+
+# Design: specs/plans/bluefin-server-pilot-phase4.md (E6, step 5). The
+# request mode hits /hostname on echo.<pilot domain> (the netexec backend);
+# transfer downloads the 1 GiB fixture from transfer.<pilot domain>
+# (edge-backend/blob.yaml) and checks its sha256. The pilot domain is
+# pilot.<baseDomain>, read from the fleet vault and never written down.
+# CSVs go to ~/.cache/bluefin-pilot/load/ (0700), never into the repo.
+
+set -euo pipefail
+
+_repo="$(git rev-parse --show-toplevel)"
+_out="${HOME}/.cache/bluefin-pilot/load"
+mkdir -p "$_out"; chmod 700 "$_out"
+
+case "${usage_via:-local}" in
+  local) _ip=127.0.0.1; _port=4443 ;;
+  public)
+    _ip="${usage_host:?--via public needs --host <edge public IPv4>}"; _port=443
+    [[ "$_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "error: --host must be an IPv4 address" >&2; exit 1; }
+    ;;
+  *) echo "error: --via must be local or public" >&2; exit 1 ;;
+esac
+
+_base="$(SOPS_AGE_KEY="$(fnox get SOPS_AGE_KEY)" sops -d --extract '["globals"]["baseDomain"]' "${_repo}/attributes/vault.yml")"
+[[ -n "$_base" ]] || { echo "error: no globals.baseDomain in the vault" >&2; exit 1; }
+_pd="pilot.${_base}"
+
+_mode="${usage_mode:?mode required}"
+case "$_mode" in
+  requests) _hosts="echo.${_pd}" ;;
+  transfer) _hosts="transfer.${_pd}" ;;
+  *) echo "error: mode must be requests or transfer" >&2; exit 1 ;;
+esac
+
+_csv="${_out}/$(date -u +%Y%m%dT%H%M%SZ)-${usage_via:-local}-${_mode}.csv"
+_args=("$_mode" --ip "$_ip" --port "$_port" --hosts "$_hosts" --duration "${usage_duration:-60}" --csv "$_csv")
+[[ -n "${usage_verify:-}" ]] || _args+=(--insecure)
+[[ "$_mode" == requests ]] && _args+=(--rate "${usage_rate:-1}" --concurrency "${usage_concurrency:-1}")
+[[ "$_mode" == transfer ]] && _args+=(--timeout 60)
+
+_rc=0
+python3 -I "${_repo}/provisioning/bluefin/load/edge_load.py" "${_args[@]}" || _rc=$?
+echo "csv: ${_csv}"
+exit "$_rc"

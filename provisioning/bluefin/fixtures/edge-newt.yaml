@@ -1,0 +1,43 @@
+# Bluefin pilot (#179) Phase 4, E7: one Newt site for the Pangolin arm.
+# Pangolin's health checks run only through Newt (a local site gets none:
+# results, Phase 4), so this is the Pangolin arm's health-check path, and the
+# check that Gerbil's WireGuard works with hostNetwork beside Cilium. A
+# function check, not part of the load gate.
+#
+# Applied by `mise bluefin:pilot:edge-pangolin-setup --newt`, which first
+# creates the Newt site through Pangolin's API and the Secret newt-credentials
+# (PANGOLIN_ENDPOINT, NEWT_ID, NEWT_SECRET): the endpoint names the pilot
+# domain and the credentials exist only in that Pangolin instance, so neither
+# is in git. Lives in the arm's namespace, so it goes with the arm.
+# Needs the public edge: Newt dials https://pangolin.<pilot domain> and
+# Gerbil's udp/51820 on it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: newt
+  namespace: pilot-edge-pangolin
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: newt}
+  template:
+    metadata:
+      labels: {app: newt}
+    spec:
+      automountServiceAccountToken: false
+      # The home site: Newt reaches the home backends from here.
+      nodeSelector: {kubernetes.io/hostname: bluefin-pilot-node}
+      containers:
+      - name: newt
+        image: docker.io/fosrl/newt:1.20.0@sha256:4fddce501b1fa089b80301b31c5e64e8e9b30bb65e943967ff427dafe46a1453
+        envFrom:
+        - secretRef: {name: newt-credentials}
+        env:
+        - {name: HEALTH_FILE, value: /tmp/newt-health}
+        readinessProbe:
+          exec: {command: [test, -f, /tmp/newt-health]}
+          periodSeconds: 10
+        resources:
+          requests: {cpu: 20m, memory: 32Mi}
+          limits: {memory: 128Mi}

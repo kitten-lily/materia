@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Hetzner side of the Bluefin pilot edge: create, rescue, stream the disk, console, delete (#179 Phase 4)"
 
-#USAGE arg "<action>" help="status | create | rescue | stream | close-ssh | console | delete"
+#USAGE arg "<action>" help="status | create | rescue | stream | close-ssh | acme-http-open | acme-http-close | console | delete"
 #USAGE flag "--confirm-cost" help="create: acknowledge the hourly cost and the 7-day deadline (paid action)"
 #USAGE flag "--operator-ip <ipv4>" help="rescue: the operator's public IPv4; tcp/22 opens for that /32 only"
 #USAGE flag "--image <path>" help="stream: the raw disk image (ESP credentials already staged)"
@@ -46,10 +46,26 @@ rescue_ssh() {
 close_ssh_rule() {
   local ip; ip="$(state_get .ssh_rule_ip)"
   [[ -n "$ip" ]] || { echo "no temporary tcp/22 rule recorded"; return 0; }
-  hcloud firewall delete-rule "$_fw" --direction in --protocol tcp --port 22 --source-ips "${ip}/32" >/dev/null \
+  hcloud firewall delete-rule "$_fw" --direction in --protocol tcp --port 22 --source-ips "${ip}/32" --description "$_ssh_desc" >/dev/null \
     && echo "removed temporary tcp/22 rule for ${ip}/32" \
     || echo "warning: could not remove the tcp/22 rule for ${ip}/32; check: hcloud firewall describe ${_fw}" >&2
   state_set 'del(.ssh_rule_ip)'
+}
+# Envoy arm, E4: cert-manager solves HTTP-01 on tcp/80, which the Phase 0
+# firewall does not allow. Opened from anywhere (the ACME validators'
+# addresses are not published) for the issuance window only; the Cilium
+# policy pilot-edge-acme-http must be applied for the same window.
+# hcloud's delete-rule matches the description too, so add and delete pass
+# the same one (a delete without it fails with "rule was not found").
+_acme_rule=(--direction in --protocol tcp --port 80 --source-ips 0.0.0.0/0 --source-ips ::/0
+  --description "TEMPORARY HTTP-01 (Envoy arm), remove after issuance")
+_ssh_desc="TEMPORARY rescue SSH, remove after stream"
+close_acme_rule() {
+  [[ "$(state_get .acme_http)" == true ]] || { echo "no temporary tcp/80 rule recorded"; return 0; }
+  hcloud firewall delete-rule "$_fw" "${_acme_rule[@]}" >/dev/null \
+    && echo "removed temporary tcp/80 rule" \
+    || echo "warning: could not remove the tcp/80 rule; check: hcloud firewall describe ${_fw}" >&2
+  state_set 'del(.acme_http)'
 }
 check_firewall() {
   local rules
@@ -67,7 +83,7 @@ status)
   echo "== firewall ${_fw}"
   hcloud firewall describe "$_fw" -o json | jq -r '"applied to: \([.applied_to[]?.server.id] | join(",") | if . == "" then "nothing" else . end)", (.rules[] | "  \(.direction) \(.protocol)/\(.port // "") from \(.source_ips | join(","))")'
   if [[ -s "$_state" ]]; then
-    echo "== state"; jq -r '"created \(.created // "?")\ndelete by \(.deadline // "?")" + (if .ssh_rule_ip then "\nOPEN tcp/22 rule for \(.ssh_rule_ip)/32" else "" end)' "$_state"
+    echo "== state"; jq -r '"created \(.created // "?")\ndelete by \(.deadline // "?")" + (if .ssh_rule_ip then "\nOPEN tcp/22 rule for \(.ssh_rule_ip)/32" else "" end) + (if .acme_http then "\nOPEN tcp/80 rule since \(.acme_http_since)" else "" end)' "$_state"
   fi
   ;;
 
@@ -101,7 +117,7 @@ rescue)
   if [[ "$(state_get .ssh_rule_ip)" != "$_op" ]]; then
     [[ -z "$(state_get .ssh_rule_ip)" ]] || close_ssh_rule
     hcloud firewall add-rule "$_fw" --direction in --protocol tcp --port 22 --source-ips "${_op}/32" \
-      --description "TEMPORARY rescue SSH, remove after stream" >/dev/null
+      --description "$_ssh_desc" >/dev/null
     state_set --arg ip "$_op" '.ssh_rule_ip = $ip'
     echo "opened tcp/22 for ${_op}/32 (removed by stream or close-ssh)"
   fi
@@ -152,6 +168,21 @@ stream)
 
 close-ssh) close_ssh_rule ;;
 
+acme-http-open)
+  if [[ "$(state_get .acme_http)" == true ]]; then
+    echo "tcp/80 already open (since $(state_get .acme_http_since))"
+  else
+    hcloud firewall add-rule "$_fw" "${_acme_rule[@]}" >/dev/null
+    state_set --arg t "$(date -u +%Y-%m-%dT%H:%MZ)" '.acme_http = true | .acme_http_since = $t'
+    echo "opened tcp/80 from anywhere; also: kubectl apply the pilot-edge-acme-http policy (fixtures/edge-public.yaml)"
+  fi
+  ;;
+
+acme-http-close)
+  close_acme_rule
+  echo "also: kubectl delete ccnp pilot-edge-acme-http"
+  ;;
+
 console)
   [[ -n "$(server_json)" ]] || { echo "error: ${_name} does not exist" >&2; exit 1; }
   # Short-lived VNC URL and password, for the operator's eyes only.
@@ -161,6 +192,7 @@ console)
 delete)
   [[ -n "${usage_confirm:-}" ]] || { echo "not deleted: re-run with --confirm (export any evidence first)"; exit 1; }
   close_ssh_rule
+  close_acme_rule
   if [[ -n "$(server_json)" ]]; then
     hcloud server delete "$_name" >/dev/null && echo "deleted server ${_name}"
   fi

@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+#MISE description="Pangolin arm first-run setup through its API: admin, org, sites, resources; optional Newt site (#179 Phase 4)"
+
+#USAGE flag "--via <path>" default="local" help="local (rehearsal, 127.0.0.1:4443) or public (the edge's public IPv4, needs --host)"
+#USAGE flag "--host <ipv4>" help="public: the edge's public IPv4"
+#USAGE flag "--newt" help="also create the Newt site, its Secret and pod, and a health-checked resource through it (needs the public edge)"
+
+# Design: specs/plans/bluefin-server-pilot-phase4.md (steps 3, E7); first
+# run by hand on the rehearsal (results, Phase 4). Idempotent. Talks to the
+# API the way the dashboard does: https://pangolin.<pilot domain>/api/v1
+# through the edge's 443, session cookie plus Pangolin's fixed CSRF header.
+# Synthetic admin pilot-admin@example.com; its generated password stays in
+# ~/.cache/bluefin-pilot/secrets/pangolin-admin (0600). Resources:
+#   echo, transfer   local site; Traefik dials the home backends' Services
+#                    directly. Health checks OFF: nothing probes a local
+#                    site, so an enabled check stays `unhealthy` and
+#                    Pangolin drops the target (503).
+#   echo-newt        (--newt) through the Newt site on the home worker,
+#                    health check ON: Pangolin's only health-check path.
+
+set -euo pipefail
+
+_repo="$(git rev-parse --show-toplevel)"
+_secrets="${HOME}/.cache/bluefin-pilot/secrets"
+_cp=(ssh -F "${_secrets}/ssh_config" bluefin-pilot-cp)
+_ns=pilot-edge-pangolin
+_backend=edge-backend.pilot-edge-backend.svc.cluster.local
+_blob=edge-blob.pilot-edge-backend.svc.cluster.local
+_email=pilot-admin@example.com
+
+case "${usage_via:-local}" in
+  local) _ip=127.0.0.1; _port=4443 ;;
+  public)
+    _ip="${usage_host:?--via public needs --host <edge public IPv4>}"; _port=443
+    [[ "$_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "error: --host must be an IPv4 address" >&2; exit 1; }
+    ;;
+  *) echo "error: --via must be local or public" >&2; exit 1 ;;
+esac
+
+_base="$(SOPS_AGE_KEY="$(fnox get SOPS_AGE_KEY)" sops -d --extract '["globals"]["baseDomain"]' "${_repo}/attributes/vault.yml")"
+_pd="pilot.${_base}"
+_api_host="pangolin.${_pd}"
+
+_pw_file="${_secrets}/pangolin-admin"
+if [[ ! -s "$_pw_file" ]]; then
+  # Letters, digits and the suffix satisfy Pangolin's password rules.
+  (umask 077; printf '%sAa1!' "$(openssl rand -base64 24 | tr -d '\n/+=')" > "$_pw_file")
+fi
+_jar="$(mktemp)"; trap 'rm -f "$_jar"' EXIT
+
+api() { # method path [json]
+  curl -sk --max-time 30 --resolve "${_api_host}:${_port}:${_ip}" -b "$_jar" -c "$_jar" \
+    -H 'Content-Type: application/json' -H 'X-CSRF-Token: x-csrf-protection' \
+    -X "$1" "https://${_api_host}:${_port}/api/v1$2" ${3:+--data "$3"}
+}
+need() { # json-response what: fail unless success
+  jq -e '.success == true' <<< "$1" >/dev/null || { echo "error: $2: $(jq -r '.message // .' <<< "$1")" >&2; exit 1; }
+}
+log() { echo "pangolin-setup: $*" >&2; }
+
+# 1. Server admin (once), then a session.
+if [[ "$(api GET /auth/initial-setup-complete | jq -r '.data.complete // .data')" != true ]]; then
+  _tok="$("${_cp[@]}" "kubectl -n ${_ns} logs deploy/pangolin -c app" | grep -A1 'SETUP TOKEN GENERATED' | sed -n 's/^Token: //p' | tail -n1)"
+  [[ -n "$_tok" ]] || { echo "error: no setup token in the app's log" >&2; exit 1; }
+  need "$(api PUT /auth/set-server-admin "$(jq -nc --arg e "$_email" --arg p "$(cat "$_pw_file")" --arg t "$_tok" '{email:$e,password:$p,setupToken:$t}')")" "set server admin"
+  log "server admin ${_email} created"
+fi
+need "$(api POST /auth/login "$(jq -nc --arg e "$_email" --arg p "$(cat "$_pw_file")" '{email:$e,password:$p}')")" "login"
+
+# 2. Org, domain, local site.
+if ! api GET /org/pilot | jq -e '.success == true' >/dev/null; then
+  _d="$(api GET /pick-org-defaults)"; need "$_d" "org defaults"
+  need "$(api PUT /org "$(jq -c '{orgId:"pilot",name:"Pilot",subnet:.data.subnet,utilitySubnet:.data.utilitySubnet}' <<< "$_d")")" "create org"
+  log "org pilot created"
+fi
+_domid="$(api GET /org/pilot/domains | jq -r --arg d "$_pd" '[.data.domains[] | select(.baseDomain == $d) | .domainId][0] // empty')"
+[[ -n "$_domid" ]] || { echo "error: the pilot domain is not an org domain (config.yml domains)" >&2; exit 1; }
+site_id() { api GET /org/pilot/sites | jq -r --arg t "$1" '[.data.sites[] | select(.type == $t) | .siteId][0] // empty'; }
+_local="$(site_id local)"
+if [[ -z "$_local" ]]; then
+  _r="$(api PUT /org/pilot/site '{"name":"edge-local","type":"local"}')"; need "$_r" "create local site"
+  _local="$(jq -r '.data.siteId' <<< "$_r")"
+fi
+
+# 3. Resources. resource <name> <siteId> <target host> <health check on?>
+resource() {
+  local name=$1 site=$2 target=$3 hc=$4 rid r body
+  rid="$(api GET /org/pilot/resources | jq -r --arg n "$name" '[.data.resources[] | select(.name == $n) | .resourceId][0] // empty')"
+  if [[ -z "$rid" ]]; then
+    r="$(api PUT /org/pilot/resource "$(jq -nc --arg n "$name" --arg d "$_domid" '{name:$n,subdomain:$n,domainId:$d,mode:"http"}')")"
+    need "$r" "create resource ${name}"; rid="$(jq -r '.data.resourceId' <<< "$r")"
+    need "$(api POST "/resource/${rid}" '{"sso":false}')" "SSO off on ${name}"
+  fi
+  body="$(jq -nc --argjson s "$site" --arg ip "$target" --argjson hc "$hc" \
+    '{siteId:$s,ip:$ip,port:8080,method:"http",hcEnabled:$hc}
+     + (if $hc then {hcPath:"/hostname",hcScheme:"http",hcHostname:$ip,hcPort:8080,hcInterval:10,hcTimeout:5} else {} end)')"
+  local tid
+  tid="$(api GET "/resource/${rid}/targets" | jq -r '.data.targets[0].targetId // empty')"
+  if [[ -z "$tid" ]]; then
+    need "$(api PUT "/resource/${rid}/target" "$body")" "target for ${name}"
+  else
+    need "$(api POST "/target/${tid}" "$body")" "update target for ${name}"
+  fi
+  log "resource ${name} -> ${target}:8080 (site ${site}, health check $([[ $hc == true ]] && echo on || echo off))"
+  echo "$rid"
+}
+resource echo "$_local" "$_backend" false >/dev/null
+resource transfer "$_local" "$_blob" false >/dev/null
+
+# 4. Optional Newt site through the home worker.
+if [[ -n "${usage_newt:-}" ]]; then
+  _newt="$(site_id newt)"
+  if [[ -z "$_newt" ]]; then
+    _d="$(api GET /org/pilot/pick-site-defaults)"; need "$_d" "site defaults"
+    _r="$(api PUT /org/pilot/site "$(jq -c '{name:"home",type:"newt",exitNodeId:.data.exitNodeId,subnet:.data.subnet,newtId:.data.newtId,secret:.data.newtSecret} + (if .data.clientAddress then {address:.data.clientAddress} else {} end)' <<< "$_d")")"
+    need "$_r" "create Newt site"; _newt="$(jq -r '.data.siteId' <<< "$_r")"
+    # The credentials go straight into the cluster: Pangolin returns the
+    # secret only here, at creation.
+    jq -r --arg e "https://${_api_host}" '"PANGOLIN_ENDPOINT=\($e)\nNEWT_ID=\(.data.newtId)\nNEWT_SECRET=\(.data.newtSecret)"' <<< "$_d" \
+      | "${_cp[@]}" "kubectl -n ${_ns} create secret generic newt-credentials --from-env-file=/dev/stdin --dry-run=client -o yaml | kubectl apply -f - >/dev/null"
+    log "Newt site home created (site ${_newt}); credentials in secret ${_ns}/newt-credentials"
+  fi
+  "${_cp[@]}" 'kubectl apply -f - >/dev/null' < "${_repo}/provisioning/bluefin/fixtures/edge-newt.yaml"
+  "${_cp[@]}" "kubectl -n ${_ns} rollout status deploy/newt --timeout=300s" >/dev/null
+  log "Newt pod ready (tunnel up)"
+  _rid="$(resource echo-newt "$_newt" "$_backend" true | tail -n1)"
+  _h=""
+  for _ in $(seq 1 30); do
+    _h="$(api GET "/resource/${_rid}/targets" | jq -r '.data.targets[0].hcHealth // empty')"
+    [[ "$_h" == healthy ]] && break
+    sleep 10
+  done
+  [[ "$_h" == healthy ]] || { echo "error: echo-newt's health check is '${_h:-none}' after 5 min" >&2; exit 1; }
+  log "echo-newt health check: healthy"
+fi
+
+# 5. Each route answers from the home backends. Traefik polls Pangolin for
+# routes every 5 s, so a new resource answers 404 for a few seconds.
+for name in echo transfer ${usage_newt:+echo-newt}; do
+  path=/hostname; [[ "$name" == transfer ]] && path=/data/blob-1g.sha256
+  for _ in $(seq 1 12); do
+    code="$(curl -sk --max-time 15 -o /dev/null -w '%{http_code}' --resolve "${name}.${_pd}:${_port}:${_ip}" "https://${name}.${_pd}:${_port}${path}")"
+    [[ "$code" == 200 ]] && break
+    sleep 5
+  done
+  log "https://${name}.<pilot domain>${path}: ${code}"
+  [[ "$code" == 200 ]] || exit 1
+done
+log "done"
