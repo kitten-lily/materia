@@ -11,6 +11,19 @@ metadata:
   name: pilot-edge
   namespace: pilot-edge-envoy
 spec:
+  # With hostNetwork, Envoy's hot-restart domain socket (an abstract Unix
+  # socket, scoped to the network namespace) collides with cilium-envoy's,
+  # which also runs in the host namespace with --base-id 0: the proxy
+  # crash-loops with "unable to bind domain socket with base_id=0, errno=98"
+  # (rehearsal, 2026-11-23; results F16).
+  extraArgs: ["--base-id", "1"]
+  # One proxy on host ports with a Recreate rollout: its replacement cannot
+  # start until it exits, so the default 60 s drain was 60 s of outage on a
+  # proxy-pod delete (rehearsal, 2026-11-23). There is no second instance to
+  # drain to.
+  shutdown:
+    drainTimeout: 5s
+    minDrainDuration: 1s
   provider:
     type: Kubernetes
     kubernetes:
@@ -20,10 +33,17 @@ spec:
       envoyDeployment:
         replicas: 1
         container:
-          # Keep the distroless UID and grant only the extra low-port capability.
+          # Root AND NET_BIND_SERVICE, to bind 80/443 on the host (results
+          # F16). The capability added to the distroless UID 65532 is not
+          # effective for a non-root process (no ambient capabilities), and
+          # root alone is not enough either: Envoy Gateway's default context
+          # drops ALL. Both fail with "cannot bind '0.0.0.0:80': Permission
+          # denied". Everything else stays dropped.
           securityContext:
-            runAsUser: 65532
+            runAsUser: 0
+            runAsNonRoot: false
             capabilities:
+              drop: [ALL]
               add: [NET_BIND_SERVICE]
         patch:
           type: StrategicMerge

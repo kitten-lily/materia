@@ -577,8 +577,24 @@ push, beside `workloads/edge-backend` on the home worker:
 - External HTTPS through the QEMU forward: `200` over HTTP/2;
   `curl --http3-only`: `200` over `h3`.
 - State on the local PV: `db/`, Gerbil's `key`, `letsencrypt/`, root-owned.
-- Not yet: Pangolin first-run setup and a resource to the home backend,
-  the health check, the Newt site check, the step 4 restarts.
+- First-run setup through the API over the edge's 443 (synthetic admin,
+  org `pilot`, a local site, resources `echo` and `transfer` with targets
+  `edge-backend.pilot-edge-backend.svc.cluster.local:8080`, SSO off):
+  `https://echo.<pilot domain>/hostname` returns the backend pod's name on
+  the **home worker**, over HTTP/2 and over HTTP/3: edge → tailnet → home.
+- **Health check: not possible on a local site.** With `hcEnabled` the
+  target stays `unhealthy` (nothing probes local sites, as on flutterina)
+  and Pangolin removes it from Traefik's servers (`503 no available
+  server`). Targets run with `hcEnabled: false`; Pangolin's health check
+  needs the Newt site, which needs a public edge (deferred to Hetzner, E7).
+- **Step 4 on the rehearsal, under a 1/s probe:** (a) SIGKILL of the app's
+  process from the host: same pod UID, only `app` restarted, 3 failed
+  probes (~3 s, `500` from badger while the app was down; limit 2 min):
+  **pass**. (b) pod deleted: new pod, no restarts, 5 failed probes (~5 s;
+  limit 5 min): **pass**. Restore: scale to 0, tar the state (1.3 MB),
+  move it aside, extract into an empty directory, scale to 1: admin login,
+  both resources and the route work, Gerbil key identical (sha256):
+  **pass**.
 
 **F14 — With `hostNetwork`, the Pangolin pod's internal listeners are host
 listeners.** In the production pod, the app's 3000-3003 and 3005 and
@@ -591,6 +607,61 @@ private. Probed from `world` through temporary QEMU forwards, all nine
 `action deny` verdict. On Hetzner the provider firewall is a second layer;
 a production edge on this design depends on the host firewall staying
 enforced.
+
+**F15 — Gerbil's WireGuard interface outlives the Pangolin pod.** With
+`hostNetwork`, `wg0` (`100.89.128.1/24`, its route, udp/51820) is created in
+the host's network namespace; deleting the pod (or the whole arm) leaves it.
+A recreated pod reuses it, which is part of why (b) recovers in seconds, but
+after the arm is removed it is stale state on a public host (the firewall
+still blocks the port once `pilot-edge-gerbil` is gone). The arm switch now
+deletes it by hand (`arms/README.md`).
+
+### Envoy arm on the rehearsal edge, 2026-11-23
+
+Pangolin arm removed (and `wg0`, F15), `workloads/edge-envoy` applied by
+hand. Three fixes before it served, now in `proxy.yaml`:
+
+**F16 — A hostNetwork Envoy on a Cilium node needs its own `--base-id` and
+root with `NET_BIND_SERVICE`.** (1) The proxy crash-looped with `unable to
+bind domain socket with base_id=0, errno=98`: Envoy's hot-restart socket is
+an abstract Unix socket, scoped to the network namespace, and
+`cilium-envoy` already runs in the host namespace with `--base-id 0`.
+`EnvoyProxy.spec.extraArgs: ["--base-id", "1"]` fixes it. (2) Listeners then
+failed with `cannot bind '0.0.0.0:80': Permission denied`: the capability
+added to the distroless UID 65532 is not effective without ambient
+capabilities, and root alone is not enough because Envoy Gateway's default
+context drops ALL. Root plus `capabilities.add: [NET_BIND_SERVICE]` (ALL
+else dropped) binds 80 and 443. (3) The default 60 s drain made a proxy-pod
+delete a 61 s outage (Recreate on host ports: the replacement waits for the
+old pod); `spec.shutdown.drainTimeout: 5s` brings it to ~7 s.
+
+- GatewayClass `pilot-edge` accepted with the namespaced EnvoyProxy; the
+  proxy runs on the edge with `hostNetwork`, binds tcp/80, tcp/443 and
+  udp/443.
+- Staging HTTP-01 cannot complete here (no public address, no DNS); for the
+  rehearsal only, the Certificate was pointed at the cluster's `selfsigned`
+  ClusterIssuer (not in git).
+- `https://echo.<pilot domain>/hostname`: `200` over HTTP/2 and over `h3`
+  from the home worker's pod. tcp/80 from outside: no answer, as intended
+  (`pilot-edge-acme-http` not applied).
+- Active health check (BackendTrafficPolicy): both routes' endpoint (the
+  home pod) `healthy` in Envoy's admin `/clusters`. Unlike Pangolin's local
+  site, this checks the real cross-site path.
+- Restarts under the probe: proxy pod deleted, 7 failed probes (~7 s) with
+  the 5 s drain (61 s at the default): **pass**; controller pod deleted: no
+  failed probe: **pass**.
+- **Control plane stopped for 10 minutes** (`vm stop`, boot gap 11:37:20 →
+  11:47:31 UTC): 565/565 probes `200` through the edge while it was down,
+  189/189 after; the edge kept serving from its last xDS config. All nodes
+  `Ready` and all Applications `Synced`/`Healthy` afterwards.
+- **Tailnet-only route** (`tailnet.yaml`): a second EnvoyProxy without
+  `hostNetwork`, Service `LoadBalancer` class `tailscale`. The operator's
+  proxy and the Envoy proxy run off the edge; tailnet device
+  `bluefin-pilot-gw` serves `/hostname` from the home backend by IP and by
+  MagicDNS name; nothing of it binds on the public edge.
+- Not covered on the rehearsal: staging ACME and renewal (needs the public
+  edge and the `*.pilot` record), the 48-hour run, and the public-side
+  probes; all on Hetzner.
 
 ## Findings
 

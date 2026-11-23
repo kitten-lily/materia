@@ -62,5 +62,10 @@ renewal check.
    that the departing arm has released TCP/UDP 443 and its other
    listeners, including Gerbil UDP 51820/21820 or Envoy TCP 80. Check
    that the departing arm's temporary host-policy allowances are gone.
+   **Leaving Pangolin: delete Gerbil's WireGuard interface by hand**
+   (`ip link del wg0`). With `hostNetwork` it lives in the host's network
+   namespace and outlives the pod, keeping udp/51820 bound and the
+   `100.89.128.0/24` route (results, F15). The firewall still blocks the
+   port once `pilot-edge-gerbil` is gone, but the interface is stale state.
 5. Move the other Application file into `apps/` and push with its
    encrypted configuration.
