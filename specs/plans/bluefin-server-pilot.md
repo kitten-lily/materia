@@ -352,6 +352,75 @@ cost of the workaround.
 Exit: provider install/recovery works, cross-site worker is stable, and the
 Pangolin pod serves ingress beside cluster networking at a measured capacity.
 
+## Phase 4b — Edge on a hostup.se VPS XS
+
+Added 2026-11-23 (operator request): the same edge on a second provider,
+HostUp's VPS XS in Stockholm, to compare against the Hetzner cpx22 and to
+learn whether the edge design is provider-portable. Same thresholds as
+Phase 4. Runs **after** Phase 4, so only one paid pilot VM exists at a time
+(topology rule above), reusing Phase 4's tooling and both arms' manifests.
+
+Provider facts (hostup.se support pages and VPS page, read 2026-11-23):
+
+| | VPS XS |
+| --- | --- |
+| Size | 2 vCPU (type not stated), 4 GB, 50 GB NVMe, 2 TB traffic; KVM; Älvsjö, Stockholm |
+| Price | €4.90/month excl. 25 % VAT (≈ €6.13), monthly or yearly; no hourly billing (Cloud VM PAYG needs 2,000 SEK prior spend plus ID). New VPS: money back on request within 14 days of activation (EU/EEA) |
+| Firmware | per server: **"UEFI + TPM 2.0"** or SeaBIOS; Secure Boot not enabled; set with the server stopped; an OS boots only in the mode it was installed in |
+| Install media | ISO by direct URL (≤ 20 GB, `.iso.gz`/`.bz2` accepted); netboot.xyz Quick Mount; documented raw disk import: `dd` from System Rescue CD (via netboot.xyz) with `gzip`, from SSH or a direct URL; HostUp also imports an image for free |
+| Rescue | none hosted: boot an ISO (System Rescue CD) |
+| Console | browser console only, no VNC client access |
+| Firewall | provider firewall, **off on a new server**; inbound DROP when on, per-service rules (≤ 100), shared groups; IPv6 coverage not stated |
+| Network | one IPv4; IPv6 per interface only after "Enable IPv6"; routed /64–/48 blocks optional |
+| API | yes (developer.hostup.se, 300+ endpoints), plus snapshots (24 h) and weekly backups |
+
+Differences from Phase 4 and how each is handled:
+- **TPM 2.0 present, Secure Boot off.** Null-key ESP credentials are still
+  accepted (they are refused only with a TPM *and* Secure Boot on), and the
+  installed disk never enrols keys (F4, results Phase 4). Record the TPM
+  and Secure Boot state on every boot, as in Phase 4 step 1c.
+- **Install** is Phase 4's E1 path with HostUp's own import method: build
+  the image locally at the VPS disk's exact size (read in System Rescue CD),
+  stage the ESP credentials, boot System Rescue CD via netboot.xyz, start its
+  sshd with a one-time root password and a temporary provider-firewall rule
+  for the operator's /32, then the full write, sha256 readback and GPT check
+  as in `hz stream`. Fallback: their free import from a direct URL to the
+  gzip'd raw image (it holds the obfuscated single-use auth key, so the URL
+  must be private, short-lived, and the key used within the day).
+- **Firewall first.** Enable the provider firewall with Phase 0's rule set
+  (tcp/443, udp/443, udp/51820, udp/21820, udp/41641, icmp) before the first
+  Bluefin boot; tcp/22 only for the install window, tcp/80 only for the
+  Envoy arm's HTTP-01 window. Leave IPv6 disabled (no "Enable IPv6"), the
+  E8 equivalent; check from outside that nothing answers on IPv6 anyway.
+- **No hourly billing:** one month is paid either way. Keep the 7-day
+  limit, delete by the same rule, and ask for the 14-day refund only if the
+  provider fails a gate before day 14.
+- **Tooling:** the hostup panel by hand for the pilot (create, boot mode,
+  ISO mount, firewall, console); `mise bluefin:pilot:hz` stays
+  Hetzner-only. Write a `hostup` task against their API only if the edge
+  moves there for production.
+
+Steps (Phase 4's, with its thresholds):
+1. Order VPS XS; set boot mode UEFI + TPM 2.0 before the first start;
+   enable the firewall with the rule set above. In System Rescue CD record
+   the disk's exact size, `/sys/class/tpm`, the firmware's Secure Boot and
+   Setup Mode variables, and whether `zstd` exists. Install as above; boot
+   the disk; console reaches login with `tailscaled` stopped. Pass: as
+   Phase 4 step 1.
+2. Join and network as Phase 4 step 2, including the public-side
+   `edge-fw-check --via public` and the `readyz` p95 over the path used.
+   Record the tailnet path to the home nodes (Stockholm vs hel1).
+3. Both arms as Phase 4 step 3 (Pangolin first), with
+   `edge-pangolin-setup --newt` and the staging ACME flows.
+4. Restarts and restore as Phase 4 step 4.
+5. The 48-hour run at the E6 profile for **one** arm: the one chosen from
+   Phase 4, unless the operator asks for both. The capacity verdict is for
+   the VPS XS (shared vCPU of unstated type; sample `%steal`).
+
+Exit: a provider comparison for the final report (install path, recovery,
+firewall model, tailnet path and latency to home, capacity, monthly cost),
+plus the same pass/fail per step as Phase 4.
+
 ## Phase 5 — Updates, failures and recovery
 
 1. Back up etcd using a matching etcd client and restore into an isolated

@@ -15,6 +15,7 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 | 2 — Host VPN + cross-site networking | **pass** 2026-11-21, except `readyz` p95 (540 ms over DERP vs 500 ms), deferred to Phase 4 by decision | below |
 | 3 — Persistent services as Kubernetes workloads | **pass** 2026-11-22: steps 0–6 all pass; step 1's push-to-rollout passes only with tuned polling (miss at the template's 412 s); findings F7–F11 | below |
 | 4 — Hetzner edge worker | in progress: E1.2 local rehearsal **pass** 2026-11-23 (F12, F13); Traefik baseline collecting until 2026-11-29; no server yet | below |
+| 4b — Edge on a hostup.se VPS XS | planned 2026-11-23, after Phase 4 | |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
 
