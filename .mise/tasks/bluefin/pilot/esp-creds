@@ -55,7 +55,7 @@ fi
 if _inventory="$(mdir -i "$_esp" -a -b "${_dest}/" 2>/dev/null)"; then
   while IFS= read -r entry; do
     case "${entry#"${_dest}/"}" in
-      ''|ignition.config.cred|pilot.tailscale-authkey.cred|firstboot.locale.cred|firstboot.keymap.cred|firstboot.timezone.cred) ;;
+      ''|ignition.config.cred|pilot.tailscale-authkey.cred|firstboot.locale.cred|firstboot.keymap.cred|firstboot.timezone.cred|passwd.hashed-password.root.cred) ;;
       *) echo "error: unexpected entry in ESP credential directory: $entry" >&2; exit 1 ;;
     esac
   done <<< "$_inventory"
@@ -74,12 +74,19 @@ pass-cli item view --vault-name bluefin-pilot --item-title "$_item" --field key 
 [[ "$(head -c11 "$_key")" == tskey-auth- ]] || { echo "error: vault item does not contain a Tailscale auth key" >&2; exit 1; }
 
 encode_cred() {
-  # systemd-creds emits base64. The ESP files carry the binary envelope.
-  systemd-creds encrypt --with-key=null --name="$1" "$2" - | base64 -d > "${_stage}/$1.cred"
+  # Keep systemd-creds' base64 text as is: decrypting a base64-decoded
+  # (binary) envelope fails with "Invalid argument" (the rehearsal's first
+  # boot, 2026-11-22: bluefin-ignition-credentials failed at step CREDENTIALS).
+  systemd-creds encrypt --with-key=null --name="$1" "$2" - > "${_stage}/$1.cred"
 }
 
 encode_cred ignition.config "$_ign"
 encode_cred pilot.tailscale-authkey "$_key"
+# Root's password field "*": no password login, but not locked. Root ships
+# as "!unprovisioned", and sshd (UsePAM no) refuses even keys for a locked
+# account (rehearsal, 2026-11-22; upstream usb-installer.md recipe). Not a
+# secret; bootstrap sets the console password over SSH later.
+printf '*' | encode_cred passwd.hashed-password.root -
 rm -f -- "$_key"
 for kv in firstboot.locale=C.UTF-8 firstboot.keymap=us firstboot.timezone=UTC; do
   printf '%s' "${kv#*=}" | encode_cred "${kv%%=*}" -

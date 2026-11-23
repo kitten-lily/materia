@@ -100,8 +100,9 @@ enrollment secrets over the tailnet.**
   That key is the one unavoidable on-disk secret; single use means it is
   worthless once the node has joined. A bootstrap step deletes its `.cred`
   from the ESP after the join.
-- No root password credential: root stays locked until the node is on the
-  tailnet; then bootstrap sets a unique console password over SSH
+- Root's password field is `*` (a non-secret null-key credential, F13): a
+  locked root refuses SSH keys. Once the node is on the tailnet, bootstrap
+  sets a unique console password over SSH
   (`chpasswd -e` with a hash from new vault item
   `root-console-password-edge`), stored in `/etc/shadow`. Until then the
   console fallback is the rescue system (H3), not a login.
@@ -109,7 +110,10 @@ enrollment secrets over the tailnet.**
   `homelab.conf` (`HOMELAB_JOIN_PASSPHRASE`) followed by a restart of the
   join unit; the template then removes it from `homelab.conf`. The
   rehearsal (E1.2) proves the join unit picks it up that way.
-- Verify after cleanup: ESP inventory shows only `ignition.config.cred`;
+- The ESP is mounted at `/boot` on the node
+  (`/boot/loader/credentials/`). Credentials stay in base64 text form (F12).
+- Verify after cleanup: ESP inventory shows only the non-secret
+  credentials (`ignition.config`, `firstboot.*`, `passwd.hashed-password.root`);
   a cold boot (`poweroff`/`poweron`) brings the node back with the same
   tailnet identity, Ignition still staged, console login with the new
   password, Node `Ready`.

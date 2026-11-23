@@ -14,7 +14,7 @@ v26.11.1701 evidence below is kept as the record of the first verification.
 | 1 — Local control plane + worker | **pass** 2026-11-20 | below |
 | 2 — Host VPN + cross-site networking | **pass** 2026-11-21, except `readyz` p95 (540 ms over DERP vs 500 ms), deferred to Phase 4 by decision | below |
 | 3 — Persistent services as Kubernetes workloads | **pass** 2026-11-22: steps 0–6 all pass; step 1's push-to-rollout passes only with tuned polling (miss at the template's 412 s); findings F7–F11 | below |
-| 4 — Hetzner edge worker | not started; UEFI available on cpx gen2, see F1 (resolved) | |
+| 4 — Hetzner edge worker | in progress: E1.2 local rehearsal **pass** 2026-11-23 (F12, F13); Traefik baseline collecting until 2026-11-29; no server yet | below |
 | 5 — Updates, failures, recovery | not started | |
 | 6 — Krytis runner (optional) | not started | |
 
@@ -477,7 +477,74 @@ Runs on the Phase 2 cluster until step 6 rebuilds it.
 | Unplanned: hard kill | recorded | 15:15 UTC: the **workstation** ran out of memory (an 11 GiB `zig` build, Steam) and its OOM killer killed the control plane's QEMU. Restarted 16:41: XFS root and the LV's ext4 replayed their journals, postgres ran crash recovery (`not properly shut down; automatic recovery`), marker rows and fixtures intact, media pods `1/1` 188 s after start, the missed backup ran. For a real host: an outage of the API server's host does nothing worse than a reboot to this stack |
 | 6 Reinstall and import | pass, with deviations | Before (19:31 UTC, 11-21): VG `pilot_data` qhhzsl-…, LV uqN24A-…, PVs QyWPEG-…/benMps-…, ext4 ae24577e-…, fixtures manifest 9220bb1e…, 1000 marker rows md5 2b7fc90e…, two restic snapshots on the worker's disk, all 8 Applications healthy. Both VMs stopped, all four tailnet devices deleted (nodes, operator, proxy), both OS disks reinstalled, data disks untouched. **Deviations on the way, each now fixed in the tooling:** (a) Ignition with the 2.2 MB sysext embedded exceeded QEMU's 128 KiB argv string limit as an SMBIOS credential, and then systemd's 1 MiB credential limit as a fw_cfg credential (`larger than allowed limit (1.3M > 1M), skipping`, so that boot had no Ignition and was discarded): Ignition now goes by fw_cfg file and carries only the small units, and the bootstrap delivers the sysext over SSH by checksum; (b) F11, the first good install upgraded itself to 26.11.2641 and was discarded, pinned and reinstalled; (c) the bootstrap's audit-mode check expected `policy-enabled=ingress` where audit mode reports `audit-ingress`, failed after its retries and restored the enforcing fixture as designed; fixed, and `--reapply-firewall` re-ran audit → 120 s of no audit verdicts → enforce, verified on every agent; (d) the add-ons came back with the fresh `homelab.conf`: render now sets them off. After: one boot each on 26.11.2506, Kubernetes v1.35.10, control plane `Ready` 535 s and worker 76 s after QEMU start; the bootstrap delivered the sysext, the VG activated and **mounted with the same UUIDs** (PV, VG, LV, filesystem), fixtures and hardlink inode intact, the production data-disk initialisation never run; **every Application `Synced`/`Healthy` 20 min 54 s after the control plane's first boot** (threshold 30 min), including the failed and repeated firewall step; all static PVs bound to their named claims again; marker rows md5 identical; static-volume check 7/7; restore check from snapshot `c0843f9b` (taken before the reinstall, from the worker's surviving repository): `restic check --read-data` clean, fixtures, dump load, exact counts, markers all pass; host firewall enforcing, Phase 2 denial probes all blocked (6443 and 10250 no answer, no 6447 connection from `10.0.2.2`, 8 UDP 8472 probes `action deny`); all four tailnet names reused; Buildbarn TLS on both ports and the BuildStream round trip 6/6. Manual steps beyond the bootstrap: deleting the four devices, relaying the new join passphrase into the vault, and the four fixes above |
 
+## Phase 4 — 2026-11-22/23 (in progress)
+
+Design: [bluefin-server-pilot-phase4.md](bluefin-server-pilot-phase4.md),
+decisions recorded 2026-11-22.
+
+### E6 baseline: collecting
+
+Minimal Traefik access log on flutterina since 2026-11-22 19:10 UTC (commit
+`fb96c3e`): materia applied it cleanly and restarted only `traefik.service`;
+badger loaded; lines carry only start time, duration, router, status and
+protocol. First rate ~0.25 req/s (~20k lines/day) against a 3 GB journal
+holding ~5 weeks. Collection ends ~2026-11-29.
+
+### E1.2 rehearsal: pass, 2026-11-23
+
+`bluefin-pilot-edge` installed with the usual two stages into an
+80,000,000,000-byte raw disk, credentials staged on its ESP with
+`mise bluefin:pilot:esp-creds`, then booted by `vm rehearse`: fresh OVMF
+variables (Setup Mode), virtio-scsi disk, no SMBIOS or fw_cfg credentials,
+one user-mode NIC. Three boots:
+
+1. **Fail:** `bluefin-ignition-credentials` failed at step CREDENTIALS
+   (`Invalid argument`); the node rebooted in a loop. Cause in F12.
+2. **Fail (partial):** Ignition, the release pin, the tailnet step and the
+   join unit all worked; SSH refused the key for the locked root (F13).
+3. **Pass**, with both fixes:
+   - SSH up ~20 s after start; `systemd-creds list` shows all six ESP
+     credentials imported; root's field `*`; release 26.11.2506; 9 transfers
+     pinned, none `releases/latest`; IPv6 disabled; no TPM.
+   - Firmware `UEFI 2.70`, **Secure Boot `disabled (setup)`**: the installed
+     disk never enrols keys (its `loader/keys` is empty, `loader.conf` has
+     no `secure-boot-enroll`). F4 answered for an installed disk.
+   - Tailnet step logged in with the single-use key (~40 s); kubelet line
+     carries `--node-labels=pilot.bluefin/edge=true
+     --register-with-taints=pilot.bluefin/edge=true:NoSchedule`.
+   - Bootstrap by hand (E2): console password via `chpasswd -e` over SSH
+     stdin; join passphrase appended to `/etc/bluefin/homelab.conf` over SSH
+     stdin and the join unit restarted; `pilot.tailscale-authkey.cred`
+     deleted from the ESP, which is mounted at **`/boot`**.
+   - Node `Ready` ~30 s later, first registration already labelled, tainted
+     (`pilot.bluefin/edge=true:NoSchedule`) and on its tailnet IP; only
+     DaemonSet pods (Cilium, cilium-envoy) scheduled. The join removed the
+     passphrase from `homelab.conf`.
+   - Reboot with the auth key gone: back in ~25 s, new boot ID, no new
+     tailnet login (saved state), no failed units, Node `Ready` again; ESP
+     holds only the five non-secret credentials.
+
+Node deleted from the cluster and VM stopped afterwards; its tailnet device
+and the spent key are to be removed in the admin console.
+
 ## Findings
+
+**F13 — A locked root refuses SSH keys.** Root ships as `!unprovisioned`
+and Bluefin's sshd runs without PAM, so with no password credential every
+key login is refused, on the user-net forward and the tailnet alike. A
+headless node needs root's field set to `*` (no password login, not
+locked) as a `passwd.hashed-password.root` credential, which is not a
+secret; upstream's own unattended recipe does the same
+(`usb-installer.md`). The local VMs never hit it because they always got a
+real hash.
+
+**F12 — ESP credentials must stay in `systemd-creds`' base64 text form.**
+A base64-decoded (binary) envelope is rejected with `Invalid argument`,
+both by the node's initrd (`bluefin-ignition-credentials` fails at step
+CREDENTIALS and the node reboot-loops) and by the workstation's own
+`systemd-creds decrypt`. Upstream notes the one exception:
+`systemd-ssh-generator` reads `ssh.listen` only in binary form.
+
 
 **F11 — A fresh install does not stay on the release it was installed from.**
 Step 6 reinstalled the control plane from the pinned v26.11.2506 installer,
