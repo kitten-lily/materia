@@ -6,6 +6,7 @@
 #USAGE flag "--vm <name>" help="Pilot VM: bluefin-pilot-cp, bluefin-pilot-node or bluefin-pilot-edge"
 #USAGE flag "--size <bytes>" help="create: exact OS disk size in bytes (edge only, required)"
 #USAGE flag "--fresh" help="rehearse: replace the previous rehearsal disk and firmware variables"
+#USAGE flag "--resume" help="rehearse: boot the existing rehearsal disk again"
 #USAGE flag "--no-reboot" help="start: exit QEMU on the first guest reset"
 #USAGE flag "--offline" help="start: bring up both NICs with the link down (recovery check L1)"
 #USAGE flag "--topology <topology>" default="lan" help="start: lan (Phase 1: shared segment) or tailnet (Phase 2: one NIC, Tailscale auth key, denial-probe forwards)"
@@ -262,15 +263,23 @@ rehearse)
   running && { echo "error: $_vm is already running" >&2; exit 1; }
   [[ -e "${_dir}/installer.qcow2" ]] && { echo "error: installer overlay still present; install did not finish" >&2; exit 1; }
   [[ -f "${_dir}/${_os}" ]] || { echo "error: run create and install first" >&2; exit 1; }
-  if [[ "${usage_fresh:-false}" == true ]]; then
-    rm -f -- "${_dir}/rehearse.raw" "${_dir}/rehearse-vars.fd"
-  elif [[ -e "${_dir}/rehearse.raw" || -L "${_dir}/rehearse.raw" ||
-          -e "${_dir}/rehearse-vars.fd" || -L "${_dir}/rehearse-vars.fd" ]]; then
-    echo "error: rehearsal files already exist; use --fresh to replace them" >&2
-    exit 1
+  if [[ "${usage_resume:-false}" == true ]]; then
+    # Boot the existing rehearsal disk again (its tailnet identity and join
+    # state intact), e.g. to re-test bootstrap without spending an auth key.
+    [[ "${usage_fresh:-false}" == true ]] && { echo "error: --resume and --fresh exclude each other" >&2; exit 1; }
+    [[ -f "${_dir}/rehearse.raw" && -f "${_dir}/rehearse-vars.fd" ]] \
+      || { echo "error: no rehearsal disk to resume; run rehearse first" >&2; exit 1; }
+  else
+    if [[ "${usage_fresh:-false}" == true ]]; then
+      rm -f -- "${_dir}/rehearse.raw" "${_dir}/rehearse-vars.fd"
+    elif [[ -e "${_dir}/rehearse.raw" || -L "${_dir}/rehearse.raw" ||
+            -e "${_dir}/rehearse-vars.fd" || -L "${_dir}/rehearse-vars.fd" ]]; then
+      echo "error: rehearsal files already exist; use --fresh to replace them or --resume to boot them" >&2
+      exit 1
+    fi
+    cp --sparse=always -- "${_dir}/${_os}" "${_dir}/rehearse.raw"
+    cp -- "$_vars_tmpl" "${_dir}/rehearse-vars.fd"
   fi
-  cp --sparse=always -- "${_dir}/${_os}" "${_dir}/rehearse.raw"
-  cp -- "$_vars_tmpl" "${_dir}/rehearse-vars.fd"
   : > "${_dir}/rehearse-serial.log"; : > "${_dir}/probe.log"
   base_args rehearse.raw rehearse-vars.fd rehearse-serial.log
   ssh_net_args

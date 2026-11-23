@@ -234,7 +234,7 @@ ports, the load and probe harness) is done before creation.
 | Edge render | `mise bluefin:pilot:render --vm bluefin-pilot-edge --topology tailnet`: role node, no data/backup units, no root password credential, IPv6 sysctl; `tailnet-prep.sh` gains the edge's kubelet flags (`--node-labels`, `--register-with-taints=pilot.bluefin/edge=true:NoSchedule`) in the same `KUBELET_EXTRA_ARGS` line |
 | Disk image | `mise bluefin:pilot:vm install --vm bluefin-pilot-edge --raw --size <bytes>` and `vm rehearse` (fresh OVMF vars, ESP credentials only); `mise bluefin:pilot:esp-creds` writes null-key `.cred` files with `mtools` |
 | Hetzner | `mise bluefin:pilot:hz create\|rescue\|stream\|console\|delete`: `pilot=bluefin` labels, the `bluefin-pilot` firewall at creation, the temporary tcp/22 rule limited to the operator's IP, refuses any server name but `bluefin-pilot-edge` |
-| Edge bootstrap | `mise bluefin:pilot:bootstrap --edge`: console password, join passphrase over SSH, ESP auth-key removal, `pilot-edge-public` policy |
+| Edge bootstrap | `mise bluefin:pilot:edge-bootstrap --via tailnet\|local` (a separate task: the cluster `bootstrap` runs from the control plane, this one on the node): console password, join passphrase over SSH, Node Ready with label/taint/tailnet IP, ESP auth-key removal. The `pilot-edge-public` policy (E3) goes into the cluster bootstrap |
 | Edge workloads | `provisioning/bluefin/gitops/workloads/pilot-edge-pangolin/` and `…/pilot-edge-envoy/`, one Application enabled at a time |
 | Edge state | local PV on the edge (`/var/lib/pilot-edge`), synthetic data only |
 | Probes | `mise bluefin:pilot:edge-probe` (HTTPS/HTTP/3 with the staging root as explicit trust, outage log) and `mise bluefin:pilot:edge-load` (E6 profile, CSV) |

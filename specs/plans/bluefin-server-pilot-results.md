@@ -527,6 +527,19 @@ one user-mode NIC. Three boots:
 Node deleted from the cluster and VM stopped afterwards; its tailnet device
 and the spent key are to be removed in the admin console.
 
+### Edge bootstrap: pass, 2026-11-23
+
+`mise bluefin:pilot:edge-bootstrap --via local` against a fresh rehearsal
+boot (new single-use key, vault item `root-console-password-edge`): console
+password set, join passphrase delivered, Node `Ready` with label, taint and
+tailnet InternalIP, ESP auth key removed, in 34 s. A second run changed
+nothing (every step reported done); after a reboot the password held (the
+ESP's `*` credential is first-boot only), no failed units, and a third run
+again changed nothing. A `--resume` boot of a disk whose tailnet device had
+been deleted cannot rejoin (`tailscale status` shows it offline; the tailnet
+step fails on MagicDNS and kubelet waits), so the rehearsal node is kept as
+the stand-in edge for the E3 firewall and workload work.
+
 ## Findings
 
 **F13 — A locked root refuses SSH keys.** Root ships as `!unprovisioned`

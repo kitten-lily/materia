@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#MISE description="Bootstrap the Bluefin pilot edge node over SSH: console password, join, ESP auth-key removal (#179)"
+
+#USAGE flag "--via <path>" default="tailnet" help="tailnet (the node's MagicDNS name, Hetzner) or local (the rehearsal VM's 127.0.0.1:2212 forward)"
+#USAGE flag "--password-item <title>" default="root-console-password-edge" help="bluefin-pilot vault item whose password field becomes root's console password"
+#USAGE flag "--reset-password" help="set the console password even when root already has one"
+
+# Design: specs/plans/bluefin-server-pilot-phase4.md, E2 ("Secrets during
+# first boot"); first run by hand in the E1.2 rehearsal (results, Phase 4).
+# The node boots with root's field "*" (F13) and no join passphrase. This
+# task, idempotent:
+#   1. sets a unique console password (root's field "*" -> a SHA-512 hash);
+#   2. delivers the join passphrase into homelab.conf and restarts the join
+#      unit, unless the node is already joined;
+#   3. waits for the Node to be Ready with its edge label and taint;
+#   4. deletes pilot.tailscale-authkey.cred from the ESP (/boot) and checks
+#      that only non-secret credentials remain.
+# Secrets travel on SSH stdin only: never argv, never a file on either side.
+
+# shellcheck disable=SC2016 # the single-quoted commands expand on the node
+set -euo pipefail
+
+_node=bluefin-pilot-edge
+_cache="${HOME}/.cache/bluefin-pilot"
+_secrets="${_cache}/secrets"
+_cp=(ssh -F "${_secrets}/ssh_config" bluefin-pilot-cp)
+_known="${_cache}/vm/${_node}/known_hosts"
+mkdir -p "${_known%/*}"; chmod 700 "${_known%/*}"
+
+case "${usage_via:-tailnet}" in
+  local) _target=(-p 2212 root@127.0.0.1) ;;
+  tailnet) _target=("root@${_node}") ;;
+  *) echo "error: --via must be tailnet or local" >&2; exit 1 ;;
+esac
+# A rebuilt node has new host keys; its known_hosts file is per node, so
+# accept-new pins the first key and later runs verify it.
+_ssh=(ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new
+  -o "UserKnownHostsFile=${_known}" -i "${_secrets}/ssh-root" "${_target[@]}")
+
+log() { echo "edge-bootstrap: $*"; }
+node() { "${_ssh[@]}" "$@"; }
+
+[[ "$(node hostname)" == "$_node" ]] || { echo "error: target is not ${_node}" >&2; exit 1; }
+
+# 1. Console password.
+_root_field="$(node 'grep "^root:" /etc/shadow | cut -d: -f2 | cut -c1-3')"
+if [[ "$_root_field" == '$6$' && -z "${usage_reset_password:-}" ]]; then
+  log "root already has a console password (--reset-password to change it)"
+else
+  _item="${usage_password_item:-root-console-password-edge}"
+  if ! _pw="$(pass-cli item view --vault-name bluefin-pilot --item-title "$_item" --field password 2>/dev/null)" || [[ -z "$_pw" ]]; then
+    echo "error: no password in vault item '${_item}' (bluefin-pilot vault); create it first" >&2
+    exit 1
+  fi
+  printf '%s' "$_pw" | openssl passwd -6 -stdin | tr -d '\n' \
+    | node 'IFS= read -r h || [ -n "$h" ]; case "$h" in "\$6\$"*) ;; *) exit 3 ;; esac; printf "root:%s\n" "$h" | chpasswd -e'
+  unset _pw
+  [[ "$(node 'grep "^root:" /etc/shadow | cut -d: -f2 | cut -c1-3')" == '$6$' ]] \
+    || { echo "error: console password not set" >&2; exit 1; }
+  log "console password set from vault item ${_item}"
+fi
+
+# 2. Join, unless already joined (kubelet.conf exists once kubeadm join ran).
+if node 'test -s /etc/kubernetes/kubelet.conf'; then
+  log "already joined"
+else
+  pass-cli item view --vault-name bluefin-pilot --item-title join-passphrase --field password \
+    | node 'IFS= read -r p || [ -n "$p" ]; [ -n "$p" ] || exit 3; c=/etc/bluefin/homelab.conf
+      sed -i "/^HOMELAB_JOIN_PASSPHRASE=/d" "$c"
+      [ -z "$(tail -c1 "$c")" ] || echo >> "$c"
+      printf "HOMELAB_JOIN_PASSPHRASE=%s\n" "$p" >> "$c"
+      systemctl restart --no-block bluefin-cluster-join.service'
+  log "join passphrase delivered; join unit restarted"
+fi
+
+# 3. Ready, labelled, tainted, on its tailnet IP.
+_ts_ip="$(node 'tailscale ip -4 | head -n1')"
+_ok=
+for _ in $(seq 1 60); do
+  if _json="$("${_cp[@]}" "kubectl get node ${_node} -o json" 2>/dev/null)" \
+     && jq -e --arg ip "$_ts_ip" '
+       (.status.conditions[] | select(.type == "Ready") | .status == "True")
+       and .metadata.labels["pilot.bluefin/edge"] == "true"
+       and any(.spec.taints[]?; .key == "pilot.bluefin/edge" and .value == "true" and .effect == "NoSchedule")
+       and any(.status.addresses[]; .type == "InternalIP" and .address == $ip)' <<< "$_json" >/dev/null; then
+    _ok=1; break
+  fi
+  sleep 10
+done
+[[ -n "$_ok" ]] || { echo "error: ${_node} not Ready with its label, taint and tailnet InternalIP after 10 min" >&2; exit 1; }
+node 'grep -q "^HOMELAB_JOIN_PASSPHRASE=" /etc/bluefin/homelab.conf' \
+  && { echo "error: the join left the passphrase in homelab.conf" >&2; exit 1; }
+log "Node Ready, labelled and tainted on its tailnet IP"
+
+# 4. The single-use auth key off the ESP; only non-secret credentials stay.
+_left="$(node 'rm -f /boot/loader/credentials/pilot.tailscale-authkey.cred && sync && ls /boot/loader/credentials')"
+while IFS= read -r f; do
+  case "$f" in
+    ignition.config.cred|passwd.hashed-password.root.cred|firstboot.locale.cred|firstboot.keymap.cred|firstboot.timezone.cred) ;;
+    *) echo "error: unexpected ESP credential left: ${f}" >&2; exit 1 ;;
+  esac
+done <<< "$_left"
+log "ESP credentials: $(tr '\n' ' ' <<< "$_left")"
+log "done"
