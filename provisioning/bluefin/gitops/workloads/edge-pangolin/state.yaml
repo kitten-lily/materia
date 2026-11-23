@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pilot-edge-pangolin
+spec:
+  capacity: {storage: 2Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  claimRef: {namespace: pilot-edge-pangolin, name: pangolin-state}
+  local: {path: /var/lib/pilot-edge/pangolin}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - {key: kubernetes.io/hostname, operator: In, values: [bluefin-pilot-edge]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pangolin-state
+  namespace: pilot-edge-pangolin
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: ""
+  volumeName: pilot-edge-pangolin
+  resources:
+    requests: {storage: 2Gi}

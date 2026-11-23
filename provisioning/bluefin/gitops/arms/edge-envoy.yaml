@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pilot-edge-envoy
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kitten-lily/materia.git
+    targetRevision: main
+    path: provisioning/bluefin/gitops/workloads/edge-envoy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pilot-edge-envoy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

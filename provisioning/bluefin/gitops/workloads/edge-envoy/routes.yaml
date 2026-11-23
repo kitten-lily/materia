@@ -1,0 +1,52 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo
+  namespace: pilot-edge-envoy
+spec:
+  parentRefs:
+  - {name: pilot-edge, sectionName: https}
+  hostnames: [echo.invalid]
+  rules:
+  - backendRefs:
+    - {name: edge-backend, namespace: pilot-edge-backend, port: 8080}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: transfer
+  namespace: pilot-edge-envoy
+spec:
+  parentRefs:
+  - {name: pilot-edge, sectionName: https}
+  hostnames: [transfer.invalid]
+  rules:
+  - backendRefs:
+    - {name: edge-backend, namespace: pilot-edge-backend, port: 8080}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: pilot-edge-envoy
+  namespace: pilot-edge-backend
+spec:
+  from:
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: pilot-edge-envoy}
+  to:
+  - {group: "", kind: Service, name: edge-backend}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: edge-backend-health
+  namespace: pilot-edge-envoy
+spec:
+  targetRefs:
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: echo}
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: transfer}
+  healthCheck:
+    active:
+      type: HTTP
+      http:
+        path: /echo?msg=healthy
+        expectedStatuses: [200]

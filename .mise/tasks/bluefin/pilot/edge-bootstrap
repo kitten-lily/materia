@@ -101,4 +101,10 @@ while IFS= read -r f; do
   esac
 done <<< "$_left"
 log "ESP credentials: $(tr '\n' ' ' <<< "$_left")"
+
+# 5. The Pangolin arm's local PV (workloads/edge-pangolin/state.yaml): a
+# local PV never creates its path, and the pod stays Pending without it.
+# kubelet creates the config/ and letsencrypt/ subPaths inside it.
+node 'mkdir -p /var/lib/pilot-edge/pangolin && chmod 700 /var/lib/pilot-edge /var/lib/pilot-edge/pangolin'
+log "edge state path /var/lib/pilot-edge/pangolin present"
 log "done"

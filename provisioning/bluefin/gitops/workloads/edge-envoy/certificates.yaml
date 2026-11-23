@@ -1,0 +1,29 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: pilot-edge-staging
+  namespace: pilot-edge-envoy
+spec:
+  acme:
+    email: unset@invalid
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: pilot-edge-staging-account
+    solvers:
+    - http01:
+        gatewayHTTPRoute:
+          parentRefs:
+          - group: gateway.networking.k8s.io
+            kind: Gateway
+            name: pilot-edge
+            sectionName: acme-http
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: pilot-edge-tls
+  namespace: pilot-edge-envoy
+spec:
+  secretName: pilot-edge-tls
+  issuerRef: {name: pilot-edge-staging, kind: Issuer}
+  dnsNames: [echo.invalid, transfer.invalid]

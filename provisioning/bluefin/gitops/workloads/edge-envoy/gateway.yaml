@@ -1,0 +1,36 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: pilot-edge
+  namespace: pilot-edge-envoy
+spec:
+  gatewayClassName: pilot-edge
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    hostname: "*.invalid"
+    allowedRoutes:
+      namespaces: {from: Same}
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - {kind: Secret, name: pilot-edge-tls}
+  - name: acme-http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces: {from: Same}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: pilot-edge-http3
+  namespace: pilot-edge-envoy
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: pilot-edge
+    sectionName: https
+  http3: {}

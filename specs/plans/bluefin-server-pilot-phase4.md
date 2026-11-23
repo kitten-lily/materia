@@ -236,8 +236,11 @@ ports, the load and probe harness) is done before creation.
 | Disk image | `mise bluefin:pilot:vm install --vm bluefin-pilot-edge --raw --size <bytes>` and `vm rehearse` (fresh OVMF vars, ESP credentials only); `mise bluefin:pilot:esp-creds` writes null-key `.cred` files with `mtools` |
 | Hetzner | `mise bluefin:pilot:hz create\|rescue\|stream\|console\|delete`: `pilot=bluefin` labels, the `bluefin-pilot` firewall at creation, the temporary tcp/22 rule limited to the operator's IP, refuses any server name but `bluefin-pilot-edge` |
 | Edge bootstrap | `mise bluefin:pilot:edge-bootstrap --via tailnet\|local` (a separate task: the cluster `bootstrap` runs from the control plane, this one on the node): console password, join passphrase over SSH, Node Ready with label/taint/tailnet IP, ESP auth-key removal. The `pilot-edge-public` policy (E3) goes into the cluster bootstrap |
-| Edge workloads | `provisioning/bluefin/gitops/workloads/pilot-edge-pangolin/` and `…/pilot-edge-envoy/`, one Application enabled at a time |
-| Edge state | local PV on the edge (`/var/lib/pilot-edge`), synthetic data only |
+| Home backend | `provisioning/bluefin/gitops/workloads/edge-backend/` serves netexec on the home worker. `apps/edge-backend.yaml` syncs in wave 1 |
+| Pangolin arm | `provisioning/bluefin/gitops/workloads/edge-pangolin/` holds the shared hostNetwork Deployment, Gerbil host policy, local PV and configuration |
+| Envoy arm | `provisioning/bluefin/gitops/workloads/edge-envoy/` holds the hostNetwork proxy configuration, Gateway, ACME issuer and certificate, routes, backend grant and traffic policies |
+| Arm switch | `provisioning/bluefin/gitops/arms/` holds both wave 2 Applications and the operator procedure. Move only the selected arm into `apps/` |
+| Edge state | Retained local PV on the edge (`/var/lib/pilot-edge/pangolin`, created by `edge-bootstrap`; kubelet creates the `config`/`letsencrypt` subPaths), synthetic data only |
 | Probes | `mise bluefin:pilot:edge-probe` (HTTPS/HTTP/3 with the staging root as explicit trust, outage log) and `mise bluefin:pilot:edge-load` (E6 profile, CSV) |
 | Evidence | raw captures, renders, credentials and disk images stay under `~/.cache/bluefin-pilot/` (0700); the results file gets redacted figures only |
 
@@ -345,3 +348,46 @@ floating IP or a cpx32 each need their own confirmation.
   through the API with synthetic values, or record it as a manual step.
 - **Public repo:** tailnet prep logs the node IP and control-plane FQDN;
   results get redacted copies only. Scan every commit and issue comment.
+
+### Open points from the manifests
+
+- **Pangolin startup and routing.** The probes and `SERVER_SECRET` follow
+  the production Quadlet (`/usr/bin/curl -f http://localhost:3001/api/v1/`).
+  Confirm the pinned image accepts the Secret and read-only config
+  mounts with a fresh database. Verify Gerbil can bootstrap or retry
+  after migrations, recover after an app-only restart, and bind its two
+  UDP ports with the host kernel's WireGuard support and the production
+  `NET_ADMIN`/`SYS_MODULE` capabilities. Confirm Traefik's HTTP provider
+  recovers from startup errors and that generated HTTPS routes still
+  work with no `web` entrypoint for HTTP-only redirects. Verify badger
+  catalog access and plugin loading before taking traffic.
+- **Local state.** The edge hostname and label must match the PV and
+  Deployment placement. Pre-create both directories and check write
+  access, database/key persistence, and the backup and clean-PV restore
+  exercise. The configured PV capacity is a binding value and needs host
+  free space. Check the Gerbil pilot CIDR against existing routes before
+  assigning it.
+- **Envoy Gateway.** Check live GatewayClass acceptance of the namespaced
+  EnvoyProxy reference and the generated Deployment's namespace, PSA
+  admission, inherited image digest, Recreate strategy, edge placement,
+  and TCP/UDP binds. This uses
+  `provider.kubernetes.useListenerPortAsContainerPort`,
+  `envoyDeployment.patch`, and `envoyDeployment.container.securityContext`.
+  Confirm the runtime grants the distroless UID effective
+  `NET_BIND_SERVICE` and the HTTPS listener's `ClientTrafficPolicy.http3`
+  programs QUIC. Test that the route-scoped
+  `BackendTrafficPolicy.healthCheck.active` probes both routes' backend
+  and that the cross-namespace ReferenceGrant resolves.
+- **ACME and ingress.** Verify cert-manager Gateway API support and
+  HTTP-01 solver attachment while the HTTPS listener waits for its Secret.
+  Test both staging challenges, DNS, chain, renewal, UDP/443 and the open
+  and closed port-80 windows. Verify Cilium socket LB, host policies and
+  cross-site routing allow the expected path from each hostNetwork proxy.
+- **GitOps and load.** Confirm the real KSOPS build and Argo CD sync with
+  filled, encrypted templates and the pilot key, plus cascade deletion
+  including the Gerbil policy and Envoy-generated resources. Pangolin
+  resource and Newt site setup are operator steps. Netexec exercises
+  small requests only. Supply the static blob fixture on the home worker,
+  wire both transfer routes to it, and check the checksum before the
+  sustained-transfer gate. The tailnet-only route and control-plane
+  outage are live Envoy checks.

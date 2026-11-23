@@ -1,0 +1,27 @@
+# Plaintext template. Fill and encrypt before committing.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: pilot-edge-inputs
+    namespace: pilot-edge-envoy
+type: Opaque
+stringData:
+    wildcard: ENC[AES256_GCM,data:TMRSkM4o5/CypGAQpxYqyY0=,iv:wmlbRWIyrGSjSDq0XJCIk5e/bZs3VGzm+6VIQGF5gWo=,tag:qggjifes9hrJjf+sEmnYGA==,type:str]
+    echo: ENC[AES256_GCM,data:wjW3HKymPmv95OrAHUcMaf1G24c=,iv:mAEvyZWL08ai4FBxOnsl+GxsF6lWz/4Y4EPLW0b/+E4=,tag:8gjzdwlCO1BOu2MmrB3D1A==,type:str]
+    transfer: ENC[AES256_GCM,data:k8yZs9yp1sg0rOXmWs/V0ipeGOP4Zq+b,iv:Rg+nMBPzVibtom7EUw8PaY/1mh/32AvicgmlsAqr1Ag=,tag:g2rvBRNNklhycxJsOkSayA==,type:str]
+    email: ENC[AES256_GCM,data:khV9Rr0tBR4p2zsgTbRVCcTs,iv:UL6Jij+6euqHhOG/tlNzkWf6YSyCXp2qN86xPUPZ6RM=,tag:zXGunf74ijLNid9/lI/NXQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBTMGdOdGFHSTgvOWI2bUw4
+            SWxSaFhqdng0SllWWWxoeDA0RjJ4amhPeGdVCmpPWTZnZVpQQXFGRXJYNitpM1ZN
+            cThUWS9mVlh1RXdKS3VDeTBFU0twb28KLS0tIExibC80ZWc4K2taZnpRK0kyelVy
+            UFNOdGc4bnh1ejBmOXpFb2s3QWZhQlUKdSfs1psL2ygmcN/U9OgEkXO0w2h9Yki7
+            9ZcvBIFxL1Ta9mQ7/UVbOt9033gUyyblyArVRLn9PSlX4vBunupRrQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age16ac8fzv2zmv99x0wlutk0z7efx86t8lvyqyrm4c3s0r8tt9hhdsqd06sja
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-11-23T10:55:30Z"
+    mac: ENC[AES256_GCM,data:4aUOCI1GxQ5WdvHhOfGgDR2q2xnA0wlHPO+vfOvbHsWaU3hsShtsk5d1riEnwP6GS5hm02ACD4+mn2qJ/8zznspVHSnZXuuuyG6hGgHH1FMR7mfVPQT4aX4qLWIgnuZUu3QhLLva2b7FXzzYi/WcQ8FTo3qja58x4hGuUlY/K+U=,iv:vFwFRT1ra8X/+8XrhD1CPrASkjvM10cAN49B7TVZxrw=,tag:Ak8xnIWiboErGOaUK2iHPA==,type:str]
+    version: 3.13.3

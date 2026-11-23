@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pilot-edge-pangolin
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pangolin
+  namespace: pilot-edge-pangolin
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: pangolin}
+  template:
+    metadata:
+      labels: {app: pangolin}
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector: {pilot.bluefin/edge: "true"}
+      tolerations:
+      - {key: pilot.bluefin/edge, operator: Equal, value: "true", effect: NoSchedule}
+      containers:
+      - name: app
+        image: docker.io/fosrl/pangolin:ee-1.26.0@sha256:c65b8b4656b3336cea3f2647fc20da955764cd18103c51b2ea6164bbb054e0de
+        env:
+        - name: SERVER_SECRET
+          valueFrom:
+            secretKeyRef: {name: pangolin-config, key: server-secret}
+        startupProbe:
+          exec: &app-health
+            command: [/usr/bin/curl, -fsS, --max-time, "3", "http://localhost:3001/api/v1/"]
+          periodSeconds: 5
+          timeoutSeconds: 4
+          failureThreshold: 180
+        readinessProbe:
+          exec: *app-health
+          timeoutSeconds: 4
+        volumeMounts:
+        - {name: state, mountPath: /app/config, subPath: config}
+        - {name: state, mountPath: /app/config/letsencrypt, subPath: letsencrypt}
+        - {name: config, mountPath: /app/config/config.yml, subPath: config.yml, readOnly: true}
+        - {name: private-config, mountPath: /app/config/privateConfig.yml, subPath: privateConfig.yml, readOnly: true}
+      # Gerbil can restart independently if the app is still migrating.
+      - name: gerbil
+        image: docker.io/fosrl/gerbil:1.6.0@sha256:420f5210b6d1a6d3035f15c3938b5289fee5aeff51ffdcb9b217838338908885
+        args:
+        - --reachableAt=http://localhost:3003
+        - --generateAndSaveKeyTo=/var/config/key
+        - --remoteConfig=http://localhost:3001/api/v1/gerbil/get-config
+        - --reportBandwidthTo=http://localhost:3001/api/v1/gerbil/receive-bandwidth
+        securityContext:
+          capabilities:
+            add: [NET_ADMIN, SYS_MODULE]
+        ports:
+        - {name: wireguard, containerPort: 51820, protocol: UDP}
+        - {name: relay, containerPort: 21820, protocol: UDP}
+        startupProbe:
+          exec: &gerbil-health
+            command: [wget, -q, -O, /dev/null, "http://localhost:3003/healthz"]
+          periodSeconds: 5
+          failureThreshold: 180
+        readinessProbe:
+          exec: *gerbil-health
+        volumeMounts:
+        - {name: state, mountPath: /var/config, subPath: config}
+      # Traefik polls the app for routes and recovers once its API responds.
+      - name: traefik
+        image: docker.io/library/traefik:v3.7.19@sha256:a6c0194dda77bcb804824580f36fa7edc56e315b1acfe933366c8b52844a78a4
+        args: [--configFile=/etc/traefik/traefik_config.yml]
+        ports:
+        - {name: https, containerPort: 443}
+        - {name: quic, containerPort: 443, protocol: UDP}
+        readinessProbe:
+          tcpSocket: {port: https}
+        volumeMounts:
+        - {name: config, mountPath: /etc/traefik, readOnly: true}
+        - {name: state, mountPath: /letsencrypt, subPath: letsencrypt}
+        - {name: plugins, mountPath: /plugins-storage}
+      volumes:
+      - name: state
+        persistentVolumeClaim: {claimName: pangolin-state}
+      - name: config
+        secret:
+          secretName: pangolin-config
+          items:
+          - {key: config.yml, path: config.yml}
+          - {key: traefik_config.yml, path: traefik_config.yml}
+          - {key: dynamic_config.yml, path: dynamic_config.yml}
+      - name: private-config
+        configMap: {name: pangolin-private-config}
+      - name: plugins
+        emptyDir: {}

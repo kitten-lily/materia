@@ -1,0 +1,14 @@
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: pilot-edge-gerbil
+spec:
+  nodeSelector:
+    matchLabels: {pilot.bluefin/edge: "true"}
+  ingress:
+  # Gerbil's WireGuard and client relay, Pangolin arm only.
+  - fromEntities: [world]
+    toPorts:
+    - ports:
+      - {port: "51820", protocol: UDP}
+      - {port: "21820", protocol: UDP}

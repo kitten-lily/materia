@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- proxy.yaml
+- gateway.yaml
+- certificates.yaml
+- routes.yaml
+generators:
+- secret-generator.yaml
+# KSOPS decrypts the pilot inputs before replacements populate the API objects.
+replacements:
+- source: {kind: Secret, name: pilot-edge-inputs, fieldPath: stringData.wildcard}
+  targets:
+  - select: {kind: Gateway, name: pilot-edge}
+    fieldPaths: ["spec.listeners.[name=https].hostname"]
+- source: {kind: Secret, name: pilot-edge-inputs, fieldPath: stringData.echo}
+  targets:
+  - select: {kind: Certificate, name: pilot-edge-tls}
+    fieldPaths: [spec.dnsNames.0]
+  - select: {kind: HTTPRoute, name: echo}
+    fieldPaths: [spec.hostnames.0]
+- source: {kind: Secret, name: pilot-edge-inputs, fieldPath: stringData.transfer}
+  targets:
+  - select: {kind: Certificate, name: pilot-edge-tls}
+    fieldPaths: [spec.dnsNames.1]
+  - select: {kind: HTTPRoute, name: transfer}
+    fieldPaths: [spec.hostnames.0]
+- source: {kind: Secret, name: pilot-edge-inputs, fieldPath: stringData.email}
+  targets:
+  - select: {kind: Issuer, name: pilot-edge-staging}
+    fieldPaths: [spec.acme.email]

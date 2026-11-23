@@ -564,6 +564,34 @@ acme-http policies go on and off with their arm. Still for Hetzner: the same
 check `--via public`, where the provider firewall is in front (the check
 fails any port that gets neither an answer nor a Cilium record).
 
+### Pangolin arm on the rehearsal edge: first checks pass, 2026-11-23
+
+`workloads/edge-pangolin` (secrets filled from the vault into a local copy,
+then committed SOPS-encrypted) applied by hand with `kubectl`, before any
+push, beside `workloads/edge-backend` on the home worker:
+- All three containers `Ready` ~50 s after apply, no restarts; all run as
+  UID 0. The app created its exit node, Gerbil fetched its config,
+  Traefik loaded badger v1.8.0 (`Plugins loaded`) and started TLS-ALPN-01
+  against Let's Encrypt staging (cannot succeed here: no public address,
+  no DNS record yet).
+- External HTTPS through the QEMU forward: `200` over HTTP/2;
+  `curl --http3-only`: `200` over `h3`.
+- State on the local PV: `db/`, Gerbil's `key`, `letsencrypt/`, root-owned.
+- Not yet: Pangolin first-run setup and a resource to the home backend,
+  the health check, the Newt site check, the step 4 restarts.
+
+**F14 — With `hostNetwork`, the Pangolin pod's internal listeners are host
+listeners.** In the production pod, the app's 3000-3003 and 3005 and
+Gerbil's 8443 bind inside the pod's own network namespace. On the edge they
+bind on every host address (`ss -lntup`), next to the OS's own rpcbind
+(111) and iSNS (3205). So the plan's "`ss` shows exactly the intended public
+ports" cannot hold literally; the Cilium host firewall is what keeps them
+private. Probed from `world` through temporary QEMU forwards, all nine
+(3000, 3001, 3002, 3003, 3005, 8443, 111, 3205, 10250) got no answer and an
+`action deny` verdict. On Hetzner the provider firewall is a second layer;
+a production edge on this design depends on the host firewall staying
+enforced.
+
 ## Findings
 
 **F13 — A locked root refuses SSH keys.** Root ships as `!unprovisioned`
