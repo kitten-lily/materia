@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+#MISE description="Hetzner side of the Bluefin pilot edge: create, rescue, stream the disk, console, delete (#179 Phase 4)"
+
+#USAGE arg "<action>" help="status | create | rescue | stream | close-ssh | console | delete"
+#USAGE flag "--confirm-cost" help="create: acknowledge the hourly cost and the 7-day deadline (paid action)"
+#USAGE flag "--operator-ip <ipv4>" help="rescue: the operator's public IPv4; tcp/22 opens for that /32 only"
+#USAGE flag "--image <path>" help="stream: the raw disk image (ESP credentials already staged)"
+#USAGE flag "--confirm" help="delete: really delete the server"
+
+# Design: specs/plans/bluefin-server-pilot-phase4.md (E1, E10, step 1,
+# "Paid actions and confirmation"); recovery procedure H in
+# specs/plans/bluefin-server-pilot-recovery.md. Only ever acts on the server
+# named bluefin-pilot-edge with label pilot=bluefin; never touches any other
+# server. The pilot firewall `bluefin-pilot` is attached at creation; the only
+# change this task makes to it is the temporary tcp/22 rule for one /32,
+# removed by stream, close-ssh and delete. State (creation time, deadline,
+# operator IP of the open rule) lives in ~/.cache/bluefin-pilot/hz/state.json.
+
+# shellcheck disable=SC2016 # jq filters and remote commands are single-quoted on purpose
+set -euo pipefail
+
+_name=bluefin-pilot-edge
+_type=cpx22
+_location=hel1
+_label=pilot=bluefin
+_fw=bluefin-pilot
+_key=bluefin-pilot-rescue
+_secrets="${HOME}/.cache/bluefin-pilot/secrets"
+_state_dir="${HOME}/.cache/bluefin-pilot/hz"
+_state="${_state_dir}/state.json"
+_known="${_state_dir}/rescue_known_hosts"
+_days=7
+mkdir -p "$_state_dir"; chmod 700 "$_state_dir"
+
+HCLOUD_TOKEN="${HCLOUD_TOKEN:-$(fnox get HCLOUD_TOKEN)}"
+export HCLOUD_TOKEN
+
+state_get() { [[ -s "$_state" ]] && jq -r "$1 // empty" "$_state" || true; }
+state_set() { local t; t="$(mktemp "${_state_dir}/.state.XXXXXX")"; jq "$@" "${_state:-/dev/null}" > "$t" 2>/dev/null || jq -n "$@" > "$t"; mv "$t" "$_state"; }
+server_json() { hcloud server list -l "$_label" -o json | jq -c --arg n "$_name" '[.[] | select(.name == $n)] | first // empty'; }
+server_ip() { server_json | jq -r '.public_net.ipv4.ip // empty'; }
+rescue_ssh() {
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+    -o "UserKnownHostsFile=${_known}" -i "${_secrets}/ssh-root" "root@$(server_ip)" "$@"
+}
+close_ssh_rule() {
+  local ip; ip="$(state_get .ssh_rule_ip)"
+  [[ -n "$ip" ]] || { echo "no temporary tcp/22 rule recorded"; return 0; }
+  hcloud firewall delete-rule "$_fw" --direction in --protocol tcp --port 22 --source-ips "${ip}/32" >/dev/null \
+    && echo "removed temporary tcp/22 rule for ${ip}/32" \
+    || echo "warning: could not remove the tcp/22 rule for ${ip}/32; check: hcloud firewall describe ${_fw}" >&2
+  state_set 'del(.ssh_rule_ip)'
+}
+check_firewall() {
+  local rules
+  rules="$(hcloud firewall describe "$_fw" -o json | jq -c '[.rules[] | select(.direction == "in") | "\(.protocol)/\(.port // "")"] | sort')"
+  [[ "$rules" == '["icmp/","tcp/443","udp/21820","udp/41641","udp/443","udp/51820"]' ]] \
+    || { echo "error: firewall ${_fw} rules are not the Phase 0 set: ${rules}" >&2; exit 1; }
+}
+
+case "${usage_action:?action required}" in
+status)
+  echo "== pilot-labelled resources (${_label})"
+  for r in server ssh-key primary-ip volume floating-ip; do
+    printf '%-12s %s\n' "$r" "$(hcloud "$r" list -l "$_label" -o noheader -o columns=name 2>/dev/null | tr '\n' ' ')"
+  done
+  echo "== firewall ${_fw}"
+  hcloud firewall describe "$_fw" -o json | jq -r '"applied to: \([.applied_to[]?.server.id] | join(",") | if . == "" then "nothing" else . end)", (.rules[] | "  \(.direction) \(.protocol)/\(.port // "") from \(.source_ips | join(","))")'
+  if [[ -s "$_state" ]]; then
+    echo "== state"; jq -r '"created \(.created // "?")\ndelete by \(.deadline // "?")" + (if .ssh_rule_ip then "\nOPEN tcp/22 rule for \(.ssh_rule_ip)/32" else "" end)' "$_state"
+  fi
+  ;;
+
+create)
+  [[ -z "$(server_json)" ]] || { echo "error: ${_name} already exists" >&2; exit 1; }
+  check_firewall
+  _price="$(hcloud server-type describe "$_type" -o json | jq -r --arg l "$_location" '.prices[] | select(.location == $l) | .price_hourly.gross')"
+  _avail="$(hcloud server-type describe "$_type" -o json | jq -r --arg l "$_location" '[.locations[]? | select(.name == $l) | .available] | first // empty')"
+  [[ "$_avail" != false ]] || { echo "error: ${_type} is not orderable in ${_location} right now" >&2; exit 1; }
+  _deadline="$(date -u -d "+${_days} days" +%Y-%m-%dT%H:%MZ)"
+  echo "${_name}: ${_type} in ${_location}, €$(LC_ALL=C printf %.4f "$_price")/h gross (≈ €$(jq -n "${_price} * 24 * ${_days} | . * 100 | round / 100") for ${_days} days, plus the primary IPv4)"
+  echo "delete by ${_deadline}"
+  [[ -n "${usage_confirm_cost:-}" ]] || { echo "not created: re-run with --confirm-cost once the operator has confirmed cost and deadline"; exit 1; }
+  if ! hcloud ssh-key describe "$_key" >/dev/null 2>&1; then
+    hcloud ssh-key create --name "$_key" --public-key-from-file "${_secrets}/ssh-root.pub" --label "$_label" >/dev/null
+    echo "registered rescue SSH key ${_key}"
+  fi
+  # Debian is a placeholder OS: the disk is overwritten from the rescue
+  # system (E1). The firewall is attached at creation, so no port is ever
+  # open beyond the Phase 0 set.
+  hcloud server create --name "$_name" --type "$_type" --location "$_location" \
+    --image debian-13 --firewall "$_fw" --ssh-key "$_key" --label "$_label" -o json > /dev/null
+  state_set --arg c "$(date -u +%Y-%m-%dT%H:%MZ)" --arg d "$_deadline" '{created: $c, deadline: $d}'
+  echo "created ${_name} ($(server_ip)); next: mise bluefin:pilot:hz rescue --operator-ip <your public IPv4>"
+  ;;
+
+rescue)
+  [[ -n "$(server_json)" ]] || { echo "error: ${_name} does not exist" >&2; exit 1; }
+  _op="${usage_operator_ip:?--operator-ip required (your public IPv4; tcp/22 opens for it alone)}"
+  [[ "$_op" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "error: --operator-ip must be an IPv4 address" >&2; exit 1; }
+  if [[ "$(state_get .ssh_rule_ip)" != "$_op" ]]; then
+    [[ -z "$(state_get .ssh_rule_ip)" ]] || close_ssh_rule
+    hcloud firewall add-rule "$_fw" --direction in --protocol tcp --port 22 --source-ips "${_op}/32" \
+      --description "TEMPORARY rescue SSH, remove after stream" >/dev/null
+    state_set --arg ip "$_op" '.ssh_rule_ip = $ip'
+    echo "opened tcp/22 for ${_op}/32 (removed by stream or close-ssh)"
+  fi
+  hcloud server enable-rescue "$_name" --type linux64 --ssh-key "$_key" >/dev/null
+  hcloud server reset "$_name" >/dev/null
+  : > "$_known"
+  echo "waiting for the rescue system..."
+  for _ in $(seq 1 60); do rescue_ssh true 2>/dev/null && break; sleep 5; done
+  rescue_ssh true || { echo "error: rescue system not reachable over SSH" >&2; exit 1; }
+  echo "== step 1a facts"
+  # shellcheck disable=SC2016 # expands in the rescue system
+  rescue_ssh 'lsblk -dn -o NAME,TYPE,SIZE | grep -w disk; for d in $(lsblk -dn -o NAME,TYPE | grep -w disk | cut -d" " -f1); do echo "/dev/$d bytes: $(blockdev --getsize64 /dev/$d)"; done
+    echo "tpm: $(ls /sys/class/tpm 2>/dev/null | tr "\n" " ")"; test -d /sys/firmware/efi && echo firmware: UEFI || echo firmware: BIOS
+    for v in SecureBoot SetupMode; do f=$(ls /sys/firmware/efi/efivars/$v-* 2>/dev/null | head -n1); [ -n "$f" ] && echo "$v: $(od -An -tu1 -j4 -N1 "$f" | tr -d " ")" || echo "$v: absent"; done
+    efibootmgr 2>/dev/null | head -n5; command -v zstd >/dev/null && echo zstd: yes || echo zstd: NO'
+  ;;
+
+stream)
+  _img="${usage_image:?--image required}"
+  [[ -f "$_img" ]] || { echo "error: $_img not found" >&2; exit 1; }
+  [[ -n "$(state_get .ssh_rule_ip)" ]] || { echo "error: no rescue SSH rule open; run rescue first" >&2; exit 1; }
+  _disks="$(rescue_ssh 'lsblk -dn -o NAME,TYPE | grep -w disk | cut -d" " -f1')"
+  [[ "$(wc -l <<< "$_disks")" -eq 1 && -n "$_disks" ]] || { echo "error: expected exactly one disk, found: $(tr '\n' ' ' <<< "$_disks")" >&2; exit 1; }
+  _dev="/dev/${_disks}"
+  _want="$(stat -c %s "$_img")"
+  _have="$(rescue_ssh "blockdev --getsize64 ${_dev}")"
+  if [[ "$_want" != "$_have" ]]; then
+    echo "error: image is ${_want} bytes, ${_dev} is ${_have}. Re-create it at the disk's size:" >&2
+    echo "  mise bluefin:pilot:vm destroy --vm ${_name} && mise bluefin:pilot:vm create --vm ${_name} --size ${_have}" >&2
+    echo "  then install, esp-creds, and stream again" >&2
+    exit 1
+  fi
+  rescue_ssh 'command -v zstd >/dev/null' || { echo "error: no zstd in the rescue system" >&2; exit 1; }
+  echo "hashing the image locally..."
+  _sha="$(sha256sum < "$_img" | cut -d' ' -f1)"
+  echo "streaming ${_img} -> ${_dev} (full write; zeros compress to almost nothing)"
+  zstd -T0 -3 -c -- "$_img" | rescue_ssh "zstd -d | dd of=${_dev} bs=4M iflag=fullblock oflag=direct status=progress && sync"
+  echo "verifying the written disk..."
+  _rsha="$(rescue_ssh "sha256sum < ${_dev} | cut -d' ' -f1")"
+  [[ "$_rsha" == "$_sha" ]] || { echo "error: sha256 mismatch (image ${_sha}, disk ${_rsha}); not rebooting" >&2; exit 1; }
+  rescue_ssh "sfdisk --verify ${_dev}" || { echo "error: GPT check failed; not rebooting" >&2; exit 1; }
+  echo "disk matches the image (sha256 ${_sha})"
+  close_ssh_rule
+  hcloud server disable-rescue "$_name" >/dev/null || true
+  hcloud server reset "$_name" >/dev/null
+  echo "booting from disk. Watch: mise bluefin:pilot:hz console; then mise bluefin:pilot:edge-bootstrap --via tailnet"
+  ;;
+
+close-ssh) close_ssh_rule ;;
+
+console)
+  [[ -n "$(server_json)" ]] || { echo "error: ${_name} does not exist" >&2; exit 1; }
+  # Short-lived VNC URL and password, for the operator's eyes only.
+  hcloud server request-console "$_name"
+  ;;
+
+delete)
+  [[ -n "${usage_confirm:-}" ]] || { echo "not deleted: re-run with --confirm (export any evidence first)"; exit 1; }
+  close_ssh_rule
+  if [[ -n "$(server_json)" ]]; then
+    hcloud server delete "$_name" >/dev/null && echo "deleted server ${_name}"
+  fi
+  hcloud ssh-key describe "$_key" >/dev/null 2>&1 && hcloud ssh-key delete "$_key" >/dev/null && echo "deleted ssh key ${_key}"
+  rm -f "$_known"
+  state_set '{deleted: (now | todate)}'
+  _left="$(for r in server ssh-key primary-ip volume floating-ip; do hcloud "$r" list -l "$_label" -o noheader -o columns=name; done)"
+  if [[ -n "$_left" ]]; then
+    echo "error: pilot-labelled resources remain: $(tr '\n' ' ' <<< "$_left")" >&2; exit 1
+  fi
+  echo "pilot inventory empty (firewall ${_fw} kept until the pilot ends)"
+  echo "remove the edge's tailnet device and DNS record by hand (E4, step 6)"
+  ;;
+
+*) echo "error: unknown action" >&2; exit 1 ;;
+esac
