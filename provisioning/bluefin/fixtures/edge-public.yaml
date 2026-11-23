@@ -1,0 +1,59 @@
+# Bluefin pilot (#179) Phase 4, E3: public ingress to the edge node.
+# Design: specs/plans/bluefin-server-pilot-phase4.md ("E3").
+#
+# pilot-host (host-firewall.yaml) admits from `world` only udp/41641, so the
+# edge's public listeners need their own allow rules. Each policy here is
+# scoped to the edge by its node label: the edge's host endpoint carries
+# `k8s:pilot.bluefin/edge=true` (seen with `cilium-dbg endpoint list` on the
+# rehearsal edge, 2026-11-23), so this nodeSelector does match, unlike the
+# hostname selector noted in host-firewall.yaml. Policies only add allowances,
+# so applying or deleting one needs no audit round.
+#
+# Apply per arm (E5): pilot-edge-public always; pilot-edge-gerbil during the
+# Pangolin arm; pilot-edge-acme-http only while the Envoy arm's cert-manager
+# solves HTTP-01 (E4), then delete it. Check with
+# `mise bluefin:pilot:edge-fw-check`.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: pilot-edge-public
+spec:
+  nodeSelector:
+    matchLabels: {pilot.bluefin/edge: "true"}
+  ingress:
+  # HTTPS and HTTP/3 (QUIC), both arms.
+  - fromEntities: [world]
+    toPorts:
+    - ports:
+      - {port: "443", protocol: TCP}
+      - {port: "443", protocol: UDP}
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: pilot-edge-gerbil
+spec:
+  nodeSelector:
+    matchLabels: {pilot.bluefin/edge: "true"}
+  ingress:
+  # Gerbil's WireGuard and client relay, Pangolin arm only.
+  - fromEntities: [world]
+    toPorts:
+    - ports:
+      - {port: "51820", protocol: UDP}
+      - {port: "21820", protocol: UDP}
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: pilot-edge-acme-http
+spec:
+  nodeSelector:
+    matchLabels: {pilot.bluefin/edge: "true"}
+  ingress:
+  # cert-manager HTTP-01 for the Envoy arm (cert-manager has no TLS-ALPN-01
+  # solver). Delete after issuance and the renewal check (E4).
+  - fromEntities: [world]
+    toPorts:
+    - ports:
+      - {port: "80", protocol: TCP}

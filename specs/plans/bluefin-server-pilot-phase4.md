@@ -126,19 +126,20 @@ and step 1c proves the installed UKI decrypts them after enrolment and a
 cold boot. Rejected: `ignition.config.url` (moves the secret to a server,
 and every later boot needs the URL too).
 
-**E3: Public ingress through the host firewall.** Recommended: a separate
-`CiliumClusterwideNetworkPolicy` `pilot-edge-public` admitting `world` on
-tcp/443 and udp/443, and udp/51820 + udp/21820 only during the Pangolin
-arm and tcp/80 during the Envoy arm's issuance only (E4), scoped with
-`nodeSelector` on the edge's label. Because host endpoints
-here carry only `reserved:host`, the selector may again match nothing: the
-step 2 control proves it with a known listener (`python3 -m http.server`
-or a socat fixture on 443 before any edge workload) and
-`cilium-dbg monitor --type policy-verdict` on the edge showing *allowed*,
-plus a not-allowed port showing *denied*, so a Hetzner firewall drop is
-never mistaken for Cilium's. If the selector does not match, fall back to
-the same rule cluster-wide (the home nodes are behind NAT and have no
-public listener), recorded as such.
+**E3: Public ingress through the host firewall. Built and passed on the
+rehearsal (results, Phase 4).** `fixtures/edge-public.yaml` holds three
+`CiliumClusterwideNetworkPolicy` objects, each with `nodeSelector` on the
+edge label: `pilot-edge-public` (`world` → tcp/443, udp/443, always on,
+applied by the cluster bootstrap), `pilot-edge-gerbil` (udp/51820, udp/21820,
+Pangolin arm only) and `pilot-edge-acme-http` (tcp/80, the Envoy arm's
+HTTP-01 window only, E4). The edge's host endpoint carries its node labels,
+so the selector matches; the cluster-wide fallback is not needed.
+`mise bluefin:pilot:edge-fw-check` proves it with known hostNetwork
+listeners (`fixtures/edge-public-check.yaml`) and the edge agent's
+`policy-verdict` records: an allowed port must answer and log `allow`, a
+denied one must stay silent and log a deny, and 8080/tcp is a control that
+no policy opens. A probe that is neither answered nor recorded fails, so a
+Hetzner firewall drop is never mistaken for Cilium's.
 
 **E4: Test DNS and ACME. Decided: a pilot subdomain, no DNS token.** The
 production DNS-01 token (`cfDnsApiToken`, Cloudflare) can edit the whole

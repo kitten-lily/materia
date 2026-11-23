@@ -540,6 +540,30 @@ been deleted cannot rejoin (`tailscale status` shows it offline; the tailnet
 step fails on MagicDNS and kubelet waits), so the rehearsal node is kept as
 the stand-in edge for the E3 firewall and workload work.
 
+### E3 public-ingress policies: pass on the rehearsal, 2026-11-23
+
+Three `CiliumClusterwideNetworkPolicy` objects in
+`fixtures/edge-public.yaml`, each selecting `pilot.bluefin/edge=true`: the
+edge's host endpoint carries that node label (`k8s:pilot.bluefin/edge=true`
+beside `reserved:host`), so the label selector matches and the cluster-wide
+fallback was not needed. `mise bluefin:pilot:edge-fw-check --via local` puts
+hostNetwork agnhost listeners on 443/tcp+udp, 51820/udp, 21820/udp, 80/tcp
+and a control on 8080/tcp, probes them from the workstation through QEMU
+forwards (source 10.0.2.2, Cilium `world`), and judges each by the edge
+agent's `policy-verdict`/drop records:
+
+| Round | Policies | Result |
+| --- | --- | --- |
+| 1 | `pilot-host` only | all six unreachable, all six `deny` verdicts: pass |
+| 2 | + public, gerbil, acme-http | five answer with `allow`, control 8080 `deny`: pass |
+| 3 | + public only | 443 tcp/udp `allow`, the other four `deny`: pass |
+
+The home nodes' host endpoints carry no rule derived from a `pilot-edge-*`
+policy. The cluster bootstrap now applies `pilot-edge-public`; the gerbil and
+acme-http policies go on and off with their arm. Still for Hetzner: the same
+check `--via public`, where the provider firewall is in front (the check
+fails any port that gets neither an answer nor a Cilium record).
+
 ## Findings
 
 **F13 — A locked root refuses SSH keys.** Root ships as `!unprovisioned`

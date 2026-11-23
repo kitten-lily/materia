@@ -96,9 +96,16 @@ base_args() {
 }
 
 ssh_net_args() {
-  _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22"
+  _args+=(-netdev "user,id=wan,hostfwd=tcp:127.0.0.1:${_ssh}-:22${1:-}"
     -device "virtio-net-pci,netdev=wan,mac=${_mac_wan}")
 }
+
+# The rehearsal's E3 probes (mise bluefin:pilot:edge-fw-check --via local):
+# workstation loopback -> the edge's public-ingress ports on its non-tailnet
+# NIC, arriving from 10.0.2.2, i.e. Cilium's `world`.
+_edge_fwd=",hostfwd=tcp:127.0.0.1:4443-:443,hostfwd=udp:127.0.0.1:4443-:443"
+_edge_fwd+=",hostfwd=udp:127.0.0.1:4518-:51820,hostfwd=udp:127.0.0.1:4218-:21820"
+_edge_fwd+=",hostfwd=tcp:127.0.0.1:4480-:80,hostfwd=tcp:127.0.0.1:4808-:8080"
 
 net_args() {
   if [[ "${usage_topology:-lan}" == tailnet ]]; then
@@ -282,7 +289,7 @@ rehearse)
   fi
   : > "${_dir}/rehearse-serial.log"; : > "${_dir}/probe.log"
   base_args rehearse.raw rehearse-vars.fd rehearse-serial.log
-  ssh_net_args
+  ssh_net_args "$_edge_fwd"
   daemonize rehearse.raw
   show_ssh
   ;;

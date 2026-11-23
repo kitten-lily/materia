@@ -220,6 +220,14 @@ else
   _bootstrap_firewall
 fi
 
+echo "== edge public ingress (pilot-edge-public, Phase 4 E3)"
+# Only the always-on policy (443/tcp+udp). It selects nodes labelled
+# pilot.bluefin/edge=true, so it is inert until the edge joins. The per-arm
+# policies in the same file (pilot-edge-gerbil, pilot-edge-acme-http) are
+# applied and removed with their arm. Check: mise bluefin:pilot:edge-fw-check.
+yq 'select(.metadata.name == "pilot-edge-public")' "${_repo}/provisioning/bluefin/fixtures/edge-public.yaml" \
+  | "${_ssh[@]}" "${_ssa[*]} -f -"
+
 echo "== age key Secret (argocd/pilot-sops-age)"
 pass-cli item view --vault-name bluefin-pilot --item-title sops-age-key --field note \
   | "${_ssh[@]}" "kubectl -n argocd create secret generic pilot-sops-age --from-file=keys.txt=/dev/stdin --dry-run=client -o yaml | ${_ssa[*]} -f - >/dev/null && echo applied"

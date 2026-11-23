@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+#MISE description="Probe the Bluefin pilot edge's public ports and judge each by Cilium's own policy verdict (#179 Phase 4 E3)"
+
+#USAGE flag "--via <path>" default="local" help="local (rehearsal VM, workstation loopback forwards) or public (the edge's public IPv4, needs --host)"
+#USAGE flag "--host <ipv4>" help="public: the edge's public IPv4 address"
+#USAGE flag "--keep" help="leave the listener pod running afterwards"
+
+# Design: specs/plans/bluefin-server-pilot-phase4.md (E3). Applies
+# fixtures/edge-public-check.yaml (known hostNetwork listeners on the edge),
+# records `cilium-dbg monitor` policy verdicts and drops on the edge's agent
+# while probing each port from outside the cluster, and compares the result
+# with what the live pilot-edge-* policies should allow:
+#   allowed -> the probe gets an answer AND Cilium logged `action allow`;
+#   denied  -> no answer AND Cilium logged a deny or a policy drop.
+# A probe that gets no answer and leaves no Cilium record fails: something
+# before Cilium dropped it (the Hetzner firewall, a missing forward), which
+# says nothing about the host firewall.
+
+set -euo pipefail
+
+_repo="$(git rev-parse --show-toplevel)"
+_cp=(ssh -F "${HOME}/.cache/bluefin-pilot/secrets/ssh_config" bluefin-pilot-cp)
+_fixture="${_repo}/provisioning/bluefin/fixtures/edge-public-check.yaml"
+_work="$(mktemp -d "${HOME}/.cache/bluefin-pilot/.edge-fw-check.XXXXXX")"
+trap 'rm -rf -- "$_work"' EXIT
+
+# name proto node-port local-forward-port policy
+_probes=(
+  "https tcp 443 4443 pilot-edge-public"
+  "quic udp 443 4443 pilot-edge-public"
+  "gerbil-wg udp 51820 4518 pilot-edge-gerbil"
+  "gerbil-relay udp 21820 4218 pilot-edge-gerbil"
+  "acme-http tcp 80 4480 pilot-edge-acme-http"
+  "control tcp 8080 4808 -"
+)
+
+case "${usage_via:-local}" in
+  local) _host=127.0.0.1 ;;
+  public)
+    _host="${usage_host:?--via public needs --host <edge public IPv4>}"
+    [[ "$_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "error: --host must be an IPv4 address" >&2; exit 1; }
+    ;;
+  *) echo "error: --via must be local or public" >&2; exit 1 ;;
+esac
+
+echo "== listeners"
+"${_cp[@]}" 'kubectl apply -f - >/dev/null' < "$_fixture"
+"${_cp[@]}" 'kubectl -n pilot-edge-check wait --for=condition=Ready pod/listeners --timeout=180s' >/dev/null
+_live="$("${_cp[@]}" 'kubectl get ccnp -o name' | sed 's|.*/||')"
+echo "live policies: $(tr '\n' ' ' <<< "$_live")"
+_agent="$("${_cp[@]}" 'kubectl -n kube-system get pod -l k8s-app=cilium --field-selector spec.nodeName=bluefin-pilot-edge -o name' | head -n1)"
+[[ -n "$_agent" ]] || { echo "error: no Cilium agent on bluefin-pilot-edge" >&2; exit 1; }
+
+echo "== probing (Cilium monitor running on ${_agent#pod/})"
+"${_cp[@]}" "kubectl -n kube-system exec ${_agent#pod/} -c cilium-agent -- timeout 40 cilium-dbg monitor --type policy-verdict --type drop" \
+  > "${_work}/monitor.log" 2>/dev/null &
+_mon=$!
+sleep 5
+
+probe() { # proto port -> prints "yes" when the listener answered
+  local proto=$1 port=$2
+  if [[ "$proto" == tcp ]]; then
+    curl -s --max-time 4 "http://${_host}:${port}/hostname" | grep -q . && echo yes || echo no
+  else
+    python3 -I - "$_host" "$port" <<'EOF'
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)
+try:
+    s.sendto(b"hostname", (sys.argv[1], int(sys.argv[2]))); s.recvfrom(512); print("yes")
+except OSError:
+    print("no")
+EOF
+  fi
+}
+
+declare -A _reached
+for p in "${_probes[@]}"; do
+  read -r name proto nport lport _ <<< "$p"
+  port=$nport; [[ "${usage_via:-local}" == local ]] && port=$lport
+  _reached[$name]="$(probe "$proto" "$port")"
+done
+wait "$_mon" || true
+
+echo "== result"
+_fail=0
+printf '%-13s %-9s %-8s %-8s %-8s %s\n' probe port expect reached cilium result
+for p in "${_probes[@]}"; do
+  read -r name proto nport _ policy <<< "$p"
+  expect=deny
+  [[ "$policy" != - ]] && grep -qx "$policy" <<< "$_live" && expect=allow
+  # Verdict lines name the destination as <addr>:<port>; match the port and
+  # protocol on the edge's side of the flow.
+  lines="$(grep -E -- "-> [0-9.]+:${nport} ${proto}" "${_work}/monitor.log" || true)"
+  verdict=none
+  grep -q "action allow" <<< "$lines" && verdict=allow
+  grep -qE "action deny|Policy denied" <<< "$lines" && [[ "$verdict" == none ]] && verdict=deny
+  ok=FAIL
+  if [[ "$expect" == allow && "${_reached[$name]}" == yes && "$verdict" == allow ]] \
+     || [[ "$expect" == deny && "${_reached[$name]}" == no && "$verdict" == deny ]]; then
+    ok=pass
+  fi
+  [[ "$ok" == pass ]] || _fail=1
+  printf '%-13s %-9s %-8s %-8s %-8s %s\n' "$name" "${nport}/${proto}" "$expect" "${_reached[$name]}" "$verdict" "$ok"
+done
+
+if [[ -z "${usage_keep:-}" ]]; then
+  "${_cp[@]}" 'kubectl delete namespace pilot-edge-check --wait=false >/dev/null'
+fi
+exit "$_fail"
