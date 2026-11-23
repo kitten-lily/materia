@@ -1,0 +1,60 @@
+# Bluefin pilot (#179) Phase 4 step 5: the sustained-transfer fixture.
+# One 1 GiB file of random bytes (incompressible, so nothing on the path can
+# shrink it) and its sha256, generated at pod start into an emptyDir on the
+# HOME worker, served by agnhost test-webserver (a plain HTTP file server).
+# The load tool fetches /data/blob-1g through each arm's `transfer` route and
+# compares it with /data/blob-1g.sha256. A new pod means a new file and a new
+# checksum; fetch the checksum with each run.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-blob
+  namespace: pilot-edge-backend
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: edge-blob}
+  template:
+    metadata:
+      labels: {app: edge-blob}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/hostname: bluefin-pilot-node}
+      initContainers:
+      - name: generate
+        image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+        command: [/bin/sh, -ec]
+        args:
+        - |
+          dd if=/dev/urandom of=/data/blob-1g.tmp bs=1M count=1024 status=none
+          sha256sum /data/blob-1g.tmp | cut -d' ' -f1 > /data/blob-1g.sha256
+          mv /data/blob-1g.tmp /data/blob-1g
+        volumeMounts:
+        - {name: data, mountPath: /data}
+      containers:
+      - name: serve
+        image: registry.k8s.io/e2e-test-images/agnhost:2.53@sha256:99c6b4bb4a1e1df3f0b3752168c89358794d02258ebebc26bf21c29399011a85
+        args: ["test-webserver", "--port=8080"]
+        ports:
+        - {name: http, containerPort: 8080}
+        readinessProbe:
+          httpGet: {path: /data/blob-1g.sha256, port: http}
+        resources:
+          requests: {cpu: 50m, memory: 32Mi}
+          limits: {memory: 128Mi}
+        volumeMounts:
+        - {name: data, mountPath: /data, readOnly: true}
+      volumes:
+      - name: data
+        emptyDir: {sizeLimit: 1100Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-blob
+  namespace: pilot-edge-backend
+spec:
+  selector: {app: edge-blob}
+  ports:
+  - {name: http, port: 8080, targetPort: http}

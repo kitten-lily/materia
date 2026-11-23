@@ -659,6 +659,14 @@ old pod); `spec.shutdown.drainTimeout: 5s` brings it to ~7 s.
   proxy and the Envoy proxy run off the edge; tailnet device
   `bluefin-pilot-gw` serves `/hostname` from the home backend by IP and by
   MagicDNS name; nothing of it binds on the public edge.
+- **Sustained-transfer fixture** (`edge-backend/blob.yaml`): 1 GiB of random
+  bytes plus its sha256, generated at pod start on the home worker and
+  served by `agnhost test-webserver`; the arms' `transfer` route points at
+  it. The first fetch stopped at ~40 MB: Envoy's default 15 s route timeout,
+  now `timeouts.request: 0s` on that route. Then 1,073,741,824 bytes in
+  394 s, checksum match, ~22 Mbit/s: the rehearsal's tailnet path between
+  the two NATed VMs is a DERP relay (Phase 2: 18.5 Mbit/s), so this says
+  nothing about the Hetzner path's capacity.
 - Not covered on the rehearsal: staging ACME and renewal (needs the public
   edge and the `*.pilot` record), the 48-hour run, and the public-side
   probes; all on Hetzner.

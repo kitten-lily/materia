@@ -21,8 +21,12 @@ spec:
   - {name: pilot-edge, sectionName: https}
   hostnames: [transfer.invalid]
   rules:
-  - backendRefs:
-    - {name: edge-backend, namespace: pilot-edge-backend, port: 8080}
+  # The 1 GiB sustained-transfer fixture (edge-backend/blob.yaml). No
+  # request timeout: Envoy's default 15 s cut the download at ~40 MB
+  # (rehearsal, 2026-11-23); "0s" disables it (Gateway API HTTPRoute).
+  - timeouts: {request: 0s}
+    backendRefs:
+    - {name: edge-blob, namespace: pilot-edge-backend, port: 8080}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: ReferenceGrant
@@ -34,6 +38,7 @@ spec:
   - {group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: pilot-edge-envoy}
   to:
   - {group: "", kind: Service, name: edge-backend}
+  - {group: "", kind: Service, name: edge-blob}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
