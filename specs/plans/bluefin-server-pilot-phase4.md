@@ -326,6 +326,15 @@ measured capacity, or is reported incomplete.
 
 ## Paid actions and confirmation
 
+**Decided 2026-11-23:** cost and deletion rule confirmed by the operator,
+but the server is created only once the full 7-day E6 baseline is in
+(~2026-11-29), so the Pangolin 48 h run gets the real peak. The rehearsal
+edge was retired the same day (VM stopped, Node and tailnet device
+deleted, Pangolin arm removed). On the day: check the single-use auth key
+in `tailscale-auth-key` has not expired (1-day keys will have), export the
+Traefik access log and compute the peaks, remove the access-log block, then
+`hz create --confirm-cost`.
+
 Creating the server (step 1a) is the first paid action, and only after the
 E1.2 rehearsal has passed. Before it, the user confirms cost (cpx22
 €0.033/h, ≈ €5.55 for 7 days, plus IPv4), the deletion deadline (creation +
