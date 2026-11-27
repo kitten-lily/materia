@@ -7,7 +7,7 @@ After=mediamanager-postgres.service
 [Container]
 ContainerName=db-dump-mediamanager
 # Same pin as mediamanager-postgres.container.gotmpl, so Renovate bumps both.
-Image=docker.io/library/postgres:18.7@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
+Image=docker.io/library/postgres:18.7@sha256:64c8b0d31e4ab6ea665e8426ea406a94bf52de3c05b3a4a8bf713704eefa9328
 Network=newt-net
 # Shared label (:z): both dump units write this volume at the same time.
 Volume=db-dumps.volume:/dumps:z
