@@ -66,7 +66,7 @@ ExecStartPre=-/usr/bin/curl -fsS -m 10 --retry 5 -o /dev/null ${_hc_ping_url}/ma
 ExecStopPost=-/usr/bin/bash -c 'url="${_hc_ping_url}/materia-update-${_server_name}"; [ "\$EXIT_STATUS" = "0" ] || url="\$url/fail"; curl -fsS -m 10 --retry 5 -o /dev/null "\$url"'
 
 [Container]
-Image=ghcr.io/stryan/materia:v0.8.2@sha256:3009cadc1d22fd6d9516e13e1cd4e8e654db0a30347e56f566b5b68e3649d189
+Image=ghcr.io/stryan/materia:v0.8.3@sha256:fc0b521e031932d935915f5fb97c06638cdda7f2b73a0cba5939a5662b3440ff
 ContainerName=materia
 Exec=update
 

@@ -132,7 +132,7 @@ storage:
           # Digest-pinned release, tracked by renovate.json5's stryan/materia
           # custom.regex manager — matches every other component image's
           # git-pinned GitOps convention (was a floating :stable tag, #105).
-          Image=ghcr.io/stryan/materia:v0.8.2@sha256:3009cadc1d22fd6d9516e13e1cd4e8e654db0a30347e56f566b5b68e3649d189
+          Image=ghcr.io/stryan/materia:v0.8.3@sha256:fc0b521e031932d935915f5fb97c06638cdda7f2b73a0cba5939a5662b3440ff
           ContainerName=materia
           Exec=update
 
