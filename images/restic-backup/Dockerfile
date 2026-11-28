@@ -5,7 +5,7 @@
 ARG GO_IMAGE=docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59
 
 FROM ${GO_IMAGE} AS builder
-ARG resticVersion=v0.19.1
+ARG resticVersion=v0.20.0
 ARG opensshVersion=9.9p1
 
 RUN apk add --no-cache \
